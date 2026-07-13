@@ -1,0 +1,23 @@
+#!/sbin/openrc-run
+# OpenRC service: listen for KEY_KBDILLUM* and call kb-brightness.
+#
+# Install:
+#   sudo cp contrib/openrc/zenbook-kb-hotkeys /etc/init.d/
+#   sudo chmod +x /etc/init.d/zenbook-kb-hotkeys
+#   sudo rc-update add zenbook-kb-hotkeys default
+#   sudo rc-service zenbook-kb-hotkeys start
+
+name="zenbook-kb-hotkeys"
+description="Zenbook Duo Fn+ / special-key handler"
+
+: "${command:=/usr/local/bin/kb-brightness-hotkeys}"
+: "${command_background:=yes}"
+: "${command_user:=@RUN_USER@:input}"
+: "${pidfile:=/run/${RC_SVCNAME}.pid}"
+: "${output_log:=/var/log/${RC_SVCNAME}.log}"
+: "${error_log:=/var/log/${RC_SVCNAME}.log}"
+
+depend() {
+	need localmount
+	after hotplug
+}

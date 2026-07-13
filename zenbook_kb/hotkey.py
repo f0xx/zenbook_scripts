@@ -1,0 +1,621 @@
+"""Dispatch Zenbook Duo / ASUS WMI special-key (Fn+) events."""
+
+from __future__ import annotations
+
+import argparse
+import fcntl
+import importlib.util
+import os
+import select
+import shlex
+import struct
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+# Support `python3 .../zenbook_kb/hotkey.py` without installing as a package.
+_PKG_DIR = Path(__file__).resolve().parent
+_PKG_ROOT = _PKG_DIR.parent
+if str(_PKG_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PKG_ROOT))
+
+
+def _load_usb_hotkeys_module():
+    """Import usb_hotkeys when executed as a script (OpenRC/systemd)."""
+    try:
+        from zenbook_kb import usb_hotkeys as mod
+
+        return mod
+    except ImportError:
+        pass
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "zenbook_usb_hotkeys", _PKG_DIR / "usb_hotkeys.py"
+    )
+    if spec is None or spec.loader is None:
+        raise ImportError("usb_hotkeys.py not found next to hotkey.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+EV_KEY = 0x01
+INPUT_EVENT_SIZE = struct.calcsize("@llHHi")
+INPUT_EVENT_FMT = "@llHHi"
+EVIOCGRAB = 0x40044590
+
+from zenbook_kb.keycodes import (
+    KEY_KBDILLUMDOWN,
+    KEY_KBDILLUMTOGGLE,
+    KEY_KBDILLUMUP,
+    NAME_TO_CODE,
+    STANDARD_KEYS,
+    KeyAction,
+    key_label,
+)
+from zenbook_kb.mappings import format_mapping_report, load_mappings
+
+DEFAULT_CONFIG = Path.home() / ".config" / "zenbook-scripts" / "zenbook-hotkeys.conf"
+EXAMPLE_CONFIG_NAME = "zenbook-hotkeys.conf.example"
+
+
+def _key_bitmap(path: Path) -> set[int]:
+    words = [int(word, 16) for word in path.read_text().split()]
+    keys: set[int] = set()
+    for word_index, word in enumerate(words):
+        for bit in range(64):
+            if (word >> bit) & 1:
+                keys.add(word_index * 64 + bit)
+    return keys
+
+
+def _interface_number(event_dir: Path) -> str | None:
+    """USB bInterfaceNumber for this input node, if any."""
+    device = (event_dir / "device").resolve()
+    for parent in [device, *device.parents]:
+        iface = parent / "bInterfaceNumber"
+        if iface.is_file():
+            return iface.read_text().strip()
+    return None
+
+
+def _usb_product_id(event_dir: Path) -> str | None:
+    """USB idProduct hex string for this input node, if any."""
+    device = (event_dir / "device").resolve()
+    for parent in [device, *device.parents]:
+        product = parent / "idProduct"
+        if product.is_file():
+            return product.read_text().strip().lower()
+    return None
+
+
+def _event_metadata(event_dir: Path) -> dict[str, str]:
+    """Sysfs metadata for an input event node."""
+    name = (event_dir / "device" / "name").read_text().strip()
+    meta: dict[str, str] = {"name": name, "event": event_dir.name}
+    device = (event_dir / "device").resolve()
+    for parent in [device, *device.parents]:
+        for key, fname in (
+            ("iface", "bInterfaceNumber"),
+            ("product", "idProduct"),
+            ("vendor", "idVendor"),
+        ):
+            if key not in meta and (parent / fname).is_file():
+                meta[key] = (parent / fname).read_text().strip().lower()
+    return meta
+
+
+def _is_hotkey_candidate(event_dir: Path, name: str) -> bool:
+    if name == "Asus WMI hotkeys":
+        return True
+
+    iface = _interface_number(event_dir)
+    product = _usb_product_id(event_dir)
+
+    detachable_names = (
+        "Zenbook Duo Keyboard",
+        "Asus Keyboard",
+    )
+    if not any(token in name for token in detachable_names):
+        if iface != "04" or product not in (None, "1b2c", "1bf2"):
+            if "Zenbook Duo" not in name and "ASUS" not in name.upper():
+                return False
+    if "Mouse" in name or "Touchpad" in name:
+        return False
+
+    # hid-asus vendor hotkeys: USB interface 4 (…004B, 90-byte rdesc, ep 0x85)
+    if iface == "04" and product in (None, "1b2c", "1bf2"):
+        return True
+
+    # hid-asus after fake-keyboard inject may name this "Asus Keyboard"
+    if name == "Asus Keyboard" and iface == "04":
+        return True
+
+    # hid-generic era: dedicated consumer / Fn interface 3 (not primary target)
+    if "Zenbook Duo Keyboard" in name and iface == "03":
+        return True
+
+    keys = _key_bitmap(event_dir / "device" / "capabilities" / "key")
+    # Main USB keyboard (interface 00) also lists consumer keys; never watch it.
+    if iface in ("00", "01", "02"):
+        return False
+    if NAME_TO_CODE.get("KEY_FN", 464) in keys and iface in (None, "03", "04"):
+        return True
+    if keys & {KEY_KBDILLUMTOGGLE, KEY_KBDILLUMDOWN, KEY_KBDILLUMUP}:
+        return iface in (None, "03", "04")
+    return False
+
+
+def find_hotkey_devices(name_substring: str = "Zenbook Duo Keyboard") -> list[Path]:
+    """Input nodes that carry Fn+/vendor hotkeys (not the main typing interface)."""
+    candidates: list[tuple[Path, Path]] = []
+    input_root = Path("/sys/class/input")
+
+    for event_dir in sorted(input_root.glob("event*")):
+        caps_path = event_dir / "device" / "capabilities" / "key"
+        if not caps_path.is_file():
+            continue
+        name = (event_dir / "device" / "name").read_text().strip()
+        if not _is_hotkey_candidate(event_dir, name):
+            continue
+        dev = Path("/dev/input") / event_dir.name
+        if dev.exists():
+            candidates.append((dev, event_dir))
+
+    has_if04 = any(
+        _event_metadata(ed).get("iface") == "04"
+        and _event_metadata(ed).get("product") in (None, "1b2c", "1bf2")
+        for _d, ed in candidates
+    )
+
+    devices: list[Path] = []
+    seen: set[Path] = set()
+    for dev, event_dir in candidates:
+        meta = _event_metadata(event_dir)
+        if (
+            has_if04
+            and meta.get("iface") == "03"
+            and meta.get("product") in ("1b2c", "1bf2")
+        ):
+            continue
+        if dev not in seen:
+            seen.add(dev)
+            devices.append(dev)
+    return devices
+
+
+def load_user_actions(config_path: Path | None) -> dict[int, KeyAction]:
+    """Legacy helper — prefer load_mappings()."""
+    resolved = load_mappings(config_path)
+    return dict(resolved.evdev_actions)
+
+
+def load_usb_user_actions(config_path: Path | None) -> dict[int, KeyAction]:
+    resolved = load_mappings(config_path)
+    return dict(resolved.usb_actions)
+
+
+def resolve_usb_action(
+    code: int,
+    *,
+    actions: dict[int, KeyAction],
+    log_unmapped: bool,
+) -> KeyAction | None:
+    if code in actions:
+        return actions[code]
+    if log_unmapped:
+        return KeyAction("log")
+    return None
+
+
+def _run_cmd(argv: list[str], dry_run: bool) -> None:
+    if dry_run:
+        print("would run:", " ".join(shlex.quote(a) for a in argv), flush=True)
+        return
+    subprocess.run(argv, check=False)
+
+
+def _run_shell(command: str, dry_run: bool) -> None:
+    if dry_run:
+        print("would shell:", command, flush=True)
+        return
+    subprocess.run(command, shell=True, check=False)
+
+
+def _display_brightness(delta: str, dry_run: bool) -> None:
+    for cmd in (
+        ["brightnessctl", "set", f"{delta}10%"],
+        ["light", "-A", "10"] if delta == "up" else ["light", "-U", "10"],
+        ["xbacklight", "-inc", "10"] if delta == "up" else ["xbacklight", "-dec", "10"],
+    ):
+        if dry_run:
+            print("would try:", " ".join(cmd), flush=True)
+            return
+        if subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0:
+            return
+
+
+def _rfkill_toggle(which: str, dry_run: bool) -> None:
+    argv = ["rfkill", "toggle", which]
+    if dry_run:
+        print("would run:", " ".join(argv), flush=True)
+        return
+    subprocess.run(argv, check=False)
+
+
+def _audio_mic_mute(dry_run: bool) -> None:
+    for cmd in (
+        ["pactl", "set-source-mute", "@DEFAULT_SOURCE@", "toggle"],
+        ["amixer", "set", "Capture", "toggle"],
+    ):
+        if dry_run:
+            print("would try:", " ".join(cmd), flush=True)
+            return
+        if subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0:
+            return
+
+
+def dispatch_action(
+    action: KeyAction,
+    *,
+    kb_brightness: str,
+    dry_run: bool,
+) -> None:
+    if action.kind == "ignore":
+        return
+    if action.kind == "log":
+        return
+    if action.kind == "kb-brightness":
+        if action.arg == "toggle":
+            _run_cmd([kb_brightness, "+1"], dry_run)
+        elif action.arg.startswith("+") or action.arg.startswith("-"):
+            _run_cmd([kb_brightness, action.arg], dry_run)
+        elif action.arg.isdigit():
+            _run_cmd([kb_brightness, action.arg], dry_run)
+        else:
+            _run_cmd([kb_brightness, action.arg], dry_run)
+        return
+    if action.kind == "display-brightness":
+        if action.arg in ("up", "down"):
+            _display_brightness(action.arg, dry_run)
+        return
+    if action.kind == "rfkill":
+        _rfkill_toggle(action.arg or "wlan", dry_run)
+        return
+    if action.kind == "audio" and action.arg == "mic-mute":
+        _audio_mic_mute(dry_run)
+        return
+    if action.kind == "shell":
+        _run_shell(action.arg, dry_run)
+        return
+    if action.kind == "exec":
+        _run_cmd(shlex.split(action.arg), dry_run)
+        return
+    _run_shell(f"{action.kind}:{action.arg}", dry_run)
+
+
+def resolve_action(
+    code: int,
+    *,
+    actions: dict[int, KeyAction],
+    log_unmapped: bool,
+) -> KeyAction | None:
+    if code in actions:
+        action = actions[code]
+        if action.kind == "ignore":
+            return action
+        return action
+    if code in STANDARD_KEYS:
+        return None
+    if log_unmapped:
+        return KeyAction("log")
+    return None
+
+
+def listen(
+    devices: list[Path],
+    kb_brightness: str,
+    config_path: Path | None = None,
+    debounce_s: float = 0.15,
+    dry_run: bool = False,
+    log_unmapped: bool | None = None,
+    use_usb: bool | None = None,
+    grab: bool = False,
+    watchdog_s: float | None = None,
+    log_all_keys: bool = False,
+) -> int:
+    resolved = load_mappings(config_path)
+    evdev_actions = resolved.evdev_actions
+    usb_actions = resolved.usb_actions
+    effective_log = resolved.log_unmapped if log_unmapped is None else log_unmapped
+    effective_usb = resolved.use_usb if use_usb is None else use_usb
+
+    fds: dict[int, Path] = {}
+    for dev in devices:
+        fd = os.open(dev, os.O_RDONLY | os.O_NONBLOCK)
+        if grab:
+            try:
+                fcntl.ioctl(fd, EVIOCGRAB, 1)
+            except OSError as exc:
+                print(f"warn: could not grab {dev}: {exc}", file=sys.stderr, flush=True)
+        fds[fd] = dev
+
+    last_fire: dict[str, float] = {}
+
+    usb_mod = None
+    if effective_usb:
+        try:
+            usb_mod = _load_usb_hotkeys_module()
+        except Exception as exc:
+            print(f"USB hotkey module unavailable: {exc}", file=sys.stderr, flush=True)
+
+    usb_mon = None
+    if effective_usb and usb_mod is not None:
+        try:
+            usb_mon = usb_mod.UsbVendorHotkeys()
+            if usb_mon.available:
+                usb_mon.open()
+                print("USB vendor hotkeys: interface 4 (interrupt 0x85)", flush=True)
+            else:
+                usb_mon = None
+        except Exception as exc:
+            print(f"USB vendor hotkeys unavailable: {exc}", file=sys.stderr, flush=True)
+            usb_mon = None
+    elif not effective_usb:
+        print("USB vendor polling disabled (hid-asus or config)", flush=True)
+
+    parts = [str(d) for d in devices]
+    if usb_mon:
+        parts.append("usb:0b05:1b2c:if4")
+    print("Listening on:", ", ".join(parts) or "(usb only)", flush=True)
+    print(
+        f"Mappings: {len(evdev_actions)} evdev, {len(usb_actions)} usb "
+        f"(profiles={len(resolved.profiles)})",
+        flush=True,
+    )
+    if watchdog_s is not None:
+        print(f"Watchdog: {watchdog_s:.1f}s", flush=True)
+
+    start = time.monotonic()
+
+    try:
+        while True:
+            if watchdog_s is not None and (time.monotonic() - start) >= watchdog_s:
+                print("Watchdog expired — exiting listener.", flush=True)
+                return 0
+            if fds:
+                readable, _, _ = select.select(list(fds), [], [], 0.1)
+            else:
+                readable = []
+                time.sleep(0.1)
+
+            for fd in readable:
+                while True:
+                    try:
+                        data = os.read(fd, INPUT_EVENT_SIZE * 32)
+                    except BlockingIOError:
+                        break
+                    if not data:
+                        break
+                    for offset in range(0, len(data), INPUT_EVENT_SIZE):
+                        chunk = data[offset : offset + INPUT_EVENT_SIZE]
+                        if len(chunk) != INPUT_EVENT_SIZE:
+                            continue
+                        _sec, _usec, ev_type, code, value = struct.unpack(
+                            INPUT_EVENT_FMT, chunk
+                        )
+                        if ev_type != EV_KEY or value != 1:
+                            continue
+                        if log_all_keys:
+                            print(f"{fds[fd].name}: {key_label(code)} ({code})", flush=True)
+                        action = resolve_action(
+                            code,
+                            actions=evdev_actions,
+                            log_unmapped=effective_log,
+                        )
+                        if action is None:
+                            continue
+                        key_id = f"evdev:{code}"
+                        now = time.monotonic()
+                        if now - last_fire.get(key_id, 0.0) < debounce_s:
+                            continue
+                        last_fire[key_id] = now
+                        label = key_label(code)
+                        if action.kind == "ignore":
+                            continue
+                        if action.kind == "log":
+                            print(
+                                f"{fds[fd].name}: unmapped {label} ({code})",
+                                flush=True,
+                            )
+                            continue
+                        print(
+                            f"{fds[fd].name}: {label} ({code}) -> {action.kind}:{action.arg}",
+                            flush=True,
+                        )
+                        dispatch_action(action, kb_brightness=kb_brightness, dry_run=dry_run)
+
+            if usb_mon is not None:
+                ev = usb_mon.poll(timeout_ms=50)
+                if ev is None:
+                    continue
+                action = resolve_usb_action(
+                    ev.code,
+                    actions=usb_actions,
+                    log_unmapped=effective_log,
+                )
+                if action is None:
+                    continue
+                key_id = f"usb:{ev.code}"
+                now = time.monotonic()
+                if now - last_fire.get(key_id, 0.0) < debounce_s:
+                    continue
+                last_fire[key_id] = now
+                if action.kind == "log":
+                    print(
+                        f"usb:0x{ev.code:02x} unmapped vendor code (raw={ev.raw.hex()})",
+                        flush=True,
+                    )
+                    continue
+                print(
+                    f"usb:0x{ev.code:02x} -> {action.kind}:{action.arg} (raw={ev.raw.hex()})",
+                    flush=True,
+                )
+                dispatch_action(action, kb_brightness=kb_brightness, dry_run=dry_run)
+    except KeyboardInterrupt:
+        return 0
+    finally:
+        if usb_mon is not None:
+            usb_mon.close()
+        for fd in fds:
+            if grab:
+                try:
+                    fcntl.ioctl(fd, EVIOCGRAB, 0)
+                except OSError:
+                    pass
+            os.close(fd)
+
+
+def list_device_keys(devices: list[Path]) -> int:
+    """Print special keys exposed by watched devices (for mapping)."""
+    event_names = {p.name: p for p in Path("/sys/class/input").glob("event*")}
+    for dev in devices:
+        ev = dev.name
+        sys_path = event_names.get(ev)
+        if not sys_path:
+            print(f"{dev}: unknown")
+            continue
+        name = (sys_path / "device" / "name").read_text().strip()
+        keys = sorted(_key_bitmap(sys_path / "device" / "capabilities" / "key"))
+        special = [c for c in keys if c not in STANDARD_KEYS and c != 0]
+        print(f"{dev}: {name}")
+        for code in special:
+            print(f"  {code:4d}  {key_label(code)}")
+    return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        description="Handle Zenbook Duo Fn+ / vendor hotkeys",
+    )
+    parser.add_argument("--device", action="append", default=[], help="Explicit /dev/input/eventN")
+    parser.add_argument("--kb-brightness", default="kb-brightness")
+    parser.add_argument("--config", type=Path, default=None, help="Hotkey bindings config")
+    parser.add_argument("--name", default="Zenbook Duo Keyboard")
+    parser.add_argument("--list", action="store_true", help="List watched input devices")
+    parser.add_argument("--show-keys", action="store_true", help="List special keys on watched devices")
+    parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument(
+        "--grab",
+        action="store_true",
+        help="EVIOCGRAB watched evdev nodes (prevents terminal escape garbage)",
+    )
+    parser.add_argument(
+        "--watchdog",
+        type=float,
+        metavar="SECS",
+        default=None,
+        help="Exit after SECS (useful with --grab or --device event5)",
+    )
+    parser.add_argument(
+        "--log-all-keys",
+        action="store_true",
+        help="Print every EV_KEY press (including standard keys) for debugging",
+    )
+    parser.add_argument("--no-usb", action="store_true", help="Disable USB vendor interface polling")
+    parser.add_argument("--sniff-usb", type=float, metavar="SECS", help="Print raw USB vendor reports")
+    parser.add_argument(
+        "--sniff-all",
+        type=float,
+        metavar="SECS",
+        help="Sniff evdev + hidraw + all USB interfaces (diagnostic)",
+    )
+    parser.add_argument("--show-profile", action="store_true", help="Show DMI + conf.d mapping profile")
+    parser.add_argument("--quiet-unmapped", action="store_true", help="Do not log unmapped special keys")
+    parser.add_argument(
+        "--calibrate",
+        action="store_true",
+        help="Interactive Fn+/plain-F calibration walkthrough",
+    )
+    parser.add_argument(
+        "--calibrate-quick",
+        action="store_true",
+        help="Calibration for F1–F4 only",
+    )
+    args = parser.parse_args(argv)
+
+    if args.calibrate or args.calibrate_quick:
+        from zenbook_kb.calibrate import main as calibrate_main, reexec_calibrate
+
+        cal_argv: list[str] = []
+        if args.calibrate_quick:
+            cal_argv.append("--quick")
+        reexec_calibrate(cal_argv)
+        return calibrate_main(cal_argv)
+
+    if args.show_profile:
+        print(format_mapping_report(load_mappings(args.config)))
+        return 0
+
+    mapping = load_mappings(args.config)
+    device_name = args.name if args.name != "Zenbook Duo Keyboard" else mapping.device_name
+
+    if args.sniff_usb is not None:
+        mod = _load_usb_hotkeys_module()
+        return mod.sniff_usb(args.sniff_usb)
+
+    if args.sniff_all is not None:
+        spec = importlib.util.spec_from_file_location(
+            "zenbook_sniff", _PKG_DIR / "sniff.py"
+        )
+        if spec is None or spec.loader is None:
+            print("sniff.py not found", file=sys.stderr)
+            return 1
+        sniff_mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(sniff_mod)
+        return sniff_mod.sniff_all(args.sniff_all)
+
+    devices = [Path(p) for p in args.device] if args.device else find_hotkey_devices(device_name)
+
+    if args.list:
+        for dev in devices:
+            print(dev)
+        if not args.no_usb:
+            try:
+                mod = _load_usb_hotkeys_module()
+                if mod.UsbVendorHotkeys().available:
+                    print("usb:0b05:1b2c:interface4")
+            except Exception:
+                pass
+        return 0
+
+    if args.show_keys:
+        if not devices:
+            print("No evdev hotkey devices; use --sniff-usb for USB vendor codes", file=sys.stderr)
+            return 1
+        return list_device_keys(devices)
+
+    if not devices and args.no_usb:
+        print(
+            "No Zenbook / ASUS WMI hotkey input device found. "
+            "Connect the keyboard and retry, or pass --device.",
+            file=sys.stderr,
+        )
+        return 1
+
+    return listen(
+        devices,
+        args.kb_brightness,
+        config_path=args.config,
+        dry_run=args.dry_run,
+        log_unmapped=not args.quiet_unmapped,
+        use_usb=None if not args.no_usb else False,
+        grab=args.grab,
+        watchdog_s=args.watchdog,
+        log_all_keys=args.log_all_keys,
+    )
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

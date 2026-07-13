@@ -1,0 +1,186 @@
+#!/usr/bin/env bash
+# ACPI-friendly keyboard backlight control for ASUS Zenbook Duo detachable keyboard.
+#
+# Usage:
+#   kb-brightness get                 Print cached brightness
+#   kb-brightness get_min             Print minimum brightness level
+#   kb-brightness get_max             Print maximum brightness level
+#   kb-brightness limits              Print "min max source"
+#   kb-brightness save [path]         Save settings snapshot
+#   kb-brightness restore [path]      Restore snapshot and apply brightness
+#   kb-brightness load [path]         Alias for restore
+#   kb-brightness <n>                 Set brightness to n (0-3)
+#   kb-brightness +<n>                Increase brightness by n (mod 4)
+#   kb-brightness -<n>                Decrease brightness by n (mod 4)
+#
+# Options:
+#   --mode auto|usb|bluetooth         Force transport
+#   --vendor-id 0x0b05                USB vendor override
+#   --product-id 0x1b2c               USB product override
+#   --bt-product-id 0x1b2d            Bluetooth product override
+
+set -euo pipefail
+
+zenbook_kb_find_root() {
+    local here candidate
+
+    here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    if [[ -f "${here}/../lib/protocol.sh" && -f "${here}/../lib/snapshot.sh" ]]; then
+        echo "$(cd "${here}/.." && pwd)"
+        return 0
+    fi
+
+    if [[ -f /usr/local/share/zenbook-scripts/lib/protocol.sh ]] \
+        && [[ -f /usr/local/share/zenbook-scripts/lib/limits.sh ]] \
+        && [[ -f /usr/local/share/zenbook-scripts/lib/snapshot.sh ]]; then
+        echo /usr/local/share/zenbook-scripts
+        return 0
+    fi
+
+    for candidate in "${here}/.." "${here}"; do
+        candidate="$(cd "${candidate}" && pwd)"
+        if [[ -f "${candidate}/lib/protocol.sh" ]]; then
+            echo "${candidate}"
+            return 0
+        fi
+    done
+
+    echo "zenbook-scripts lib/ not found (expected /usr/local/share/zenbook-scripts/lib or repo lib/)" >&2
+    return 1
+}
+
+SCRIPT_DIR="$(zenbook_kb_find_root)"
+# shellcheck source=lib/protocol.sh
+source "${SCRIPT_DIR}/lib/protocol.sh"
+# shellcheck source=lib/state.sh
+source "${SCRIPT_DIR}/lib/state.sh"
+# shellcheck source=lib/detect.sh
+source "${SCRIPT_DIR}/lib/detect.sh"
+# shellcheck source=lib/hidraw.sh
+source "${SCRIPT_DIR}/lib/hidraw.sh"
+# shellcheck source=lib/transport_usb.sh
+source "${SCRIPT_DIR}/lib/transport_usb.sh"
+# shellcheck source=lib/transport_bluetooth.sh
+source "${SCRIPT_DIR}/lib/transport_bluetooth.sh"
+# shellcheck source=lib/limits.sh
+source "${SCRIPT_DIR}/lib/limits.sh"
+# shellcheck source=lib/snapshot.sh
+source "${SCRIPT_DIR}/lib/snapshot.sh"
+
+MODE="auto"
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --mode)
+            MODE="${2:-}"
+            shift 2
+            ;;
+        --vendor-id)
+            ZENBOOK_KB_USB_VENDOR_ID="${2#0x}"
+            shift 2
+            ;;
+        --product-id)
+            ZENBOOK_KB_USB_PRODUCT_ID="${2#0x}"
+            shift 2
+            ;;
+        --bt-vendor-id)
+            ZENBOOK_KB_BT_VENDOR_ID="${2#0x}"
+            shift 2
+            ;;
+        --bt-product-id)
+            ZENBOOK_KB_BT_PRODUCT_ID="${2#0x}"
+            shift 2
+            ;;
+        -h|--help)
+            sed -n '2,14p' "$0"
+            exit 0
+            ;;
+        --)
+            shift
+            break
+            ;;
+        -*)
+            echo "Unknown option: $1" >&2
+            exit 2
+            ;;
+        *)
+            break
+            ;;
+    esac
+done
+
+zenbook_kb_load_config
+
+if [[ $# -lt 1 || $# -gt 2 ]]; then
+    echo "Usage: $(basename "$0") <level|+level|-level|get|get_min|get_max|limits|save|restore|load> [snapshot-path]" >&2
+    exit 2
+fi
+
+ARG="$1"
+SNAPSHOT_PATH="${2:-${ZENBOOK_KB_DEFAULT_SNAPSHOT}}"
+
+case "${ARG}" in
+    get)
+        zenbook_kb_state_read 1
+        exit 0
+        ;;
+    get_min)
+        zenbook_kb_get_min
+        exit 0
+        ;;
+    get_max)
+        zenbook_kb_get_max
+        exit 0
+        ;;
+    limits)
+        echo "$(zenbook_kb_get_min) $(zenbook_kb_get_max) $(zenbook_kb_limits_source)"
+        exit 0
+        ;;
+    save)
+        zenbook_kb_snapshot_write "${SNAPSHOT_PATH}"
+        exit 0
+        ;;
+    restore|load)
+        TARGET="$(zenbook_kb_snapshot_restore "${SNAPSHOT_PATH}")" || exit 1
+        zenbook_kb_load_config
+        MIN="$(zenbook_kb_get_min)"
+        MAX="$(zenbook_kb_get_max)"
+        if (( TARGET < MIN || TARGET > MAX )); then
+            echo "Snapshot brightness ${TARGET} outside limits ${MIN}-${MAX}" >&2
+            exit 2
+        fi
+        zenbook_kb_apply_brightness "${TARGET}"
+        exit 0
+        ;;
+esac
+
+CURRENT="$(zenbook_kb_state_read 1)"
+TARGET="${CURRENT}"
+MIN="$(zenbook_kb_get_min)"
+MAX="$(zenbook_kb_get_max)"
+RANGE=$((MAX - MIN + 1))
+
+if [[ "${ARG}" =~ ^\+[0-9]+$ ]]; then
+    DELTA="${ARG#+}"
+    TARGET=$(( MIN + (CURRENT - MIN + DELTA) % RANGE ))
+elif [[ "${ARG}" =~ ^-[0-9]+$ ]]; then
+    DELTA="${ARG#-}"
+    TARGET=$(( MIN + (CURRENT - MIN - DELTA + RANGE * 8) % RANGE ))
+elif [[ "${ARG}" =~ ^[0-9]+$ ]]; then
+    TARGET="${ARG}"
+else
+    echo "Invalid argument: ${ARG}" >&2
+    exit 2
+fi
+
+if (( TARGET < MIN || TARGET > MAX )); then
+    echo "Level must be between ${MIN} and ${MAX}" >&2
+    exit 2
+fi
+
+ACTIVE_MODE="$(zenbook_kb_detect_mode "${MODE}")" || {
+    echo "Zenbook Duo keyboard not found" >&2
+    exit 1
+}
+
+zenbook_kb_apply_brightness "${TARGET}"

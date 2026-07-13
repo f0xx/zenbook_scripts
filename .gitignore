@@ -1,0 +1,39 @@
+# Zenbook scripts — git ignore build artifacts and local config
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Editor / IDE
+*.code-workspace
+.vscode/
+.idea/
+
+# Local user config (never commit)
+zenbook-duo.conf
+zenbook-hotkeys.conf
+
+# Kernel OOT build output
+kernel/build/
+/tmp/zenbook-hid-asus-*
+
+# Install / runtime
+*.ko
+*.ko.xz
+*.o
+*.mod
+*.mod.c
+Module.symvers
+modules.order
+
+# Logs and snapshots
+*.log
+zenbook_duo.save
+keyboard-brightness
+
+# Misc
+.DS_Store
+*~

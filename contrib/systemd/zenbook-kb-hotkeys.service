@@ -1,0 +1,12 @@
+[Unit]
+Description=Zenbook Duo Fn+ / special-key handler
+After=local-fs.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/kb-brightness-hotkeys
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=default.target

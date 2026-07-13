@@ -1,0 +1,46 @@
+# Zenbook Duo Fn+ / special-key bindings
+# Copy to ~/.config/zenbook-scripts/zenbook-hotkeys.conf
+#
+# Layering (lowest → highest priority):
+#   1. conf.d/00-default.*.conf
+#   2. conf.d/UX8406*.conf (matched by DMI board_name — see conf.d/README.md)
+#   3. This file (user overrides)
+#
+# Inspect active profile:
+#   kb-brightness-hotkeys --show-profile
+#
+# Format: KEY_NAME = action
+# Actions:
+#   kb-brightness:+1 | -1 | toggle | 0-3
+#   display-brightness:up | down
+#   rfkill:wlan | bluetooth
+#   audio:mic-mute
+#   shell:command with args   (run via /bin/sh -c)
+#   exec:argv words           (split like a shell command)
+#   log                       (print unmapped key — default for unknown specials)
+#   ignore                    (swallow in userspace listener only; desktop still receives)
+#
+# Prefer editing conf.d/UX8406.evdev.conf for model-specific playground mappings,
+# and keep only personal overrides here.
+
+[options]
+# usb_poll=auto          # auto disables USB polling when hid-asus is loaded
+# log_unmapped=true
+# device_name=Asus Keyboard
+
+[hotkeys]
+# Examples — uncomment or edit:
+# KEY_FN_F4 = kb-brightness:toggle
+# KEY_FN_F5 = display-brightness:down
+# KEY_PROG4 = shell:kb-platform-profile cycle   # planned — see PLANNED.md
+# KEY_BRIGHTNESSUP = display-brightness:up
+# KEY_BRIGHTNESSDOWN = display-brightness:down
+# KEY_MICMUTE = audio:mic-mute
+# KEY_WLAN = rfkill:wlan
+
+[usb_hotkeys]
+# Vendor codes on USB interface 4 (report 0x5a). Use --sniff-usb to discover.
+# Usually unused when hid-asus is loaded (usb_poll=auto).
+# 0xc4 = kb-brightness:+1
+# 0xc5 = kb-brightness:-1
+# 0xc7 = kb-brightness:toggle

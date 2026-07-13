@@ -1,0 +1,16 @@
+#!/bin/sh
+# udev helper: (re)start the hotkey listener when the Zenbook keyboard appears.
+#
+# udev rules fire on device add/remove — they cannot see individual key presses.
+
+case "${1:-}" in
+	start)
+		if command -v rc-service >/dev/null 2>&1 && [ -x /etc/init.d/zenbook-kb-hotkeys ]; then
+			( rc-service zenbook-kb-hotkeys restart >/dev/null 2>&1 ) &
+		elif command -v systemctl >/dev/null 2>&1; then
+			( systemctl restart zenbook-kb-hotkeys.service >/dev/null 2>&1 ) &
+		fi
+		;;
+esac
+
+exit 0

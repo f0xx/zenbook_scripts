@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# Listen for Zenbook Duo Fn+ / special keys and dispatch configured actions.
+#
+# Usage:
+#   kb-brightness-hotkeys              Auto-detect hotkey input devices
+#   kb-brightness-hotkeys --list         List watched devices
+#   kb-brightness-hotkeys --show-keys    List mappable keys per device
+#   kb-brightness-hotkeys --dry-run      Log actions without executing
+#
+# Bindings: ~/.config/zenbook-scripts/zenbook-hotkeys.conf
+# Unmapped special keys are logged so you can add bindings.
+
+set -euo pipefail
+
+zenbook_kb_find_root() {
+    local here candidate
+
+    here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    if [[ -f "${here}/../zenbook_kb/hotkey.py" ]]; then
+        echo "$(cd "${here}/.." && pwd)"
+        return 0
+    fi
+    if [[ -f /usr/local/share/zenbook-scripts/zenbook_kb/hotkey.py ]]; then
+        echo /usr/local/share/zenbook-scripts
+        return 0
+    fi
+    echo "zenbook_kb/hotkey.py not found" >&2
+    return 1
+}
+
+SCRIPT_DIR="$(zenbook_kb_find_root)"
+export PYTHONPATH="${SCRIPT_DIR}${PYTHONPATH:+:${PYTHONPATH}}"
+exec python3 "${SCRIPT_DIR}/zenbook_kb/hotkey.py" "$@"
