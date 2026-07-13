@@ -15,10 +15,8 @@ if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
 from zenbook_kb.install import detect_init_system, install_all, install_kb_brightness_tree
+from zenbook_kb.users import default_duo_config, default_hotkeys_config, resolve_config_dir
 
-DEFAULT_CONFIG_DIR = Path.home() / ".config" / "zenbook-scripts"
-DEFAULT_CONFIG = DEFAULT_CONFIG_DIR / "zenbook-duo.conf"
-DEFAULT_HOTKEYS = DEFAULT_CONFIG_DIR / "zenbook-hotkeys.conf"
 EXAMPLE_CONFIG = Path(__file__).resolve().parent / "zenbook-duo.conf.example"
 EXAMPLE_HOTKEYS = Path(__file__).resolve().parent / "zenbook-hotkeys.conf.example"
 
@@ -58,11 +56,13 @@ def test_brightness(script_dir: Path, level: int) -> None:
 
 
 def ensure_hotkeys_config() -> None:
-    if DEFAULT_HOTKEYS.exists() or not EXAMPLE_HOTKEYS.exists():
+    default_hotkeys = default_hotkeys_config()
+    config_dir = resolve_config_dir()
+    if default_hotkeys.exists() or not EXAMPLE_HOTKEYS.exists():
         return
-    DEFAULT_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-    DEFAULT_HOTKEYS.write_text(EXAMPLE_HOTKEYS.read_text())
-    print(f"Created {DEFAULT_HOTKEYS} (edit to bind unmapped Fn+ keys)")
+    config_dir.mkdir(parents=True, exist_ok=True)
+    default_hotkeys.write_text(EXAMPLE_HOTKEYS.read_text())
+    print(f"Created {default_hotkeys} (edit to bind unmapped Fn+ keys)")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -80,9 +80,10 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     script_dir = SCRIPT_DIR
+    default_config = default_duo_config()
     cfg = configparser.ConfigParser()
-    if DEFAULT_CONFIG.exists():
-        cfg.read(DEFAULT_CONFIG)
+    if default_config.exists():
+        cfg.read(default_config)
     elif EXAMPLE_CONFIG.exists():
         cfg.read(EXAMPLE_CONFIG)
     else:
@@ -121,9 +122,9 @@ def main(argv: list[str] | None = None) -> int:
         )
         duo["default_scale"] = prompt("duo.sh monitor scale", duo.get("default_scale", "1"))
 
-    write_config(cfg, DEFAULT_CONFIG)
+    write_config(cfg, default_config)
     ensure_hotkeys_config()
-    print(f"\nSaved {DEFAULT_CONFIG}")
+    print(f"\nSaved {default_config}")
 
     if yes_no("Test brightness now?", default_no=True, assume_yes=args.all_yes):
         test_brightness(script_dir, int(kb["default_brightness"]))

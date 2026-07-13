@@ -27,9 +27,12 @@ Kernel module tests and config-only edits often need **no** reinstall.
 | `bin/kb-brightness`, `bin/kb-brightness-hotkeys` | `/usr/local/bin/` |
 | `zenbook_kb/`, `brightness.py`, `lib/` | `/usr/local/share/zenbook-scripts/` |
 | `conf.d/` | `/usr/local/share/zenbook-scripts/conf.d/` |
-| `contrib/udev/`, `contrib/openrc/` | `/etc/…` |
+| `contrib/udev/` | `/etc/udev/rules.d/`, `/usr/local/libexec/` |
+| `contrib/openrc/` | `/etc/init.d/zenbook-kb-hotkeys`, `/etc/conf.d/zenbook-kb-hotkeys` |
 
-**OpenRC service** runs `/usr/local/bin/kb-brightness-hotkeys` → that uses **`/usr/local/share/zenbook-scripts/`**, not your git checkout (unless you edit the wrapper or use `PYTHONPATH` manually).
+**OpenRC service** runs `/usr/local/bin/kb-brightness-hotkeys` as the installing user
+(`command_user` in `/etc/conf.d/zenbook-kb-hotkeys`). Do not copy `contrib/openrc/` by hand —
+always run `configure.py` so the conf.d file is written.
 
 ## What does *not* need install
 

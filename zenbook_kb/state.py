@@ -5,21 +5,15 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+from zenbook_kb.users import resolve_config_dir, resolve_user_home
+
 
 def _user_home() -> Path:
-    sudo_user = os.environ.get("SUDO_USER")
-    if sudo_user:
-        import pwd
-
-        return Path(pwd.getpwnam(sudo_user).pw_dir)
-    return Path.home()
+    return resolve_user_home()
 
 
 DEFAULT_STATE_DIR = Path(
-    os.environ.get(
-        "ZENBOOK_KB_STATE_DIR",
-        _user_home() / ".config" / "zenbook-scripts",
-    )
+    os.environ.get("ZENBOOK_KB_STATE_DIR", resolve_config_dir())
 )
 DEFAULT_STATE_FILE = DEFAULT_STATE_DIR / "keyboard-brightness"
 

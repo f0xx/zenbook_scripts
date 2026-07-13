@@ -27,6 +27,8 @@
 # usb_poll=auto          # auto disables USB polling when hid-asus is loaded
 # log_unmapped=true
 # device_name=Asus Keyboard
+# service_verbose=true   # extra startup + runtime key logging (also: --verbose)
+# service_debug=true     # log every evdev key + unbound USB codes (also: --debug)
 
 [hotkeys]
 # Examples — uncomment or edit:

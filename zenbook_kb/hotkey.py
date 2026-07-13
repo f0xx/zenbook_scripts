@@ -3,15 +3,19 @@
 from __future__ import annotations
 
 import argparse
+import errno
 import fcntl
+import getpass
 import importlib.util
 import os
+import pwd
 import select
 import shlex
 import struct
 import subprocess
 import sys
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 # Support `python3 .../zenbook_kb/hotkey.py` without installing as a package.
@@ -55,9 +59,90 @@ from zenbook_kb.keycodes import (
     key_label,
 )
 from zenbook_kb.mappings import format_mapping_report, load_mappings
+from zenbook_kb.users import default_hotkeys_config
 
-DEFAULT_CONFIG = Path.home() / ".config" / "zenbook-scripts" / "zenbook-hotkeys.conf"
 EXAMPLE_CONFIG_NAME = "zenbook-hotkeys.conf.example"
+
+
+def _illum_codes(keys: set[int]) -> list[int]:
+    need = {KEY_KBDILLUMTOGGLE, KEY_KBDILLUMDOWN, KEY_KBDILLUMUP}
+    return sorted(keys & need)
+
+
+def _format_watched_devices(devices: list[Path], *, verbose: bool = False) -> str:
+    lines = ["Watched devices:"]
+    if not devices:
+        lines.append("  (none)")
+        return "\n".join(lines)
+    event_names = {p.name: p for p in Path("/sys/class/input").glob("event*")}
+    for dev in devices:
+        sys_path = event_names.get(dev.name)
+        if not sys_path:
+            lines.append(f"  {dev}: (sysfs node missing)")
+            continue
+        name = (sys_path / "device" / "name").read_text().strip()
+        meta = _event_metadata(sys_path)
+        illum = _illum_codes(_key_bitmap(sys_path / "device" / "capabilities" / "key"))
+        iface = meta.get("iface", "?")
+        product = meta.get("product", "?")
+        lines.append(
+            f"  {dev}: iface={iface} product={product} name={name!r} illum={illum}"
+        )
+        if verbose:
+            special = sorted(
+                c
+                for c in _key_bitmap(sys_path / "device" / "capabilities" / "key")
+                if c not in STANDARD_KEYS and c != 0
+            )
+            if special:
+                lines.append("    special keys:")
+                for code in special:
+                    lines.append(f"      {code:4d}  {key_label(code)}")
+    return "\n".join(lines)
+
+
+def _log_service_startup(
+    resolved,
+    devices: list[Path],
+    *,
+    verbose: bool,
+    debug: bool,
+    dry_run: bool,
+    grab: bool,
+    kb_brightness: str,
+    config_path: Path | None,
+) -> None:
+    try:
+        pw = pwd.getpwuid(os.getuid())
+        run_user = pw.pw_name
+        run_home = pw.pw_dir
+    except KeyError:
+        run_user = getpass.getuser()
+        run_home = str(Path.home())
+
+    stamp = datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
+    header = [
+        "=== zenbook-kb-hotkeys start ===",
+        f"timestamp: {stamp}",
+        f"pid: {os.getpid()}",
+        f"uid: {os.getuid()} user: {run_user}",
+        f"home: {run_home}",
+        f"kb_brightness: {kb_brightness}",
+        f"config: {config_path or default_hotkeys_config()}",
+        f"dry_run: {dry_run}",
+        f"grab: {grab}",
+        f"verbose: {verbose}",
+        f"debug: {debug}",
+        "",
+        "Profile:",
+        format_mapping_report(resolved, verbose=verbose),
+        "",
+        _format_watched_devices(devices, verbose=verbose),
+        "=== listening ===",
+        "",
+    ]
+    for line in header:
+        print(line, flush=True)
 
 
 def _key_bitmap(path: Path) -> set[int]:
@@ -313,6 +398,36 @@ def resolve_action(
     return None
 
 
+def _open_evdev_devices(devices: list[Path], *, grab: bool) -> dict[int, Path]:
+    fds: dict[int, Path] = {}
+    for dev in devices:
+        try:
+            fd = os.open(dev, os.O_RDONLY | os.O_NONBLOCK)
+        except OSError as exc:
+            print(f"warn: could not open {dev}: {exc}", file=sys.stderr, flush=True)
+            continue
+        if grab:
+            try:
+                fcntl.ioctl(fd, EVIOCGRAB, 1)
+            except OSError as exc:
+                print(f"warn: could not grab {dev}: {exc}", file=sys.stderr, flush=True)
+        fds[fd] = dev
+    return fds
+
+
+def _close_evdev_fds(fds: dict[int, Path], *, grab: bool) -> None:
+    for fd in list(fds):
+        if grab:
+            try:
+                fcntl.ioctl(fd, EVIOCGRAB, 0)
+            except OSError:
+                pass
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+
+
 def listen(
     devices: list[Path],
     kb_brightness: str,
@@ -324,24 +439,55 @@ def listen(
     grab: bool = False,
     watchdog_s: float | None = None,
     log_all_keys: bool = False,
+    verbose: bool = False,
+    debug: bool = False,
+    *,
+    device_name: str = "Zenbook Duo Keyboard",
+    allow_rediscover: bool = True,
 ) -> int:
     resolved = load_mappings(config_path)
     evdev_actions = resolved.evdev_actions
     usb_actions = resolved.usb_actions
+    verbose = verbose or resolved.options.service_verbose
+    debug = debug or resolved.options.service_debug
+    log_all_keys = log_all_keys or debug
     effective_log = resolved.log_unmapped if log_unmapped is None else log_unmapped
+    if verbose or debug:
+        effective_log = True
     effective_usb = resolved.use_usb if use_usb is None else use_usb
 
-    fds: dict[int, Path] = {}
-    for dev in devices:
-        fd = os.open(dev, os.O_RDONLY | os.O_NONBLOCK)
-        if grab:
-            try:
-                fcntl.ioctl(fd, EVIOCGRAB, 1)
-            except OSError as exc:
-                print(f"warn: could not grab {dev}: {exc}", file=sys.stderr, flush=True)
-        fds[fd] = dev
+    watched_devices = list(devices)
+    _log_service_startup(
+        resolved,
+        watched_devices,
+        verbose=verbose,
+        debug=debug,
+        dry_run=dry_run,
+        grab=grab,
+        kb_brightness=kb_brightness,
+        config_path=config_path,
+    )
+    fds = _open_evdev_devices(watched_devices, grab=grab)
 
     last_fire: dict[str, float] = {}
+
+    def _rediscover_evdev(reason: str) -> None:
+        nonlocal fds, watched_devices
+        if not allow_rediscover:
+            return
+        _close_evdev_fds(fds, grab=grab)
+        fds = {}
+        watched_devices = find_hotkey_devices(device_name)
+        if not watched_devices:
+            print(f"Hotplug: {reason}; waiting for input devices...", flush=True)
+            return
+        fds = _open_evdev_devices(watched_devices, grab=grab)
+        if fds:
+            print(
+                f"Hotplug: {reason}; now listening on "
+                + ", ".join(str(fds[fd]) for fd in fds),
+                flush=True,
+            )
 
     usb_mod = None
     if effective_usb:
@@ -365,15 +511,10 @@ def listen(
     elif not effective_usb:
         print("USB vendor polling disabled (hid-asus or config)", flush=True)
 
-    parts = [str(d) for d in devices]
+    parts = [str(d) for d in watched_devices]
     if usb_mon:
         parts.append("usb:0b05:1b2c:if4")
     print("Listening on:", ", ".join(parts) or "(usb only)", flush=True)
-    print(
-        f"Mappings: {len(evdev_actions)} evdev, {len(usb_actions)} usb "
-        f"(profiles={len(resolved.profiles)})",
-        flush=True,
-    )
     if watchdog_s is not None:
         print(f"Watchdog: {watchdog_s:.1f}s", flush=True)
 
@@ -385,10 +526,18 @@ def listen(
                 print("Watchdog expired — exiting listener.", flush=True)
                 return 0
             if fds:
-                readable, _, _ = select.select(list(fds), [], [], 0.1)
+                try:
+                    readable, _, _ = select.select(list(fds), [], [], 0.1)
+                except OSError as exc:
+                    if exc.errno == errno.ENODEV:
+                        _rediscover_evdev("input device removed")
+                        continue
+                    raise
             else:
                 readable = []
-                time.sleep(0.1)
+                if allow_rediscover:
+                    _rediscover_evdev("no open devices")
+                time.sleep(0.5)
 
             for fd in readable:
                 while True:
@@ -396,7 +545,25 @@ def listen(
                         data = os.read(fd, INPUT_EVENT_SIZE * 32)
                     except BlockingIOError:
                         break
+                    except OSError as exc:
+                        if exc.errno == errno.ENODEV:
+                            dead = fds.pop(fd, None)
+                            try:
+                                os.close(fd)
+                            except OSError:
+                                pass
+                            label = str(dead) if dead else "fd"
+                            _rediscover_evdev(f"{label} disconnected")
+                            break
+                        raise
                     if not data:
+                        if fd in fds:
+                            dead = fds.pop(fd)
+                            try:
+                                os.close(fd)
+                            except OSError:
+                                pass
+                            _rediscover_evdev(f"{dead} closed")
                         break
                     for offset in range(0, len(data), INPUT_EVENT_SIZE):
                         chunk = data[offset : offset + INPUT_EVENT_SIZE]
@@ -423,6 +590,11 @@ def listen(
                         last_fire[key_id] = now
                         label = key_label(code)
                         if action.kind == "ignore":
+                            if verbose:
+                                print(
+                                    f"{fds[fd].name}: {label} ({code}) -> ignore",
+                                    flush=True,
+                                )
                             continue
                         if action.kind == "log":
                             print(
@@ -446,6 +618,11 @@ def listen(
                     log_unmapped=effective_log,
                 )
                 if action is None:
+                    if debug:
+                        print(
+                            f"usb:0x{ev.code:02x} (unbound) raw={ev.raw.hex()}",
+                            flush=True,
+                        )
                     continue
                 key_id = f"usb:{ev.code}"
                 now = time.monotonic()
@@ -468,13 +645,7 @@ def listen(
     finally:
         if usb_mon is not None:
             usb_mon.close()
-        for fd in fds:
-            if grab:
-                try:
-                    fcntl.ioctl(fd, EVIOCGRAB, 0)
-                except OSError:
-                    pass
-            os.close(fd)
+        _close_evdev_fds(fds, grab=grab)
 
 
 def list_device_keys(devices: list[Path]) -> int:
@@ -521,7 +692,17 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--log-all-keys",
         action="store_true",
-        help="Print every EV_KEY press (including standard keys) for debugging",
+        help="Print every EV_KEY press (same as --debug for evdev)",
+    )
+    parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Log startup diagnostics and runtime key dispatch/unmapped specials",
+    )
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Like --verbose, and log every evdev key plus unbound USB vendor codes",
     )
     parser.add_argument("--no-usb", action="store_true", help="Disable USB vendor interface polling")
     parser.add_argument("--sniff-usb", type=float, metavar="SECS", help="Print raw USB vendor reports")
@@ -609,11 +790,15 @@ def main(argv: list[str] | None = None) -> int:
         args.kb_brightness,
         config_path=args.config,
         dry_run=args.dry_run,
-        log_unmapped=not args.quiet_unmapped,
+        log_unmapped=False if args.quiet_unmapped else None,
         use_usb=None if not args.no_usb else False,
         grab=args.grab,
         watchdog_s=args.watchdog,
         log_all_keys=args.log_all_keys,
+        verbose=args.verbose,
+        debug=args.debug,
+        device_name=device_name,
+        allow_rediscover=not args.device,
     )
 
 

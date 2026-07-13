@@ -24,7 +24,8 @@ except ImportError:
     print("PySide6 is not installed. Use configure.py or configure.sh instead.", file=sys.stderr)
     raise SystemExit(1)
 
-from configure import DEFAULT_CONFIG, write_config
+from configure import write_config
+from zenbook_kb.users import default_duo_config
 import configparser
 import subprocess
 
@@ -34,8 +35,9 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("Zenbook Duo Keyboard")
         self.cfg = configparser.ConfigParser()
-        if DEFAULT_CONFIG.exists():
-            self.cfg.read(DEFAULT_CONFIG)
+        self.config_path = default_duo_config()
+        if self.config_path.exists():
+            self.cfg.read(self.config_path)
         self.cfg.setdefault("keyboard", {})
         self.cfg.setdefault("duo", {})
 
@@ -79,7 +81,7 @@ class MainWindow(QMainWindow):
         buttons.addWidget(test_btn)
         form.addRow(buttons)
 
-        form.addRow(QLabel(f"Config: {DEFAULT_CONFIG}"))
+        form.addRow(QLabel(f"Config: {self.config_path}"))
 
     def save(self) -> None:
         kb = self.cfg["keyboard"]
@@ -90,8 +92,8 @@ class MainWindow(QMainWindow):
         kb["usb_windex"] = kb.get("usb_windex", "4")
         kb["default_brightness"] = str(self.slider.value())
         self.cfg["duo"]["default_backlight"] = kb["default_brightness"]
-        write_config(self.cfg, DEFAULT_CONFIG)
-        QMessageBox.information(self, "Saved", f"Wrote {DEFAULT_CONFIG}")
+        write_config(self.cfg, self.config_path)
+        QMessageBox.information(self, "Saved", f"Wrote {self.config_path}")
 
     def apply_brightness(self) -> None:
         script = Path(__file__).resolve().parent / "brightness.py"

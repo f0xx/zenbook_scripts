@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
-import os
+
 import shutil
 import subprocess
 from pathlib import Path
+
+from zenbook_kb.users import resolve_run_user, validate_unix_user
 
 INSTALL_SHARE = Path("/usr/local/share/zenbook-scripts")
 INSTALL_BIN_BRIGHTNESS = Path("/usr/local/bin/kb-brightness")
@@ -14,6 +16,7 @@ INSTALL_BIN_CALIBRATE = Path("/usr/local/bin/kb-calibrate-hotkeys")
 UDEV_RULES = Path("/etc/udev/rules.d/99-zenbook-kb-hotkeys.rules")
 UDEV_HELPER = Path("/usr/local/libexec/zenbook-kb-hotkeys-udev")
 OPENRC_INIT = Path("/etc/init.d/zenbook-kb-hotkeys")
+OPENRC_CONF = Path("/etc/conf.d/zenbook-kb-hotkeys")
 SYSTEMD_UNIT = Path("/etc/systemd/system/zenbook-kb-hotkeys.service")
 
 
@@ -69,7 +72,7 @@ def install_kb_brightness_tree(script_dir: Path) -> None:
 
 
 def install_sudoers_kb_brightness() -> None:
-    user = os.environ.get("SUDO_USER") or os.environ.get("USER") or os.environ.get("LOGNAME")
+    user = resolve_run_user()
     if not user:
         return
     sudoers_line = f"{user} ALL=NOPASSWD:{INSTALL_BIN_BRIGHTNESS} *"
@@ -95,7 +98,7 @@ def install_udev_rules(script_dir: Path) -> None:
 
 
 def add_user_to_input_group() -> None:
-    user = os.environ.get("SUDO_USER") or os.environ.get("USER") or os.environ.get("LOGNAME")
+    user = resolve_run_user()
     if not user:
         return
     if shutil.which("usermod"):
@@ -104,22 +107,41 @@ def add_user_to_input_group() -> None:
 
 
 def install_openrc_service(script_dir: Path, run_user: str | None = None) -> None:
-    user = run_user or os.environ.get("SUDO_USER") or os.environ.get("USER") or "root"
+    user = run_user or resolve_run_user()
+    validate_unix_user(user)
+    command_user = f"{user}:input"
+
+    conf = (
+        "# Managed by zenbook-scripts configure.py — do not copy contrib/openrc/ by hand.\n"
+        f'command_user="{command_user}"\n'
+        "# Startup profile + bindings are logged to /var/log/zenbook-kb-hotkeys.log.\n"
+        "# Uncomment to log every key press and extra runtime diagnostics:\n"
+        '#command_args="--verbose --debug"\n'
+    )
+    subprocess.run(["sudo", "tee", str(OPENRC_CONF)], input=conf.encode(), check=True)
+
     src = script_dir / "contrib" / "openrc" / "zenbook-kb-hotkeys"
-    content = src.read_text().replace("@RUN_USER@", user)
+    content = src.read_text()
+    for line in content.splitlines():
+        code = line.split("#", 1)[0]
+        if "@RUN_USER@" in code:
+            raise RuntimeError(
+                f"{src} still assigns @RUN_USER@ — use /etc/conf.d/zenbook-kb-hotkeys instead"
+            )
     subprocess.run(["sudo", "tee", str(OPENRC_INIT)], input=content.encode(), check=True)
     _sudo(["chmod", "a+x", str(OPENRC_INIT)])
     _sudo(["touch", "/var/log/zenbook-kb-hotkeys.log"])
-    _sudo(["chown", f"{user}:input", "/var/log/zenbook-kb-hotkeys.log"])
+    _sudo(["chown", command_user, "/var/log/zenbook-kb-hotkeys.log"])
     if shutil.which("rc-update"):
         subprocess.run(["sudo", "rc-update", "add", "zenbook-kb-hotkeys", "default"], check=False)
     if shutil.which("rc-service"):
         subprocess.run(["sudo", "rc-service", "zenbook-kb-hotkeys", "restart"], check=False)
-    print(f"Installed OpenRC service {OPENRC_INIT} (user {user})")
+    print(f"Installed OpenRC service {OPENRC_INIT} (user {user}, conf {OPENRC_CONF})")
 
 
 def install_systemd_service(run_user: str | None = None) -> None:
-    user = run_user or os.environ.get("SUDO_USER") or os.environ.get("USER") or "root"
+    user = run_user or resolve_run_user()
+    validate_unix_user(user)
     unit = f"""[Unit]
 Description=Zenbook Duo keyboard hotkeys (Fn+)
 After=local-fs.target

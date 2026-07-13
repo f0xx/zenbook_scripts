@@ -8,9 +8,8 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from zenbook_kb.keycodes import KeyAction, NAME_TO_CODE
-
-DEFAULT_CONFIG = Path.home() / ".config" / "zenbook-scripts" / "zenbook-hotkeys.conf"
+from zenbook_kb.keycodes import KeyAction, NAME_TO_CODE, key_label
+from zenbook_kb.users import default_hotkeys_config
 
 _PKG_ROOT = Path(__file__).resolve().parent.parent
 _DMI_SYSFS = Path("/sys/class/dmi/id")
@@ -66,6 +65,8 @@ class MappingOptions:
     log_unmapped: bool = True
     device_name: str = "Zenbook Duo Keyboard"
     priority: int = 0
+    service_verbose: bool = False
+    service_debug: bool = False
 
 
 @dataclass
@@ -151,6 +152,10 @@ def _parse_options(cfg: configparser.ConfigParser) -> MappingOptions:
         opts.log_unmapped = cfg.getboolean("options", "log_unmapped")
     if cfg.has_option("options", "device_name"):
         opts.device_name = cfg.get("options", "device_name").strip()
+    if cfg.has_option("options", "service_verbose"):
+        opts.service_verbose = cfg.getboolean("options", "service_verbose")
+    if cfg.has_option("options", "service_debug"):
+        opts.service_debug = cfg.getboolean("options", "service_debug")
     if cfg.has_option("options", "priority"):
         opts.priority = cfg.getint("options", "priority")
     if cfg.has_option("profile", "priority"):
@@ -282,12 +287,16 @@ def _load_user_file(path: Path) -> tuple[dict[int, KeyAction], dict[int, KeyActi
             opts.log_unmapped = cfg.getboolean("options", "log_unmapped")
         if cfg.has_option("options", "device_name"):
             opts.device_name = cfg.get("options", "device_name").strip()
+        if cfg.has_option("options", "service_verbose"):
+            opts.service_verbose = cfg.getboolean("options", "service_verbose")
+        if cfg.has_option("options", "service_debug"):
+            opts.service_debug = cfg.getboolean("options", "service_debug")
     return evdev, usb, opts
 
 
 def load_mappings(user_config: Path | None = None) -> ResolvedMappings:
     dmi = DmiInfo.read()
-    user_path = user_config or DEFAULT_CONFIG
+    user_path = user_config or default_hotkeys_config()
     merged_evdev: dict[int, KeyAction] = {}
     merged_usb: dict[int, KeyAction] = {}
     merged_opts = MappingOptions(log_unmapped=True, usb_poll="auto")
@@ -320,6 +329,8 @@ def load_mappings(user_config: Path | None = None) -> ResolvedMappings:
         merged_opts.log_unmapped = user_opts.log_unmapped
         if user_opts.device_name:
             merged_opts.device_name = user_opts.device_name
+        merged_opts.service_verbose = user_opts.service_verbose
+        merged_opts.service_debug = user_opts.service_debug
 
     return ResolvedMappings(
         dmi=dmi,
@@ -331,7 +342,7 @@ def load_mappings(user_config: Path | None = None) -> ResolvedMappings:
     )
 
 
-def format_mapping_report(resolved: ResolvedMappings) -> str:
+def format_mapping_report(resolved: ResolvedMappings, *, verbose: bool = False) -> str:
     lines = [
         "DMI:",
         f"  board_name={resolved.dmi.board_name!r}",
@@ -340,6 +351,8 @@ def format_mapping_report(resolved: ResolvedMappings) -> str:
         f"  bios_version={resolved.dmi.bios_version!r}",
         f"hid-asus owns detachable keyboard: {hid_asus_handles_detachable_keyboard()}",
         f"usb_poll resolved: {resolved.use_usb} (option={resolved.options.usb_poll!r})",
+        f"log_unmapped: {resolved.options.log_unmapped}",
+        f"device_name: {resolved.options.device_name!r}",
         "",
         "conf.d profiles:",
     ]
@@ -355,7 +368,29 @@ def format_mapping_report(resolved: ResolvedMappings) -> str:
     if resolved.user_config:
         lines.append(f"user overrides: {resolved.user_config}")
     else:
-        lines.append(f"user overrides: (none — copy {DEFAULT_CONFIG.name} to customize)")
-    lines.append(f"evdev bindings: {len(resolved.evdev_actions)}")
-    lines.append(f"usb bindings: {len(resolved.usb_actions)}")
+        hotkeys = default_hotkeys_config()
+        lines.append(f"user overrides: (none — copy {hotkeys.name} to customize)")
+    lines.append("")
+    lines.append("evdev bindings:")
+    if resolved.evdev_actions:
+        for code in sorted(resolved.evdev_actions):
+            action = resolved.evdev_actions[code]
+            lines.append(f"  {key_label(code)} ({code}) = {action.kind}:{action.arg}")
+    else:
+        lines.append("  (none)")
+    lines.append("usb bindings:")
+    if resolved.usb_actions:
+        for code in sorted(resolved.usb_actions):
+            action = resolved.usb_actions[code]
+            lines.append(f"  0x{code:02x} = {action.kind}:{action.arg}")
+    else:
+        lines.append("  (none)")
+    if verbose:
+        lines.extend(
+            [
+                "",
+                f"service_verbose: {resolved.options.service_verbose}",
+                f"service_debug: {resolved.options.service_debug}",
+            ]
+        )
     return "\n".join(lines)

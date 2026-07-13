@@ -5,7 +5,14 @@
 #   kb-brightness-hotkeys              Auto-detect hotkey input devices
 #   kb-brightness-hotkeys --list         List watched devices
 #   kb-brightness-hotkeys --show-keys    List mappable keys per device
+#   kb-brightness-hotkeys --show-profile Full DMI + binding profile
+#   kb-brightness-hotkeys --verbose      Extra startup + runtime key logging
+#   kb-brightness-hotkeys --debug        --verbose + every evdev key press
 #   kb-brightness-hotkeys --dry-run      Log actions without executing
+#
+# Service log: /var/log/zenbook-kb-hotkeys.log (profile on every start).
+# Enable key capture: command_args="--verbose --debug" in /etc/conf.d/zenbook-kb-hotkeys
+# or service_verbose=true / service_debug=true in zenbook-hotkeys.conf [options].
 #
 # Bindings: ~/.config/zenbook-scripts/zenbook-hotkeys.conf
 # Unmapped special keys are logged so you can add bindings.
@@ -30,4 +37,9 @@ zenbook_kb_find_root() {
 
 SCRIPT_DIR="$(zenbook_kb_find_root)"
 export PYTHONPATH="${SCRIPT_DIR}${PYTHONPATH:+:${PYTHONPATH}}"
+
+if [[ -n "${SUDO_USER:-}" ]]; then
+    export HOME="$(getent passwd "${SUDO_USER}" | cut -d: -f6)"
+fi
+
 exec python3 "${SCRIPT_DIR}/zenbook_kb/hotkey.py" "$@"
