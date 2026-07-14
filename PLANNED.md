@@ -27,6 +27,26 @@ Optional later: bind an unmapped key from calibration JSON, or a desktop shortcu
 
 ---
 
+## Fn-lock module parameters (UX8406) — implemented
+
+`kernel/scripts/port-ux8406.py` adds:
+
+- `fn_lock_default` — `-1` = DMI (UX8406 → Mode B), `0` / `1` override
+- `fn_lock_allow_toggle` — disable Fn+Esc when `0`
+
+Example: `contrib/modprobe/zenbook-hid-asus.conf` → `/etc/modprobe.d/`
+
+---
+
+## Sleep / lid backlight save-restore — implemented
+
+- `bin/kb-brightness-sleep` — `pre` / `post` / `lid-close` / `lid-open`
+- `contrib/systemd/zenbook-kb-brightness-sleep` → `/usr/lib/systemd/system-sleep/`
+- `contrib/acpi/` — acpid lid/sleep events
+- `bin/snapshot-plan-state` — labelled config backups before milestones
+
+---
+
 ## `switch-hid-asus.sh` — safe stock ↔ sideload toggle
 
 Goal: one command that **cannot brick** the docked keyboard without an automatic rollback path.

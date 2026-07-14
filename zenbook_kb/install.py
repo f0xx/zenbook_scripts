@@ -13,11 +13,17 @@ INSTALL_SHARE = Path("/usr/local/share/zenbook-scripts")
 INSTALL_BIN_BRIGHTNESS = Path("/usr/local/bin/kb-brightness")
 INSTALL_BIN_HOTKEYS = Path("/usr/local/bin/kb-brightness-hotkeys")
 INSTALL_BIN_CALIBRATE = Path("/usr/local/bin/kb-calibrate-hotkeys")
+INSTALL_BIN_SLEEP = Path("/usr/local/bin/kb-brightness-sleep")
 UDEV_RULES = Path("/etc/udev/rules.d/99-zenbook-kb-hotkeys.rules")
 UDEV_HELPER = Path("/usr/local/libexec/zenbook-kb-hotkeys-udev")
 OPENRC_INIT = Path("/etc/init.d/zenbook-kb-hotkeys")
 OPENRC_CONF = Path("/etc/conf.d/zenbook-kb-hotkeys")
 SYSTEMD_UNIT = Path("/etc/systemd/system/zenbook-kb-hotkeys.service")
+SYSTEMD_SLEEP_HOOK = Path("/usr/lib/systemd/system-sleep/zenbook-kb-brightness")
+ACPI_EVENTS_DIR = Path("/etc/acpi/events")
+ACPI_SLEEP_EVENT = ACPI_EVENTS_DIR / "zenbook-kbd-sleep"
+ACPI_SLEEP_HELPER = Path("/usr/local/libexec/zenbook-kbd-sleep.sh")
+MODPROBE_CONF = Path("/etc/modprobe.d/zenbook-hid-asus.conf")
 
 
 def has_systemd() -> bool:
@@ -60,6 +66,14 @@ def install_kb_brightness_tree(script_dir: Path) -> None:
     _sudo(["cp", str(script_dir / "brightness.py"), str(INSTALL_SHARE / "brightness.py")])
     _sudo(["cp", str(script_dir / "bin" / "kb-brightness"), str(INSTALL_BIN_BRIGHTNESS)])
     _sudo(["cp", str(script_dir / "bin" / "kb-brightness-hotkeys"), str(INSTALL_BIN_HOTKEYS)])
+    sleep_bin = script_dir / "bin" / "kb-brightness-sleep"
+    if sleep_bin.is_file():
+        _sudo(["cp", str(sleep_bin), str(INSTALL_BIN_SLEEP)])
+        _sudo(["chmod", "a+x", str(INSTALL_BIN_SLEEP)])
+    snap_bin = script_dir / "bin" / "snapshot-plan-state"
+    if snap_bin.is_file():
+        _sudo(["cp", str(snap_bin), "/usr/local/bin/snapshot-plan-state"])
+        _sudo(["chmod", "a+x", "/usr/local/bin/snapshot-plan-state"])
     calibrate_bin = script_dir / "bin" / "kb-calibrate-hotkeys"
     if calibrate_bin.is_file():
         _sudo(["cp", str(calibrate_bin), str(INSTALL_BIN_CALIBRATE)])
@@ -163,10 +177,39 @@ WantedBy=multi-user.target
     print(f"Installed systemd unit {SYSTEMD_UNIT} (user {user})")
 
 
+def install_sleep_hooks(script_dir: Path) -> None:
+    """Sleep/lid save-restore + optional modprobe defaults for oot hid-asus."""
+    _sudo(["mkdir", "-p", "/usr/lib/systemd/system-sleep", "/usr/local/libexec"])
+    src_sleep = script_dir / "contrib" / "systemd" / "zenbook-kb-brightness-sleep"
+    if src_sleep.is_file():
+        _sudo(["cp", str(src_sleep), str(SYSTEMD_SLEEP_HOOK)])
+        _sudo(["chmod", "a+x", str(SYSTEMD_SLEEP_HOOK)])
+        print(f"Installed {SYSTEMD_SLEEP_HOOK}")
+    acpi_helper = script_dir / "contrib" / "acpi" / "zenbook-kbd-sleep.sh"
+    if acpi_helper.is_file():
+        _sudo(["cp", str(acpi_helper), str(ACPI_SLEEP_HELPER)])
+        _sudo(["chmod", "a+x", str(ACPI_SLEEP_HELPER)])
+        event_src = script_dir / "contrib" / "acpi" / "events" / "zenbook-kbd-sleep"
+        if event_src.is_file():
+            _sudo(["mkdir", "-p", str(ACPI_EVENTS_DIR)])
+            _sudo(["cp", str(event_src), str(ACPI_SLEEP_EVENT)])
+            if shutil.which("pidof"):
+                subprocess.run(
+                    ["sudo", "sh", "-c", 'pidof acpid >/dev/null && kill -HUP "$(pidof acpid)" || true'],
+                    check=False,
+                )
+        print(f"Installed {ACPI_SLEEP_HELPER} and {ACPI_SLEEP_EVENT}")
+    modprobe_src = script_dir / "contrib" / "modprobe" / "zenbook-hid-asus.conf"
+    if modprobe_src.is_file():
+        _sudo(["cp", str(modprobe_src), str(MODPROBE_CONF)])
+        print(f"Installed {MODPROBE_CONF} (oot hid-asus fn-lock defaults)")
+
+
 def install_hotkey_service(script_dir: Path, init_system: str | None = None) -> str:
     """Install udev rules + init-system service. Returns detected init name."""
     init = init_system or detect_init_system()
     install_udev_rules(script_dir)
+    install_sleep_hooks(script_dir)
     add_user_to_input_group()
     if init == "systemd":
         install_systemd_service()

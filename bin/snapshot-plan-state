@@ -1,0 +1,61 @@
+#!/usr/bin/env bash
+# Save a labelled snapshot before plan milestones (configs + optional git ref).
+#
+# Usage:
+#   bin/snapshot-plan-state pre-sec1-fn-lock
+#   bin/snapshot-plan-state pre-sec2-sleep --git
+
+set -euo pipefail
+
+LABEL="${1:-}"
+WITH_GIT=0
+for arg in "$@"; do
+    case "$arg" in
+        --git) WITH_GIT=1 ;;
+    esac
+done
+
+if [[ -z "${LABEL}" || "${LABEL}" == --* ]]; then
+    echo "Usage: $(basename "$0") <label> [--git]" >&2
+    exit 2
+fi
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+BACKUP_ROOT="${XDG_CONFIG_HOME:-$HOME/.config}/zenbook-scripts/backup"
+DEST="${BACKUP_ROOT}/${LABEL}"
+mkdir -p "${DEST}"
+
+CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/zenbook-scripts"
+for f in zenbook-duo.conf zenbook-hotkeys.conf keyboard-brightness zenbook_duo.save; do
+    [[ -f "${CONFIG_DIR}/${f}" ]] && cp -a "${CONFIG_DIR}/${f}" "${DEST}/"
+done
+[[ -d "${CONFIG_DIR}/calibration" ]] && cp -a "${CONFIG_DIR}/calibration" "${DEST}/"
+
+if [[ -f /etc/conf.d/zenbook-kb-hotkeys ]]; then
+    sudo cp -a /etc/conf.d/zenbook-kb-hotkeys "${DEST}/zenbook-kb-hotkeys.conf.d" 2>/dev/null || true
+fi
+if [[ -f /etc/init.d/zenbook-kb-hotkeys ]]; then
+    sudo cp -a /etc/init.d/zenbook-kb-hotkeys "${DEST}/zenbook-kb-hotkeys.initd" 2>/dev/null || true
+fi
+
+if [[ -x "${SCRIPT_DIR}/kernel/scripts/switch-hid-asus.sh" ]]; then
+    sudo "${SCRIPT_DIR}/kernel/scripts/switch-hid-asus.sh" status > "${DEST}/hid-asus-status.txt" 2>&1 || true
+fi
+if command -v kb-brightness-hotkeys >/dev/null 2>&1; then
+    kb-brightness-hotkeys --show-profile > "${DEST}/hotkey-profile.txt" 2>&1 || true
+fi
+
+if [[ -d "${SCRIPT_DIR}/.git" ]]; then
+    {
+        git -C "${SCRIPT_DIR}" rev-parse HEAD
+        git -C "${SCRIPT_DIR}" status -sb
+    } > "${DEST}/git-head.txt" 2>/dev/null || true
+    if [[ "${WITH_GIT}" -eq 1 ]]; then
+        git -C "${SCRIPT_DIR}" archive --format=tar HEAD \
+            | tar -x -C "${DEST}/git-tree" 2>/dev/null \
+            || mkdir -p "${DEST}/git-tree" && git -C "${SCRIPT_DIR}" archive --format=tar HEAD | tar -x -C "${DEST}/git-tree"
+    fi
+fi
+
+echo "Snapshot: ${DEST}"
+ls -la "${DEST}"

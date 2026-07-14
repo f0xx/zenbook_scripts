@@ -15,6 +15,7 @@ venv/
 # Local user config (never commit)
 zenbook-duo.conf
 zenbook-hotkeys.conf
+ideas.txt
 
 # Kernel OOT build output
 kernel/build/

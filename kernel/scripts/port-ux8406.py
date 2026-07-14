@@ -85,6 +85,32 @@ static const __u8 asus_fake_keyboard_rdesc[] = {
 
 """
 
+FN_LOCK_MODULE_BLOCK = """
+/* Pin Fn-lock layout (UX8406 Mode B = fn_lock false = Fn+F-row actions). */
+static int fn_lock_default = -1;
+module_param(fn_lock_default, int, 0644);
+MODULE_PARM_DESC(fn_lock_default,
+		 "Initial Fn-lock: -1=DMI default, 0=Fn layer (Zenbook Mode B), 1=plain F-keys (Mode A)");
+
+static bool fn_lock_allow_toggle = true;
+module_param(fn_lock_allow_toggle, bool, 0644);
+MODULE_PARM_DESC(fn_lock_allow_toggle,
+		 "Allow Fn+Esc / vendor 0x4e to toggle Fn-lock");
+
+static bool asus_fn_lock_default_for_device(struct hid_device *hdev,
+					    struct asus_drvdata *drvdata)
+{
+	if (fn_lock_default >= 0)
+		return !!fn_lock_default;
+
+	if ((drvdata->quirks & QUIRK_ZENBOOK_DUO_KEYBOARD) &&
+	    dmi_check_system(ux8406_hid_kbd_backlight_dmi))
+		return false;
+
+	return true;
+}
+"""
+
 ZENBOOK_QUIRK_FILTER = """
 /* UX8406 exposes one PID on several USB interfaces; scope quirks narrowly. */
 static void asus_filter_zenbook_usb_quirks(struct hid_device *hdev,
@@ -152,7 +178,7 @@ def port_hid_asus(src: Path, dst: Path) -> None:
 
     text = insert_after(
         r'#include <linux/leds.h>\n',
-        '#include <linux/platform_profile.h>\n#include "ux8406-ids.h"\n',
+        '#include <linux/module.h>\n#include <linux/platform_profile.h>\n#include "ux8406-ids.h"\n',
         text,
     )
 
@@ -168,6 +194,15 @@ def port_hid_asus(src: Path, dst: Path) -> None:
             QUIRK_BLOCK,
             text,
         )
+
+    text = insert_after(
+        r"static void asus_sync_fn_lock\(struct work_struct \*work\)\n\{\n"
+        r"\tstruct asus_drvdata \*drvdata =\n"
+        r"\tcontainer_of\(work, struct asus_drvdata, fn_lock_sync_work\);\n\n"
+        r"\tasus_kbd_set_fn_lock\(drvdata->hdev, drvdata->fn_lock\);\n\}\n\n",
+        FN_LOCK_MODULE_BLOCK,
+        text,
+    )
 
     text = insert_after(
         r"\tconst struct asus_touchpad_info \*tp;\n",
@@ -198,7 +233,7 @@ def port_hid_asus(src: Path, dst: Path) -> None:
 \t\tcase 0x4e:
 \t\t\tif (!value)
 \t\t\t\tbreak;
-\t\t\tif (drvdata->quirks & QUIRK_HID_FN_LOCK) {
+\t\t\tif (drvdata->quirks & QUIRK_HID_FN_LOCK && fn_lock_allow_toggle) {
 \t\t\t\tdrvdata->fn_lock = !drvdata->fn_lock;
 \t\t\t\tschedule_work(&drvdata->fn_lock_sync_work);
 \t\t\t}
@@ -215,6 +250,26 @@ def port_hid_asus(src: Path, dst: Path) -> None:
 
     text = replace_once(old_event, new_event, text, "asus_event vendor block")
 
+    text = replace_once(
+        """\t\tcase KEY_FN_ESC:
+\t\t\tif (drvdata->quirks & QUIRK_HID_FN_LOCK) {
+\t\t\t\tdrvdata->fn_lock = !drvdata->fn_lock;
+\t\t\t\tschedule_work(&drvdata->fn_lock_sync_work);
+\t\t\t}
+\t\t\tbreak;""",
+        """\t\tcase KEY_FN_ESC:
+\t\t\tif (drvdata->quirks & QUIRK_HID_FN_LOCK) {
+\t\t\t\tif (fn_lock_allow_toggle) {
+\t\t\t\t\tdrvdata->fn_lock = !drvdata->fn_lock;
+\t\t\t\t\tschedule_work(&drvdata->fn_lock_sync_work);
+\t\t\t\t}
+\t\t\t\treturn 1;
+\t\t\t}
+\t\t\tbreak;""",
+        text,
+        "asus_event KEY_FN_ESC toggle guard",
+    )
+
     old_fnlock = """\tif (drvdata->quirks & QUIRK_HID_FN_LOCK) {
 \t\tdrvdata->fn_lock = true;
 \t\tINIT_WORK(&drvdata->fn_lock_sync_work, asus_sync_fn_lock);
@@ -227,9 +282,9 @@ def port_hid_asus(src: Path, dst: Path) -> None:
     new_fnlock = """\tif (drvdata->quirks & QUIRK_HID_FN_LOCK) {
 \t\tif (!(drvdata->quirks & QUIRK_ZENBOOK_DUO_KEYBOARD) ||
 \t\t    drvdata->has_vendor_up) {
-\t\t\tdrvdata->fn_lock = true;
+\t\t\tdrvdata->fn_lock = asus_fn_lock_default_for_device(hdev, drvdata);
 \t\t\tINIT_WORK(&drvdata->fn_lock_sync_work, asus_sync_fn_lock);
-\t\t\tasus_kbd_set_fn_lock(hdev, true);
+\t\t\tasus_kbd_set_fn_lock(hdev, drvdata->fn_lock);
 \t\t}
 \t}
 
