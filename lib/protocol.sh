@@ -4,9 +4,21 @@
 zenbook_kb_user_home() {
     if [[ -n "${SUDO_USER:-}" ]]; then
         getent passwd "${SUDO_USER}" | cut -d: -f6
-    else
-        printf '%s' "${HOME}"
+        return 0
     fi
+    if [[ -n "${ZENBOOK_CALIB_USER:-}" ]]; then
+        getent passwd "${ZENBOOK_CALIB_USER}" | cut -d: -f6
+        return 0
+    fi
+    if [[ "$(id -u)" -eq 0 && -r /etc/conf.d/zenbook-kb-hotkeys ]]; then
+        local cu
+        cu="$(grep -E '^command_user=' /etc/conf.d/zenbook-kb-hotkeys 2>/dev/null | head -1 | sed 's/^command_user=//' | tr -d '"' | cut -d: -f1)"
+        if [[ -n "${cu}" && "${cu}" != root ]]; then
+            getent passwd "${cu}" | cut -d: -f6
+            return 0
+        fi
+    fi
+    printf '%s' "${HOME}"
 }
 
 ZENBOOK_KB_REPORT_ID=0x5A

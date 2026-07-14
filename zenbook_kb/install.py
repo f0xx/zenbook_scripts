@@ -14,9 +14,15 @@ INSTALL_BIN_BRIGHTNESS = Path("/usr/local/bin/kb-brightness")
 INSTALL_BIN_HOTKEYS = Path("/usr/local/bin/kb-brightness-hotkeys")
 INSTALL_BIN_CALIBRATE = Path("/usr/local/bin/kb-calibrate-hotkeys")
 INSTALL_BIN_SLEEP = Path("/usr/local/bin/kb-brightness-sleep")
+INSTALL_BIN_LID_WATCH = Path("/usr/local/bin/kb-brightness-lid-watch")
 UDEV_RULES = Path("/etc/udev/rules.d/99-zenbook-kb-hotkeys.rules")
 UDEV_HELPER = Path("/usr/local/libexec/zenbook-kb-hotkeys-udev")
 OPENRC_INIT = Path("/etc/init.d/zenbook-kb-hotkeys")
+OPENRC_LID_INIT = Path("/etc/init.d/zenbook-kb-lid")
+OPENRC_HID_ASUS_INIT = Path("/etc/init.d/zenbook-kb-hid-asus")
+OPENRC_HID_ASUS_CONF = Path("/etc/conf.d/zenbook-kb-hid-asus")
+INSTALL_LIBEXEC = Path("/usr/local/libexec")
+INSTALLED_KO_ROOT = Path("/usr/lib/modules/zenbook-hid-asus")
 OPENRC_CONF = Path("/etc/conf.d/zenbook-kb-hotkeys")
 SYSTEMD_UNIT = Path("/etc/systemd/system/zenbook-kb-hotkeys.service")
 SYSTEMD_SLEEP_HOOK = Path("/usr/lib/systemd/system-sleep/zenbook-kb-brightness")
@@ -41,6 +47,26 @@ def detect_init_system() -> str:
     return "systemd" if has_systemd() else "openrc"
 
 
+def _openrc_service_runlevels(service: str) -> set[str]:
+    """Return runlevels that currently include *service* (OpenRC)."""
+    if not shutil.which("rc-update"):
+        return set()
+    result = subprocess.run(
+        ["rc-update", "show", "-v"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    for line in result.stdout.splitlines():
+        if "|" not in line:
+            continue
+        name, levels = line.split("|", 1)
+        if name.strip() != service:
+            continue
+        return {part.strip() for part in levels.split() if part.strip()}
+    return set()
+
+
 def _sudo(cmd: list[str]) -> None:
     subprocess.run(["sudo", *cmd], check=True)
 
@@ -54,7 +80,9 @@ def install_kb_brightness_tree(script_dir: Path) -> None:
         "detect.sh",
         "hidraw.sh",
         "limits.sh",
+        "openrc-wait.sh",
         "snapshot.sh",
+        "fn_lock.sh",
         "transport_usb.sh",
         "transport_bluetooth.sh",
     ):
@@ -70,6 +98,10 @@ def install_kb_brightness_tree(script_dir: Path) -> None:
     if sleep_bin.is_file():
         _sudo(["cp", str(sleep_bin), str(INSTALL_BIN_SLEEP)])
         _sudo(["chmod", "a+x", str(INSTALL_BIN_SLEEP)])
+    lid_watch = script_dir / "bin" / "kb-brightness-lid-watch"
+    if lid_watch.is_file():
+        _sudo(["cp", str(lid_watch), str(INSTALL_BIN_LID_WATCH)])
+        _sudo(["chmod", "a+x", str(INSTALL_BIN_LID_WATCH)])
     snap_bin = script_dir / "bin" / "snapshot-plan-state"
     if snap_bin.is_file():
         _sudo(["cp", str(snap_bin), "/usr/local/bin/snapshot-plan-state"])
@@ -199,10 +231,95 @@ def install_sleep_hooks(script_dir: Path) -> None:
                     check=False,
                 )
         print(f"Installed {ACPI_SLEEP_HELPER} and {ACPI_SLEEP_EVENT}")
+        print("  (acpi lid events are unused when elogind owns the lid switch)")
     modprobe_src = script_dir / "contrib" / "modprobe" / "zenbook-hid-asus.conf"
     if modprobe_src.is_file():
         _sudo(["cp", str(modprobe_src), str(MODPROBE_CONF)])
         print(f"Installed {MODPROBE_CONF} (oot hid-asus fn-lock defaults)")
+
+
+def install_openrc_lid_service(script_dir: Path) -> None:
+    """elogind/logind LidClosed watcher (OpenRC + elogind systems)."""
+    src = script_dir / "contrib" / "openrc" / "zenbook-kb-lid"
+    if not src.is_file():
+        return
+    _sudo(["cp", str(src), str(OPENRC_LID_INIT)])
+    _sudo(["chmod", "a+x", str(OPENRC_LID_INIT)])
+    _sudo(["touch", "/var/log/zenbook-kb-lid.log"])
+    if shutil.which("rc-update"):
+        subprocess.run(["sudo", "rc-update", "add", "zenbook-kb-lid", "default"], check=False)
+    if shutil.which("rc-service"):
+        subprocess.run(["sudo", "rc-service", "zenbook-kb-lid", "restart"], check=False)
+    print(f"Installed OpenRC service {OPENRC_LID_INIT} (logind LidClosed)")
+
+
+def install_hid_asus_libexec(script_dir: Path) -> None:
+    """Kernel switch/rebind helpers for boot and manual sideload."""
+    _sudo(["mkdir", "-p", str(INSTALL_LIBEXEC)])
+    switch = script_dir / "kernel" / "scripts" / "switch-hid-asus.sh"
+    rebind = script_dir / "kernel" / "scripts" / "rebind-hid-asus.sh"
+    boot = script_dir / "contrib" / "openrc" / "zenbook-hid-asus-boot.sh"
+    if switch.is_file():
+        _sudo(["cp", str(switch), str(INSTALL_LIBEXEC / "zenbook-hid-asus-switch")])
+        _sudo(["chmod", "a+x", str(INSTALL_LIBEXEC / "zenbook-hid-asus-switch")])
+    if rebind.is_file():
+        _sudo(["cp", str(rebind), str(INSTALL_LIBEXEC / "zenbook-hid-asus-rebind")])
+        _sudo(["chmod", "a+x", str(INSTALL_LIBEXEC / "zenbook-hid-asus-rebind")])
+    if boot.is_file():
+        _sudo(["cp", str(boot), str(INSTALL_LIBEXEC / "zenbook-hid-asus-boot.sh")])
+        _sudo(["chmod", "a+x", str(INSTALL_LIBEXEC / "zenbook-hid-asus-boot.sh")])
+    print(f"Installed hid-asus helpers under {INSTALL_LIBEXEC}/")
+
+
+def install_hid_asus_ko(script_dir: Path) -> bool:
+    """Copy built oot hid-asus.ko into /usr/lib/modules/zenbook-hid-asus/<kver>/."""
+    kver = subprocess.check_output(["uname", "-r"], text=True).strip()
+    ko_src = script_dir / "kernel" / "build" / f"linux-{kver}" / "hid-asus.ko"
+    if not ko_src.is_file():
+        print(
+            f"No built {ko_src} — run: make -f kernel/Makefile build-current",
+            flush=True,
+        )
+        return False
+    dest_dir = INSTALLED_KO_ROOT / kver
+    _sudo(["mkdir", "-p", str(dest_dir)])
+    _sudo(["cp", str(ko_src), str(dest_dir / "hid-asus.ko")])
+    print(f"Installed {dest_dir / 'hid-asus.ko'}")
+    return True
+
+
+def install_openrc_hid_asus_service(script_dir: Path, *, enable_service: bool = True) -> None:
+    """Default-runlevel oot hid-asus sideload (OpenRC)."""
+    init_src = script_dir / "contrib" / "openrc" / "zenbook-kb-hid-asus"
+    conf_src = script_dir / "contrib" / "openrc" / "conf.d" / "zenbook-kb-hid-asus"
+    if not init_src.is_file():
+        return
+    install_hid_asus_libexec(script_dir)
+    _sudo(["cp", str(init_src), str(OPENRC_HID_ASUS_INIT)])
+    _sudo(["chmod", "a+x", str(OPENRC_HID_ASUS_INIT)])
+    if conf_src.is_file() and not OPENRC_HID_ASUS_CONF.exists():
+        _sudo(["cp", str(conf_src), str(OPENRC_HID_ASUS_CONF)])
+        print(f"Installed {OPENRC_HID_ASUS_CONF}")
+    _sudo(["touch", "/var/log/zenbook-kb-hid-asus.log"])
+    if enable_service and shutil.which("rc-update"):
+        levels = _openrc_service_runlevels("zenbook-kb-hid-asus")
+        if "boot" in levels:
+            subprocess.run(
+                ["sudo", "rc-update", "del", "zenbook-kb-hid-asus", "boot"],
+                check=False,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            levels.discard("boot")
+        if "default" not in levels:
+            subprocess.run(
+                ["sudo", "rc-update", "add", "zenbook-kb-hid-asus", "default"],
+                check=False,
+            )
+            print("Enabled zenbook-kb-hid-asus in default runlevel")
+        else:
+            print("zenbook-kb-hid-asus: already in default runlevel")
+    print(f"Installed OpenRC service {OPENRC_HID_ASUS_INIT} (default runlevel sideload)")
 
 
 def install_hotkey_service(script_dir: Path, init_system: str | None = None) -> str:
@@ -215,6 +332,9 @@ def install_hotkey_service(script_dir: Path, init_system: str | None = None) -> 
         install_systemd_service()
     else:
         install_openrc_service(script_dir)
+        install_openrc_lid_service(script_dir)
+        install_hid_asus_ko(script_dir)
+        install_openrc_hid_asus_service(script_dir)
     return init
 
 

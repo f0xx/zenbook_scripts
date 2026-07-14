@@ -2,11 +2,14 @@
 # Brightness state helpers (hardware does not expose a reliable read path).
 
 zenbook_kb_state_read() {
-    local default="${1:-1}"
+    local default="${1:-1}" value
+    if value="$(zenbook_kb_sysfs_read 2>/dev/null)" && [[ "${value}" =~ ^[0-9]+$ ]]; then
+        echo "${value}"
+        return 0
+    fi
     if [[ -r "${ZENBOOK_KB_STATE_FILE}" ]]; then
-        local value
         value="$(tr -d '[:space:]' < "${ZENBOOK_KB_STATE_FILE}")"
-        if [[ "${value}" =~ ^[0-3]$ ]]; then
+        if [[ "${value}" =~ ^[0-9]+$ ]]; then
             echo "${value}"
             return 0
         fi

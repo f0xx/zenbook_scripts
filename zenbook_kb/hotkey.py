@@ -49,6 +49,7 @@ INPUT_EVENT_SIZE = struct.calcsize("@llHHi")
 INPUT_EVENT_FMT = "@llHHi"
 EVIOCGRAB = 0x40044590
 
+from zenbook_kb.fn_lock import find_vendor_hidraw, note_fn_lock_toggle
 from zenbook_kb.keycodes import (
     KEY_KBDILLUMDOWN,
     KEY_KBDILLUMTOGGLE,
@@ -62,6 +63,27 @@ from zenbook_kb.mappings import format_mapping_report, load_mappings
 from zenbook_kb.users import default_hotkeys_config
 
 EXAMPLE_CONFIG_NAME = "zenbook-hotkeys.conf.example"
+KEY_FN_ESC = NAME_TO_CODE.get("KEY_FN_ESC", 0x1D1)
+FN_LOCK_VENDOR_CODE = 0x4E
+
+
+def _seed_fn_lock_state() -> None:
+    """Align tracked fn-lock with snapshot when hotkeys starts."""
+    import re
+
+    from zenbook_kb.fn_lock import read_fn_lock_state, write_fn_lock_state
+    from zenbook_kb.users import resolve_config_dir
+
+    if read_fn_lock_state() is not None:
+        return
+    snap = resolve_config_dir() / "zenbook_duo.save"
+    if not snap.is_file():
+        return
+    for line in snap.read_text().splitlines():
+        match = re.match(r"^fn_lock\s*=\s*([01])", line.strip())
+        if match:
+            write_fn_lock_state(int(match.group(1)))
+            break
 
 
 def _illum_codes(keys: set[int]) -> list[int]:
@@ -511,6 +533,17 @@ def listen(
     elif not effective_usb:
         print("USB vendor polling disabled (hid-asus or config)", flush=True)
 
+    fn_hidraw_fd: int | None = None
+    if not effective_usb:
+        vendor_hidraw = find_vendor_hidraw()
+        if vendor_hidraw is not None:
+            try:
+                fn_hidraw_fd = os.open(vendor_hidraw, os.O_RDONLY | os.O_NONBLOCK)
+                if verbose:
+                    print(f"fn-lock hidraw watch: {vendor_hidraw}", flush=True)
+            except OSError as exc:
+                print(f"fn-lock hidraw unavailable: {exc}", file=sys.stderr, flush=True)
+
     parts = [str(d) for d in watched_devices]
     if usb_mon:
         parts.append("usb:0b05:1b2c:if4")
@@ -525,9 +558,12 @@ def listen(
             if watchdog_s is not None and (time.monotonic() - start) >= watchdog_s:
                 print("Watchdog expired — exiting listener.", flush=True)
                 return 0
-            if fds:
+            poll_fds = list(fds)
+            if fn_hidraw_fd is not None:
+                poll_fds.append(fn_hidraw_fd)
+            if poll_fds:
                 try:
-                    readable, _, _ = select.select(list(fds), [], [], 0.1)
+                    readable, _, _ = select.select(poll_fds, [], [], 0.1)
                 except OSError as exc:
                     if exc.errno == errno.ENODEV:
                         _rediscover_evdev("input device removed")
@@ -540,6 +576,27 @@ def listen(
                 time.sleep(0.5)
 
             for fd in readable:
+                if fn_hidraw_fd is not None and fd == fn_hidraw_fd:
+                    while True:
+                        try:
+                            raw = os.read(fn_hidraw_fd, 64)
+                        except BlockingIOError:
+                            break
+                        except OSError:
+                            break
+                        if not raw:
+                            break
+                        if usb_mod is not None:
+                            ev = usb_mod.parse_vendor_report(raw)
+                            if ev is not None and ev.code == usb_mod.VENDOR_FNLOCK:
+                                new_mode = note_fn_lock_toggle()
+                                if verbose:
+                                    mode = "A" if new_mode else "B"
+                                    print(
+                                        f"fn-lock hidraw: → mode {mode} (tracked)",
+                                        flush=True,
+                                    )
+                    continue
                 while True:
                     try:
                         data = os.read(fd, INPUT_EVENT_SIZE * 32)
@@ -574,6 +631,19 @@ def listen(
                         )
                         if ev_type != EV_KEY or value != 1:
                             continue
+                        if code == KEY_FN_ESC:
+                            ev_sysfs = Path("/sys/class/input") / fds[fd].name
+                            try:
+                                if _event_metadata(ev_sysfs).get("name") == "Asus Keyboard":
+                                    new_mode = note_fn_lock_toggle()
+                                    if verbose:
+                                        mode = "A" if new_mode else "B"
+                                        print(
+                                            f"{fds[fd].name}: fn-lock → mode {mode} (tracked)",
+                                            flush=True,
+                                        )
+                            except OSError:
+                                pass
                         if log_all_keys:
                             print(f"{fds[fd].name}: {key_label(code)} ({code})", flush=True)
                         action = resolve_action(
@@ -612,6 +682,14 @@ def listen(
                 ev = usb_mon.poll(timeout_ms=50)
                 if ev is None:
                     continue
+                if ev.code == FN_LOCK_VENDOR_CODE:
+                    new_mode = note_fn_lock_toggle()
+                    if verbose:
+                        mode = "A" if new_mode else "B"
+                        print(
+                            f"usb:0x{ev.code:02x} fn-lock → mode {mode} (tracked)",
+                            flush=True,
+                        )
                 action = resolve_usb_action(
                     ev.code,
                     actions=usb_actions,
@@ -645,6 +723,11 @@ def listen(
     finally:
         if usb_mon is not None:
             usb_mon.close()
+        if fn_hidraw_fd is not None:
+            try:
+                os.close(fn_hidraw_fd)
+            except OSError:
+                pass
         _close_evdev_fds(fds, grab=grab)
 
 
@@ -784,6 +867,8 @@ def main(argv: list[str] | None = None) -> int:
             file=sys.stderr,
         )
         return 1
+
+    _seed_fn_lock_state()
 
     return listen(
         devices,

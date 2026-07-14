@@ -2,8 +2,10 @@
 # Save / restore keyboard backlight around sleep, lid close, and resume.
 #
 # Usage:
-#   kb-brightness-sleep pre              # before suspend/hibernate
-#   kb-brightness-sleep post             # after resume (waits for USB keyboard)
+#   kb-brightness-sleep pre              # before suspend/hibernate (save + dim)
+#   kb-brightness-sleep post             # after resume (restore)
+#   kb-brightness-sleep save             # snapshot current brightness only
+#   kb-brightness-sleep restore          # apply saved brightness (service start)
 #   kb-brightness-sleep lid-close        # lid shut (save + turn off)
 #   kb-brightness-sleep lid-open         # lid open (restore)
 
@@ -39,6 +41,8 @@ source "${SCRIPT_DIR}/lib/transport_usb.sh"
 source "${SCRIPT_DIR}/lib/transport_bluetooth.sh"
 # shellcheck source=lib/limits.sh
 source "${SCRIPT_DIR}/lib/limits.sh"
+# shellcheck source=lib/fn_lock.sh
+source "${SCRIPT_DIR}/lib/fn_lock.sh"
 # shellcheck source=lib/snapshot.sh
 source "${SCRIPT_DIR}/lib/snapshot.sh"
 
@@ -50,32 +54,39 @@ zenbook_kb_load_config
 
 _pre() {
     zenbook_kb_snapshot_write "${SNAPSHOT}" >/dev/null
+    MIN="$(zenbook_kb_get_min)"
+    zenbook_kb_apply_brightness "${MIN}" >/dev/null 2>&1 || true
     logger -t zenbook-kb-brightness "saved snapshot ${SNAPSHOT} before sleep"
 }
 
 _post() {
-    local i=0
+    local i=0 restored=""
     while (( i < POST_DELAY )); do
-        if zenbook_kb_detect_mode "${MODE}" >/dev/null 2>&1; then
+        if zenbook_kb_detect_mode "${MODE}" >/dev/null 2>&1 \
+            || zenbook_kb_sysfs_brightness_path >/dev/null 2>&1; then
             break
         fi
         sleep 1
         i=$((i + 1))
     done
-    if zenbook_kb_snapshot_restore "${SNAPSHOT}" >/dev/null; then
-        zenbook_kb_apply_brightness "$(zenbook_kb_state_read 1)" >/dev/null || true
-        logger -t zenbook-kb-brightness "restored brightness from ${SNAPSHOT}"
+	if restored="$(zenbook_kb_snapshot_restore "${SNAPSHOT}" 2>/dev/null)"; then
+        zenbook_kb_apply_brightness "${restored}" >/dev/null || true
+        logger -t zenbook-kb-brightness "restored brightness ${restored} from ${SNAPSHOT}"
     else
         logger -t zenbook-kb-brightness "restore skipped (no snapshot)"
+    fi
+    if declare -F zenbook_kb_fn_lock_restore >/dev/null 2>&1; then
+        if fn_lock="$(zenbook_kb_fn_lock_restore 2>/dev/null)"; then
+            mode="$(zenbook_kb_fn_lock_mode_name "${fn_lock}" 2>/dev/null || echo "${fn_lock}")"
+            logger -t zenbook-kb-brightness "restored fn-lock mode ${mode} after brightness"
+        fi
     fi
 }
 
 _lid_close() {
     zenbook_kb_snapshot_write "${SNAPSHOT}" >/dev/null
-    if zenbook_kb_detect_mode "${MODE}" >/dev/null 2>&1; then
-        MIN="$(zenbook_kb_get_min)"
-        zenbook_kb_apply_brightness "${MIN}" >/dev/null 2>&1 || true
-    fi
+    MIN="$(zenbook_kb_get_min)"
+    zenbook_kb_apply_brightness "${MIN}" >/dev/null 2>&1 || true
     logger -t zenbook-kb-brightness "lid close: saved and dimmed"
 }
 
@@ -84,12 +95,23 @@ _lid_open() {
     logger -t zenbook-kb-brightness "lid open: restore attempted"
 }
 
+_save() {
+    local fn_lock mode
+    zenbook_kb_snapshot_write "${SNAPSHOT}" >/dev/null
+    fn_lock="$(zenbook_kb_fn_lock_read_current 2>/dev/null || echo "?")"
+    mode="$(zenbook_kb_fn_lock_mode_name "${fn_lock}" 2>/dev/null || echo "?")"
+    logger -t zenbook-kb-brightness "saved snapshot ${SNAPSHOT} (brightness=$(zenbook_kb_state_read 0), fn_lock_mode=${mode})"
+}
+
 case "${1:-}" in
     pre|suspend|sleep)
         _pre
         ;;
-    post|resume)
+    post|resume|restore)
         _post
+        ;;
+    save)
+        _save
         ;;
     lid-close|lid_close)
         _lid_close

@@ -129,9 +129,9 @@ done
 if [[ "$have_vendor_if4" == false && -n "${USB_PORT:-}" && -d "/sys/bus/usb/devices/${USB_PORT}:1.4" ]]; then
 	echo "re-probing USB interface 4 (${USB_PORT}:1.4)…"
 	echo "${USB_PORT}:1.4" >"/sys/bus/usb/drivers/usbhid/unbind" 2>/dev/null || true
-	sleep 0.5
+	sleep 0.15
 	echo "${USB_PORT}:1.4" >"/sys/bus/usb/drivers/usbhid/bind"
-	sleep 0.5
+	sleep 0.15
 	for node in /sys/bus/hid/devices/*0B05*1B2C*; do
 		[[ -e "$node" ]] || continue
 		is_touchpad_node "$node" && continue

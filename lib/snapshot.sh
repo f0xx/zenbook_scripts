@@ -5,12 +5,14 @@ ZENBOOK_KB_DEFAULT_SNAPSHOT="${ZENBOOK_KB_CONFIG_DIR}/zenbook_duo.save"
 
 zenbook_kb_snapshot_write() {
     local path="${1:-${ZENBOOK_KB_DEFAULT_SNAPSHOT}}"
-    local brightness min max
+    local brightness min max fn_lock fn_lock_mode
 
     zenbook_kb_limits_load_config
     brightness="$(zenbook_kb_state_read 1)"
     min="$(zenbook_kb_get_min)"
     max="$(zenbook_kb_get_max)"
+    fn_lock="$(zenbook_kb_fn_lock_read_for_save "${path}")"
+    fn_lock_mode="$(zenbook_kb_fn_lock_mode_name "${fn_lock}")"
     mkdir -p "$(dirname "${path}")"
 
     cat > "${path}" <<EOF
@@ -18,6 +20,8 @@ zenbook_kb_snapshot_write() {
 version = 1
 saved_at = $(date -u +%Y-%m-%dT%H:%M:%SZ)
 brightness = ${brightness}
+fn_lock = ${fn_lock}
+fn_lock_mode = ${fn_lock_mode}
 usb_vendor_id = ${ZENBOOK_KB_USB_VENDOR_ID}
 usb_product_id = ${ZENBOOK_KB_USB_PRODUCT_ID}
 bt_vendor_id = ${ZENBOOK_KB_BT_VENDOR_ID}
@@ -76,6 +80,12 @@ zenbook_kb_snapshot_restore() {
 
 zenbook_kb_apply_brightness() {
     local target="$1"
+
+    if zenbook_kb_sysfs_set "${target}" 2>/dev/null; then
+        zenbook_kb_state_write "${target}"
+        echo "${target}"
+        return 0
+    fi
 
     ACTIVE_MODE="$(zenbook_kb_detect_mode "${MODE}")" || {
         echo "Zenbook Duo keyboard not found" >&2

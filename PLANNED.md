@@ -42,8 +42,19 @@ Example: `contrib/modprobe/zenbook-hid-asus.conf` → `/etc/modprobe.d/`
 
 - `bin/kb-brightness-sleep` — `pre` / `post` / `lid-close` / `lid-open`
 - `contrib/systemd/zenbook-kb-brightness-sleep` → `/usr/lib/systemd/system-sleep/`
-- `contrib/acpi/` — acpid lid/sleep events
+- `contrib/acpi/` — acpid lid/sleep events (fallback when acpid owns lid)
+- `bin/kb-brightness-lid-watch` + `contrib/openrc/zenbook-kb-lid` — **elogind** `LidClosed` (UX8406MA default)
 - `bin/snapshot-plan-state` — labelled config backups before milestones
+
+---
+
+## Boot sideload (OpenRC) — implemented
+
+- `contrib/openrc/zenbook-kb-hid-asus` — default runlevel, before hotkeys
+- `contrib/openrc/zenbook-hid-asus-boot.sh` — wait for USB dock, `insmod` + rebind
+- `/usr/lib/modules/zenbook-hid-asus/<kver>/hid-asus.ko` — installed `.ko` path
+- `/etc/conf.d/zenbook-kb-hid-asus` — `sideload=yes|no|auto`, fn-lock params, `usb_wait_secs`
+- `packaging/gentoo/zenbook_scripts-9999.ebuild` — `USE=kernel` builds and installs the above
 
 ---
 

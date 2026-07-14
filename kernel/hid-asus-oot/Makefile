@@ -7,7 +7,8 @@
 KDIR ?= /lib/modules/$(shell uname -r)/build
 ROOT := ..
 PORT := $(ROOT)/scripts/port-ux8406.py
-KVER := $(notdir $(KDIR))
+# Resolve /lib/modules/$(uname -r)/build → /usr/src/linux-<ver> for artifact paths.
+KVER := $(notdir $(realpath $(KDIR)))
 # kbuild cannot use module paths containing spaces; build under /tmp.
 BUILDDIR := /tmp/zenbook-hid-asus-$(KVER)
 ARTIFACTS := $(ROOT)/build/$(KVER)

@@ -24,10 +24,30 @@ emerge -av app-laptop/zenbook_scripts
 
 | Flag | Default | Meaning |
 |------|---------|---------|
-| `hotkeys` | on | udev + OpenRC/systemd hotkey listener |
+| `hotkeys` | on | udev + OpenRC services (hotkeys, lid watcher, sleep hooks) |
+| `kernel` | on | Build/install oot `hid-asus.ko` + boot sideload service |
 | `qt6` | off | `configure_gui.py` (PySide6) |
-| `kernel` | off | Build/install oot `hid-asus` via `kernel/Makefile` |
-| `zenbook_ux8406` | on | Install `conf.d/UX8406*` profiles |
+| `zenbook_ux8406` | on | Install `conf.d/UX8406*` evdev profiles |
+
+Recommended UX8406 docked USB profile:
+
+```bash
+emerge -av app-laptop/zenbook_scripts
+# or from git overlay:
+USE="hotkeys kernel zenbook_ux8406" emerge -av app-laptop/zenbook_scripts
+```
+
+### Installed paths (Gentoo / configure.py)
+
+| Component | Path |
+|-----------|------|
+| Userspace tree | `/usr/local/share/zenbook-scripts/` |
+| oot `hid-asus.ko` | `/usr/lib/modules/zenbook-hid-asus/<kver>/hid-asus.ko` |
+| Manual sideload | `/usr/local/libexec/zenbook-hid-asus-switch` |
+| Boot sideload | OpenRC `zenbook-kb-hid-asus` → `zenbook-hid-asus-boot.sh` |
+| Boot config | `/etc/conf.d/zenbook-kb-hid-asus` (`sideload=yes\|no\|auto`) |
+
+Re-emerge after **each kernel upgrade** (`KV_FULL` changes).
 
 ## Planned (not in tree yet)
 

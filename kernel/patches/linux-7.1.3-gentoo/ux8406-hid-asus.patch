@@ -154,12 +154,15 @@
 -		drvdata->fn_lock = true;
 -		INIT_WORK(&drvdata->fn_lock_sync_work, asus_sync_fn_lock);
 -		asus_kbd_set_fn_lock(hdev, true);
-+		if (!(drvdata->quirks & QUIRK_ZENBOOK_DUO_KEYBOARD) ||
-+		    drvdata->has_vendor_up) {
-+			drvdata->fn_lock = asus_fn_lock_default_for_device(hdev, drvdata);
-+			INIT_WORK(&drvdata->fn_lock_sync_work, asus_sync_fn_lock);
-+			asus_kbd_set_fn_lock(hdev, drvdata->fn_lock);
-+		}
++		/*
++		 * UX8406 if4 uses vendor usage ranges (0x00-0xff), not individual
++		 * input_mapping entries, so has_vendor_up may stay false even though
++		 * fn-lock must be synced here (asus_filter_zenbook_usb_quirks limits
++		 * QUIRK_HID_FN_LOCK to USB interface 4).
++		 */
++		drvdata->fn_lock = asus_fn_lock_default_for_device(hdev, drvdata);
++		INIT_WORK(&drvdata->fn_lock_sync_work, asus_sync_fn_lock);
++		asus_kbd_set_fn_lock(hdev, drvdata->fn_lock);
  	}
  
 +	if (drvdata->has_vendor_up &&

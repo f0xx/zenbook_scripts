@@ -18,7 +18,7 @@ description="Zenbook Duo Fn+ / special-key handler"
 
 depend() {
 	need localmount
-	after hotplug
+	after hotplug zenbook-kb-hid-asus
 }
 
 start_pre() {
@@ -27,8 +27,45 @@ start_pre() {
 		eerror "command_user is not set — run: sudo python3 configure.py --defaults --all-yes"
 		return 1
 	fi
+	# Avoid flock races when zenbook-kb-hid-asus stops/restarts us during sideload.
+	# Do not poll rc-service on *this* service — start_pre already runs in "starting".
+	for _wait_lib in \
+		/usr/local/share/zenbook-scripts/lib/openrc-wait.sh \
+		/usr/share/zenbook-scripts/lib/openrc-wait.sh; do
+		if [ -f "${_wait_lib}" ]; then
+			# shellcheck source=lib/openrc-wait.sh
+			. "${_wait_lib}"
+			zenbook_rc_wait_not_starting zenbook-kb-hid-asus 20 || true
+			break
+		fi
+	done
+	if [ -f /run/zenbook-kb-hotkeys.pid ]; then
+		i=0
+		while kill -0 "$(cat /run/zenbook-kb-hotkeys.pid 2>/dev/null)" 2>/dev/null; do
+			sleep 0.2
+			i=$((i + 1))
+			[ "$i" -ge 15 ] && break
+		done
+	fi
+	# Drop orphaned listener left after a partial start (avoids "already running").
+	if command -v start-stop-daemon >/dev/null 2>&1; then
+		start-stop-daemon --stop --exec "${command}" --retry TERM/3/KILL/2 2>/dev/null || true
+		rm -f /run/zenbook-kb-hotkeys.pid
+	fi
 	# OpenRC only appends to an existing log; create it before the first start.
 	if [ -n "${output_log:-}" ]; then
 		checkpath -f -m 0664 -o "$command_user" "$output_log"
+	fi
+}
+
+start_post() {
+	if [ -x /usr/local/bin/kb-brightness-sleep ]; then
+		/usr/local/bin/kb-brightness-sleep restore 2>/dev/null || true
+	fi
+}
+
+stop_pre() {
+	if [ -x /usr/local/bin/kb-brightness-sleep ]; then
+		/usr/local/bin/kb-brightness-sleep save 2>/dev/null || true
 	fi
 }

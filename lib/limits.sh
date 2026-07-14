@@ -14,6 +14,30 @@ zenbook_kb_limits_load_config() {
     fi
 }
 
+zenbook_kb_sysfs_brightness_path() {
+    local led="/sys/class/leds/asus::kbd_backlight/brightness"
+    if [[ -r "${led}" || -w "${led}" ]]; then
+        echo "${led}"
+        return 0
+    fi
+    return 1
+}
+
+zenbook_kb_sysfs_read() {
+    local path
+    path="$(zenbook_kb_sysfs_brightness_path)" || return 1
+    tr -d '[:space:]' < "${path}"
+}
+
+zenbook_kb_sysfs_set() {
+    local level="$1" path
+    path="$(zenbook_kb_sysfs_brightness_path)" || return 1
+    if [[ ! -w "${path}" ]]; then
+        return 1
+    fi
+    printf '%s\n' "${level}" > "${path}"
+}
+
 zenbook_kb_sysfs_max() {
     local max_path="/sys/class/leds/asus::kbd_backlight/max_brightness"
     if [[ -r "${max_path}" ]]; then

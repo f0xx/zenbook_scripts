@@ -164,12 +164,17 @@ That is fine — `CONFIG_HID_ASUS=m` loads on demand. The patched module replace
 - Fake keyboard collection on USB interface 4 so Fn+ keys map through `hid-asus`
 - Fn-lock via vendor usage `0x4e`, platform-profile cycle via `0x9d`
 - HID path for `asus::kbd_backlight` on UX8406 DMI boards
-- **Module parameters** (oot `hid-asus` after sideload):
-  - `fn_lock_default` — `-1` = DMI default (UX8406 → Mode B / `false`), `0` = Fn layer, `1` = plain F-keys
-  - `fn_lock_allow_toggle` — `0` disables Fn+Esc layout switching
+- **Module parameters** (oot `hid-asus` after sideload; set in `/etc/conf.d/zenbook-kb-hid-asus` at boot, or sysfs until reload):
+  - `fn_lock_default` — `-1` = DMI default (UX8406 → Mode B), `0` = Mode B (Fn layer), `1` = Mode A (plain F-keys)
+  - `fn_lock_allow_toggle` — `0` = Fn+Esc ignored (pinned), `1` = allow Fn+Esc / vendor `0x4e` toggle
+
+Full table and examples: [`DEPLOY.md`](../DEPLOY.md) §F (`/etc/conf.d/zenbook-kb-hid-asus`).
 
 ```bash
-# Pin Mode B (Fn+F4 backlight) and ignore Fn+Esc toggles:
+# Pin Mode B, allow Fn+Esc toggle:
+# /etc/conf.d/zenbook-kb-hid-asus → fn_lock_default=0 fn_lock_allow_toggle=1
+
+# Pin Mode B, no toggle (default UX8406 docked setup):
 echo 'options hid_asus fn_lock_default=0 fn_lock_allow_toggle=0' | \
   sudo tee /etc/modprobe.d/zenbook-hid-asus.conf
 ```

@@ -17,12 +17,19 @@ def _keyboard_section(
     cfg: configparser.ConfigParser,
     brightness: int,
     limits: BrightnessLimits,
+    *,
+    fn_lock: int | None = None,
+    fn_lock_mode: str | None = None,
 ) -> dict[str, str]:
     kb = cfg["keyboard"]
+    lock = fn_lock if fn_lock is not None else 0
+    mode = fn_lock_mode if fn_lock_mode is not None else ("A" if lock else "B")
     return {
         "version": SNAPSHOT_VERSION,
         "saved_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "brightness": str(brightness),
+        "fn_lock": str(lock),
+        "fn_lock_mode": mode,
         "usb_vendor_id": kb.get("usb_vendor_id", "0b05"),
         "usb_product_id": kb.get("usb_product_id", "1b2c"),
         "bt_vendor_id": kb.get("bt_vendor_id", "0b05"),

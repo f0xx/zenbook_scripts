@@ -195,27 +195,15 @@ def port_hid_asus(src: Path, dst: Path) -> None:
             text,
         )
 
-    text = insert_after(
-        r"static void asus_sync_fn_lock\(struct work_struct \*work\)\n\{\n"
-        r"\tstruct asus_drvdata \*drvdata =\n"
-        r"\tcontainer_of\(work, struct asus_drvdata, fn_lock_sync_work\);\n\n"
-        r"\tasus_kbd_set_fn_lock\(drvdata->hdev, drvdata->fn_lock\);\n\}\n\n",
-        FN_LOCK_MODULE_BLOCK,
+    text = insert_before(
+        r"static int asus_event\(struct hid_device \*hdev, struct hid_field \*field,\n",
+        DMI_AND_WMI_CHECK + FN_LOCK_MODULE_BLOCK,
         text,
     )
 
     text = insert_after(
         r"\tconst struct asus_touchpad_info \*tp;\n",
         HAS_VENDOR_FIELD,
-        text,
-    )
-
-    text = insert_after(
-        r"static void asus_sync_fn_lock\(struct work_struct \*work\)\n\{\n"
-        r"\tstruct asus_drvdata \*drvdata =\n"
-        r"\tcontainer_of\(work, struct asus_drvdata, fn_lock_sync_work\);\n\n"
-        r"\tasus_kbd_set_fn_lock\(drvdata->hdev, drvdata->fn_lock\);\n\}\n\n",
-        DMI_AND_WMI_CHECK,
         text,
     )
 
@@ -279,13 +267,17 @@ def port_hid_asus(src: Path, dst: Path) -> None:
 \treturn 0;
 }"""
 
-    new_fnlock = """\tif (drvdata->quirks & QUIRK_HID_FN_LOCK) {
-\t\tif (!(drvdata->quirks & QUIRK_ZENBOOK_DUO_KEYBOARD) ||
-\t\t    drvdata->has_vendor_up) {
-\t\t\tdrvdata->fn_lock = asus_fn_lock_default_for_device(hdev, drvdata);
-\t\t\tINIT_WORK(&drvdata->fn_lock_sync_work, asus_sync_fn_lock);
-\t\t\tasus_kbd_set_fn_lock(hdev, drvdata->fn_lock);
-\t\t}
+    new_fnlock = """\tif (drvdata->quirks & QUIRK_HID_FN_LOCK &&
+\t\t    !drvdata->fn_lock_sync_work.func) {
+\t\t/*
+\t\t * UX8406 if4 uses vendor usage ranges (0x00-0xff), not individual
+\t\t * input_mapping entries, so has_vendor_up may stay false even though
+\t\t * fn-lock must be synced here (asus_filter_zenbook_usb_quirks limits
+\t\t * QUIRK_HID_FN_LOCK to USB interface 4).
+\t\t */
+\t\tdrvdata->fn_lock = asus_fn_lock_default_for_device(hdev, drvdata);
+\t\tINIT_WORK(&drvdata->fn_lock_sync_work, asus_sync_fn_lock);
+\t\tschedule_work(&drvdata->fn_lock_sync_work);
 \t}
 
 \tif (drvdata->has_vendor_up &&
@@ -296,6 +288,25 @@ def port_hid_asus(src: Path, dst: Path) -> None:
 
 \treturn 0;
 }"""
+
+    text = replace_once(
+        "static void asus_sync_fn_lock(struct work_struct *work)\n"
+        "{\n"
+        "\tstruct asus_drvdata *drvdata =\n"
+        "\tcontainer_of(work, struct asus_drvdata, fn_lock_sync_work);\n\n"
+        "\tasus_kbd_set_fn_lock(drvdata->hdev, drvdata->fn_lock);\n"
+        "}",
+        "static void asus_sync_fn_lock(struct work_struct *work)\n"
+        "{\n"
+        "\tstruct asus_drvdata *drvdata =\n"
+        "\tcontainer_of(work, struct asus_drvdata, fn_lock_sync_work);\n\n"
+        "\tif (drvdata->quirks & QUIRK_ZENBOOK_DUO_KEYBOARD)\n"
+        "\t\tasus_kbd_init(drvdata->hdev, FEATURE_KBD_REPORT_ID);\n\n"
+        "\tasus_kbd_set_fn_lock(drvdata->hdev, drvdata->fn_lock);\n"
+        "}",
+        text,
+        "asus_sync_fn_lock zenbook handshake",
+    )
 
     text = replace_once(old_fnlock, new_fnlock, text, "asus_input_configured tail")
 
@@ -335,9 +346,18 @@ def port_hid_asus(src: Path, dst: Path) -> None:
 
     text = replace_once(
         "\tif (drvdata->quirks & QUIRK_ROG_NKEY_KEYBOARD)\n\t\treturn 0;",
+        "\tif ((drvdata->quirks & QUIRK_HID_FN_LOCK) &&\n"
+        "\t    (drvdata->quirks & QUIRK_ZENBOOK_DUO_KEYBOARD) &&\n"
+        "\t    hid_is_usb(hdev) &&\n"
+        "\t    to_usb_interface(hdev->dev.parent)->altsetting->desc.bInterfaceNumber == 4 &&\n"
+        "\t    !drvdata->fn_lock_sync_work.func) {\n"
+        "\t\tdrvdata->fn_lock = asus_fn_lock_default_for_device(hdev, drvdata);\n"
+        "\t\tINIT_WORK(&drvdata->fn_lock_sync_work, asus_sync_fn_lock);\n"
+        "\t\tschedule_work(&drvdata->fn_lock_sync_work);\n"
+        "\t}\n\n"
         "\tif (drvdata->quirks & (QUIRK_ROG_NKEY_KEYBOARD | QUIRK_ZENBOOK_DUO_KEYBOARD))\n\t\treturn 0;",
         text,
-        "probe early return",
+        "probe zenbook if4 fn_lock sync",
     )
 
     text = insert_before(

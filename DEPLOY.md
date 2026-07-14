@@ -119,3 +119,142 @@ sudo ./kernel/scripts/switch-hid-asus.sh status
 ```
 
 **No reinstall.**
+
+### F. “Boot sideload (OpenRC + elogind)”
+
+After `configure.py` install (or Gentoo `emerge` with `USE=kernel`):
+
+| Piece | Path / service |
+|-------|----------------|
+| oot module | `/usr/lib/modules/zenbook-hid-asus/$(uname -r)/hid-asus.ko` |
+| Boot service | `zenbook-kb-hid-asus` (runlevel **default**, before `zenbook-kb-hotkeys`) |
+| Config | `/etc/conf.d/zenbook-kb-hid-asus` — `sideload=yes\|no\|auto` |
+| Manual switch | `/usr/local/libexec/zenbook-hid-asus-switch` |
+
+Build + install module into system path:
+
+```bash
+make -f kernel/Makefile build-current
+sudo python3 configure.py --defaults --all-yes
+```
+
+Disable sideload service: set `sideload=no` in `/etc/conf.d/zenbook-kb-hid-asus` and
+`rc-update del zenbook-kb-hid-asus default`.
+
+**Re-emerge / re-run configure after each kernel upgrade** — the `.ko` is per `uname -r`.
+
+Service order at login/default: `zenbook-kb-hid-asus` → `zenbook-kb-hotkeys` + `zenbook-kb-lid`.
+
+**Restart speed:** `rc-service zenbook-kb-hid-asus restart` uses a **quick reload** when the
+oot module is already loaded (skips `rmmod`/`insmod` and does not stop hotkeys). Brightness
+and fn-lock are still restored from the snapshot. After a **cold boot** the in-tree module
+is loaded first, so the first service start does a full sideload (~few seconds). Force a full
+reload: `sudo ZENBOOK_HID_QUICK_RELOAD=0 rc-service zenbook-kb-hid-asus restart`.
+
+**Runlevel:** `default`, not `boot` — avoids the “stopping a boot service” warning on
+restart; USB is usually ready by default runlevel anyway (`depend()` still runs this
+before `zenbook-kb-hotkeys`).
+
+**Brightness and fn-lock across reboot:** services call `kb-brightness-sleep save` on stop and
+`restore` on start (`zenbook-kb-hid-asus`, `zenbook-kb-hotkeys`, `zenbook-kb-lid`).
+Snapshot: `~/.config/zenbook-scripts/zenbook_duo.save` (from `command_user`) — fields
+`brightness`, `fn_lock`, `fn_lock_mode`.
+
+#### `/etc/conf.d/zenbook-kb-hid-asus` reference
+
+| Variable | Values | Effect |
+|----------|--------|--------|
+| `sideload` | `yes` / `no` / `auto` | Boot-time oot `insmod` + rebind (see above) |
+| `ko_path` | path | Override installed `.ko` location |
+| `usb_wait_secs` | seconds | How long to wait for docked keyboard when `sideload=yes` |
+| `fn_lock_default` | `-1`, `0`, `1` | Initial layout at module load (see below) |
+| `fn_lock_allow_toggle` | `0`, `1` | Whether Fn+Esc / vendor `0x4e` may switch layout |
+
+OpenRC may log `flock failed` / `already starting` if `zenbook-kb-hid-asus` restarts
+while `zenbook-kb-hotkeys` is still stopping. The switch script waits for a clean stop;
+`zenbook-kb-hotkeys` also waits in `start_pre`. If it persists: `rc-service zenbook-kb-hotkeys zap`
+then `rc-service zenbook-kb-hid-asus restart`.
+
+**Fn-lock modes (UX8406 detachable keyboard, oot `hid-asus` only):**
+
+| Mode | `fn_lock_default` | F1–F12 without Fn | Fn+F4 backlight |
+|------|-------------------|-------------------|-----------------|
+| **B** (recommended docked) | `0` | special/media layer | yes (kernel path) |
+| **A** | `1` | plain F-keys | needs Fn layer / different mapping |
+
+**`fn_lock_allow_toggle`:**
+
+| Value | Fn+Esc | After reboot |
+|-------|--------|--------------|
+| `0` | ignored — layout stays at `fn_lock_default` | always starts at `fn_lock_default` |
+| `1` | toggles A ↔ B (also vendor hotkey `0x4e` where exposed) | restored from snapshot after save (see below) |
+
+Example — pin Mode B but allow temporary switch:
+
+```bash
+fn_lock_default=0
+fn_lock_allow_toggle=1
+```
+
+Then `sudo rc-service zenbook-kb-hid-asus restart` (or reboot). **`fn_lock_default` in
+conf.d is the fallback** when no snapshot exists; once you have saved state, service
+reload and reboot restore the last known mode from `zenbook_duo.save` (same file as
+brightness).
+
+**Persistence (service reload / reboot):**
+
+| Event | Fn-lock |
+|-------|---------|
+| `zenbook-kb-hid-asus` / `zenbook-kb-hotkeys` **stop** | `kb-brightness-sleep save` reads live mode via USB vendor hidraw and writes `fn_lock` / `fn_lock_mode` into `~/.config/zenbook-scripts/zenbook_duo.save` |
+| **Sideload / boot `insmod`** | `fn_lock_default` for `insmod` is taken from the snapshot (overrides conf.d) |
+| **Service start / resume** | Full `rmmod`/`insmod` applies `fn_lock_default` from snapshot (kernel driver state). Userspace HID SET does **not** change key mapping. |
+| **Fn+Esc toggle** | `zenbook-kb-hotkeys` tracks toggles in `fn-lock-mode` + `fn-lock-toggled`; keep hotkeys running when you toggle. |
+
+Changes apply on next `insmod` (boot service or manual `zenbook-hid-asus-switch sideload`).
+Runtime sysfs: `/sys/module/hid_asus/parameters/fn_lock_*` (read-only until reload).
+
+### G. Multi-user / profiles
+
+**Not multi-profile today.** Layers split like this:
+
+| Layer | Scope | Config |
+|-------|-------|--------|
+| Kernel / fn-lock | **machine** — one layout for the physical keyboard | `/etc/conf.d/zenbook-kb-hid-asus`, boot `insmod` params |
+| Hotkey listener | **one Unix user** (`command_user`) | `/etc/conf.d/zenbook-kb-hotkeys` |
+| Key bindings | per-user file, but only `command_user`'s listener runs | `~/.config/zenbook-scripts/zenbook-hotkeys.conf` |
+| Brightness + fn-lock snapshot | **one user** (same as `command_user` for lid/sleep hooks) | `~/.config/zenbook-scripts/zenbook_duo.save` |
+
+If two people share the laptop: only the configured `command_user` gets custom Fn+
+mappings and brightness save/restore. Other users' `~/.config/zenbook-scripts/` files
+are ignored unless you change `command_user` and restart services. **Fn-lock mode is
+always shared** — it is a kernel property of the docked keyboard, not per login session.
+
+Workarounds: separate Linux users with manual `command_user` changes (not automated);
+or per-user evdev remapping outside this stack (e.g. desktop session tools).
+
+### H. Security notes (SSH / multi-user)
+
+**Threat model:** local input stack + optional passwordless `sudo` for one user.
+Not a network-facing daemon.
+
+| Action | Typical requirement |
+|--------|---------------------|
+| Sideload / `insmod` / HID rebind | **root** (`zenbook-hid-asus-switch`, boot service) |
+| Write `asus::kbd_backlight` sysfs | **root** (or udev rule — not installed by default) |
+| `kb-brightness` via sudoers | **install user only** (NOPASSWD line from `configure.py`) |
+| Hotkey listener | runs as `command_user`, group `input` — reads evdev nodes |
+| Lid / sleep brightness hooks | **root** (OpenRC), snapshot path from `command_user` |
+
+**SSH session:** a remote user cannot press Fn keys on the physical keyboard through
+SSH. They can only affect this stack if they already have sufficient privilege on the
+host (e.g. **root**, membership in `input` plus running their own listener, or the
+install user's passwordless `kb-brightness` sudo rule).
+
+**Low practical risk** for a single-user laptop: unprivileged SSH users cannot sideload
+the module, rebind HID, or change `/etc/conf.d/zenbook-kb-hid-asus`. Do not grant
+untrusted users `input`, `plugdev`, or write access to `/dev/hidraw*` if you run
+`usb_poll=true` (not recommended on UX8406 docked USB).
+
+**Do not** run `zenbook-kb-hotkeys` as root; `configure.py` sets a normal user.
+Re-run `configure.py` after adding untrusted sudoers rules that expose `kb-brightness`
+to extra users.
