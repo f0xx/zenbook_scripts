@@ -1,5 +1,5 @@
 --- /usr/src/linux-7.0.12-gentoo-r1/drivers/hid/hid-asus.c	2026-06-14 17:04:59.848466360 +0200
-+++ build/linux-7.0.12-gentoo-r1/hid-asus.c	2026-07-15 10:31:01.901677385 +0200
++++ build/linux-7.0.12-gentoo-r1/hid-asus.c	2026-07-15 10:47:25.812798411 +0200
 @@ -32,6 +32,9 @@
  #include <linux/usb.h> /* For to_usb_interface for T100 touchpad intf check */
  #include <linux/power_supply.h>
@@ -31,7 +31,7 @@
  	struct power_supply *battery;
  	struct power_supply_desc battery_desc;
  	int battery_capacity;
-@@ -350,6 +360,96 @@
+@@ -350,6 +360,102 @@
  	return 0;
  }
  
@@ -115,9 +115,15 @@
 +MODULE_PARM_DESC(fn_row_policy,
 +		 "Fn-row bitmask for Zenbook Duo main keyboard (USB if0): "
 +		 "bit0=F1..bit11=F12, bit12=Esc; 0=passthrough, 1=simulate Fn layer "
-+		 "(F1=mute F2=vol- F3=vol+ F4=kbd backlight)");
++		 "(default: KEY_F1–F3 on if0; fn_row_media_keys=1 → KEY_MUTE/VOLDOWN/VOLUP)");
 +
 +static struct asus_kbd_leds *zenbook_duo_vendor_leds;
++
++/* Emit simulated Fn-row keys on if0 (matches Mode B Fn+F1–F3 KEY_Fn on if00). */
++static bool fn_row_media_keys;
++module_param(fn_row_media_keys, bool, 0644);
++MODULE_PARM_DESC(fn_row_media_keys,
++		 "Simulate with KEY_MUTE/VOLUMEDOWN/VOLUMEUP instead of KEY_F1–F3");
 +
 +static int zenbook_fn_row_policy_event(struct hid_device *hdev,
 +				       struct asus_drvdata *drvdata,
@@ -128,7 +134,7 @@
  static int asus_event(struct hid_device *hdev, struct hid_field *field,
  		      struct hid_usage *usage, __s32 value)
  {
-@@ -358,9 +458,28 @@
+@@ -358,9 +464,28 @@
  	if ((usage->hid & HID_USAGE_PAGE) == HID_UP_ASUSVENDOR &&
  	    (usage->hid & HID_USAGE) != 0x00 &&
  	    (usage->hid & HID_USAGE) != 0xff && !usage->type) {
@@ -159,7 +165,7 @@
  
  	if (usage->type == EV_KEY && value) {
  		switch (usage->code) {
-@@ -372,8 +491,11 @@
+@@ -372,8 +497,11 @@
  			return !asus_hid_event(ASUS_EV_BRTTOGGLE);
  		case KEY_FN_ESC:
  			if (drvdata->quirks & QUIRK_HID_FN_LOCK) {
@@ -173,7 +179,7 @@
  			}
  			break;
  		}
-@@ -386,6 +508,11 @@
+@@ -386,6 +514,11 @@
  		struct hid_report *report, u8 *data, int size)
  {
  	struct asus_drvdata *drvdata = hid_get_drvdata(hdev);
@@ -185,7 +191,7 @@
  
  	if (drvdata->battery && data[0] == BATTERY_REPORT_ID)
  		return asus_report_battery(drvdata, data, size);
-@@ -588,6 +715,9 @@
+@@ -588,6 +721,9 @@
  	struct asus_drvdata *drvdata =
  	container_of(work, struct asus_drvdata, fn_lock_sync_work);
  
@@ -195,7 +201,7 @@
  	asus_kbd_set_fn_lock(drvdata->hdev, drvdata->fn_lock);
  }
  
-@@ -778,11 +908,201 @@
+@@ -778,11 +914,235 @@
  	if (ret < 0) {
  		/* No need to have this still around */
  		devm_kfree(&hdev->dev, drvdata->kbd_backlight);
@@ -289,6 +295,7 @@
 +	list_for_each_entry(hidinput, &hdev->inputs, list) {
 +		if (!hidinput->input)
 +			continue;
++		input_set_capability(hidinput->input, EV_KEY, keycode);
 +		input_report_key(hidinput->input, keycode, 1);
 +		input_sync(hidinput->input);
 +		input_report_key(hidinput->input, keycode, 0);
@@ -297,17 +304,44 @@
 +	}
 +}
 +
-+static void zenbook_fn_row_simulate_usage(struct hid_device *hdev, u8 usage)
++static unsigned int zenbook_fn_row_sim_keycode(u8 usage)
 +{
++	if (fn_row_media_keys) {
++		switch (usage) {
++		case 0x3a:
++			return KEY_MUTE;
++		case 0x3b:
++			return KEY_VOLUMEDOWN;
++		case 0x3c:
++			return KEY_VOLUMEUP;
++		default:
++			return 0;
++		}
++	}
++
 +	switch (usage) {
 +	case 0x3a:
-+		zenbook_fn_row_emit_key(hdev, KEY_MUTE);
-+		break;
++		return KEY_F1;
 +	case 0x3b:
-+		zenbook_fn_row_emit_key(hdev, KEY_VOLUMEDOWN);
-+		break;
++		return KEY_F2;
 +	case 0x3c:
-+		zenbook_fn_row_emit_key(hdev, KEY_VOLUMEUP);
++		return KEY_F3;
++	default:
++		return 0;
++	}
++}
++
++static void zenbook_fn_row_simulate_usage(struct hid_device *hdev, u8 usage)
++{
++	unsigned int keycode;
++
++	switch (usage) {
++	case 0x3a:
++	case 0x3b:
++	case 0x3c:
++		keycode = zenbook_fn_row_sim_keycode(usage);
++		if (keycode)
++			zenbook_fn_row_emit_key(hdev, keycode);
 +		break;
 +	case 0x3d:
 +		zenbook_fn_row_toggle_backlight();
@@ -385,19 +419,25 @@
 +
 +	if (value && keycode == KEY_F4)
 +		zenbook_fn_row_toggle_backlight();
-+	else if (value && keycode == KEY_F1)
-+		zenbook_fn_row_emit_key(hdev, KEY_MUTE);
-+	else if (value && keycode == KEY_F2)
-+		zenbook_fn_row_emit_key(hdev, KEY_VOLUMEDOWN);
-+	else if (value && keycode == KEY_F3)
-+		zenbook_fn_row_emit_key(hdev, KEY_VOLUMEUP);
++	else if (value) {
++		unsigned int sim = 0;
++
++		if (keycode == KEY_F1)
++			sim = zenbook_fn_row_sim_keycode(0x3a);
++		else if (keycode == KEY_F2)
++			sim = zenbook_fn_row_sim_keycode(0x3b);
++		else if (keycode == KEY_F3)
++			sim = zenbook_fn_row_sim_keycode(0x3c);
++		if (sim)
++			zenbook_fn_row_emit_key(hdev, sim);
++	}
 +
 +	return 1;
 +}
  /*
   * [0]       REPORT_ID (same value defined in report descriptor)
   * [1]	     rest battery level. range [0..255]
-@@ -999,12 +1319,25 @@
+@@ -999,12 +1359,25 @@
  
  	drvdata->input = input;
  
@@ -426,7 +466,7 @@
  	return 0;
  }
  
-@@ -1077,6 +1410,7 @@
+@@ -1077,6 +1450,7 @@
  			return -1;
  		}
  
@@ -434,7 +474,7 @@
  		set_bit(EV_REP, hi->input->evbit);
  		return 1;
  	}
-@@ -1192,6 +1526,31 @@
+@@ -1192,6 +1566,31 @@
  	return 0;
  }
  
@@ -466,7 +506,7 @@
  static int asus_probe(struct hid_device *hdev, const struct hid_device_id *id)
  {
  	struct hid_report_enum *rep_enum;
-@@ -1210,6 +1569,8 @@
+@@ -1210,6 +1609,8 @@
  
  	drvdata->quirks = id->driver_data;
  
@@ -475,7 +515,7 @@
  	/*
  	 * T90CHI's keyboard dock returns same ID values as T100CHI's dock.
  	 * Thus, identify T90CHI dock with product name string.
-@@ -1296,6 +1657,7 @@
+@@ -1296,6 +1697,7 @@
  	}
  
  	if (is_vendor && (drvdata->quirks & QUIRK_USE_KBD_BACKLIGHT) &&
@@ -483,7 +523,7 @@
  	    asus_kbd_register_leds(hdev))
  		hid_warn(hdev, "Failed to initialize backlight.\n");
  
-@@ -1303,7 +1665,26 @@
+@@ -1303,7 +1705,26 @@
  	 * For ROG keyboards, skip rename for consistency and ->input check as
  	 * some devices do not have inputs.
  	 */
@@ -511,7 +551,7 @@
  		return 0;
  
  	/*
-@@ -1352,6 +1733,22 @@
+@@ -1352,6 +1773,22 @@
  	hid_hw_stop(hdev);
  }
  
@@ -534,7 +574,7 @@
  static const __u8 asus_g752_fixed_rdesc[] = {
          0x19, 0x00,			/*   Usage Minimum (0x00)       */
          0x2A, 0xFF, 0x00,		/*   Usage Maximum (0xFF)       */
-@@ -1374,41 +1771,59 @@
+@@ -1374,41 +1811,59 @@
  		hid_info(hdev, "Fixing up Asus T100 keyb report descriptor\n");
  		rdesc[74] &= ~HID_MAIN_ITEM_CONSTANT;
  	}
@@ -609,7 +649,7 @@
  
  			memmove(rdesc + offs + 4, rdesc + offs + 2, 12);
  			rdesc[offs] = 0x19;
-@@ -1419,6 +1834,25 @@
+@@ -1419,6 +1874,25 @@
  		}
  	}
  
@@ -635,7 +675,7 @@
  	if (drvdata->quirks & QUIRK_G752_KEYBOARD &&
  		 *rsize == 75 && rdesc[61] == 0x15 && rdesc[62] == 0x00) {
  		/* report is missing usage minimum and maximum */
-@@ -1524,6 +1958,11 @@
+@@ -1524,6 +1998,11 @@
  	  QUIRK_USE_KBD_BACKLIGHT | QUIRK_ROG_NKEY_KEYBOARD },
  	{ HID_DEVICE(BUS_USB, HID_GROUP_GENERIC,
  		USB_VENDOR_ID_ASUSTEK, USB_DEVICE_ID_ASUSTEK_T101HA_KEYBOARD) },

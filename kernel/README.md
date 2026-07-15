@@ -167,7 +167,7 @@ That is fine — `CONFIG_HID_ASUS=m` loads on demand. The patched module replace
 - **Module parameters** (oot `hid-asus` after sideload; set in `/etc/conf.d/zenbook-kb-hid-asus` at boot, or sysfs until reload):
   - `fn_lock_default` — `-1` = DMI default (UX8406 → Mode B), `0` = Mode B (Fn layer), `1` = Mode A (plain F-keys)
   - `fn_lock_allow_toggle` — `0` = Fn+Esc ignored (pinned), `1` = allow Fn+Esc / vendor `0x4e` toggle
-  - `fn_row_policy` — *(feature branch)* per-key Fn-row bitmask on USB **if0**: bit0=F1 (**1**, mute) bit1=F2 (**2**, vol−) bit2=F3 (**4**, vol+) bit3=F4 (**8**, kbd backlight) … bit11=F12, bit12=Esc. Hooks **raw HID** on if0; F4 also has evdev fallback.
+  - `fn_row_policy` — *(feature branch)* per-key Fn-row bitmask on USB **if0** (raw HID hook). F4=bit3 (**8**). F1–F3 default: inject `KEY_F1`–`KEY_F3` on **event5/if0** (Mode B Fn+F parity). Set `fn_row_media_keys=1` for `KEY_MUTE`/`KEY_VOLUMEDOWN`/`KEY_VOLUMEUP` instead. F4 backlight unchanged.
 
 Full table and examples: [`DEPLOY.md`](../DEPLOY.md) §F (`/etc/conf.d/zenbook-kb-hid-asus`).
 
@@ -179,12 +179,10 @@ Full table and examples: [`DEPLOY.md`](../DEPLOY.md) §F (`/etc/conf.d/zenbook-k
 echo 'options hid_asus fn_lock_default=0 fn_lock_allow_toggle=0' | \
   sudo tee /etc/modprobe.d/zenbook-hid-asus.conf
 
-# Experiment: F1–F4 simulate Fn layer (bits 0–3 = 0x0f), Mode B layout:
-# echo 'options hid_asus fn_lock_default=0 fn_row_policy=0x0f' | \
-#   sudo tee /etc/modprobe.d/zenbook-fn-row-policy.conf
-
-# F4 only (bit 3):
-# echo 'options hid_asus fn_row_policy=0x08' | ...
+# Experiment: F1–F4 simulate Fn layer (bits 0–3 = 0x0f):
+# options hid_asus fn_row_policy=15
+# Optional direct media keys (PipeWire) instead of KEY_F1–F3:
+# options hid_asus fn_row_policy=15 fn_row_media_keys=1
 ```
 
 ## Patches
