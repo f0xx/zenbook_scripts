@@ -167,7 +167,17 @@ That is fine — `CONFIG_HID_ASUS=m` loads on demand. The patched module replace
 - **Module parameters** (oot `hid-asus` after sideload; set in `/etc/conf.d/zenbook-kb-hid-asus` at boot, or sysfs until reload):
   - `fn_lock_default` — `-1` = DMI default (UX8406 → Mode B), `0` = Mode B (Fn layer), `1` = Mode A (plain F-keys)
   - `fn_lock_allow_toggle` — `0` = Fn+Esc ignored (pinned), `1` = allow Fn+Esc / vendor `0x4e` toggle
-  - `fn_row_policy` — *(feature branch)* per-key Fn-row bitmask on USB **if0** (raw HID hook). F4=bit3 (**8**). F1–F3 default: inject `KEY_F1`–`KEY_F3` on **event5/if0** (Mode B Fn+F parity). Set `fn_row_media_keys=1` for `KEY_MUTE`/`KEY_VOLUMEDOWN`/`KEY_VOLUMEUP` instead. F4 backlight unchanged.
+  - `fn_row_policy` — *(feature branch)* per-key merge bitmask (decimal values):
+
+| Bits | Keys | Bit **set** (1) | Bit **clear** (0) |
+|------|------|-----------------|-------------------|
+| 0–2 | F1–F3 | Plain → media (if3 consumer, like Fn+F) | Plain → `KEY_F1`–`KEY_F3` on if0 |
+| 3–11 | F4–F12 | Fn+F → special (F4: stepped kbd BL 0→1→2→3) | Plain → `KEY_F4`–`KEY_F12`; Fn+F unchanged |
+| 12 | Esc | reserved | reserved |
+
+Examples: `fn_row_policy=8` (0x08) = F4 Fn-sim only; `fn_row_policy=7` (0x07) = F1–F3 plain-sim; `fn_row_policy=15` (0x0f) = F1–F4 both segments.
+
+Meta/Super held on if0 reports bypass policy (desktop shortcuts).
 
 Full table and examples: [`DEPLOY.md`](../DEPLOY.md) §F (`/etc/conf.d/zenbook-kb-hid-asus`).
 
@@ -178,11 +188,6 @@ Full table and examples: [`DEPLOY.md`](../DEPLOY.md) §F (`/etc/conf.d/zenbook-k
 # Pin Mode B, no toggle (default UX8406 docked setup):
 echo 'options hid_asus fn_lock_default=0 fn_lock_allow_toggle=0' | \
   sudo tee /etc/modprobe.d/zenbook-hid-asus.conf
-
-# Experiment: F1–F4 simulate Fn layer (bits 0–3 = 0x0f):
-# options hid_asus fn_row_policy=15
-# Optional direct media keys (PipeWire) instead of KEY_F1–F3:
-# options hid_asus fn_row_policy=15 fn_row_media_keys=1
 ```
 
 ## Patches

@@ -113,24 +113,20 @@ static bool asus_fn_lock_default_for_device(struct hid_device *hdev,
 
 FN_ROW_POLICY_PARAMS = """
 /*
- * Per-key Fn-row policy on UX8406 main keyboard (USB if0).
- * Bits 0-11: F1-F12, bit 12: Esc, bits 13-31 reserved.
- * 0 = plain passthrough (KEY_Fn only), 1 = simulate Fn+Fn in driver.
+ * Per-key Fn-row merge on UX8406 USB if0 (+ if3 consumer / if4 vendor).
+ * Bits 0-11: F1-F12, bit 12: Esc.
+ * F1-F3 (bits 0-2): bit set → plain key simulates Fn+F (media on if3);
+ *                     bit clear → plain KEY_F1-F3 passthrough on if0.
+ * F4-F12 (bits 3-11): bit set → Fn+F simulates special (F4 = stepped kbd BL);
+ *                       bit clear → plain KEY_Fn passthrough; Fn+F unchanged.
  */
 static u32 fn_row_policy;
 module_param(fn_row_policy, uint, 0644);
 MODULE_PARM_DESC(fn_row_policy,
-		 "Fn-row bitmask for Zenbook Duo main keyboard (USB if0): "
-		 "bit0=F1..bit11=F12, bit12=Esc; 0=passthrough, 1=simulate Fn layer "
-		 "(default: KEY_F1–F3 on if0; fn_row_media_keys=1 → KEY_MUTE/VOLDOWN/VOLUP)");
+		 "Fn-row bitmask: F1-F3 plain-sim / F4-F12 Fn-sim (see kernel/README)");
 
 static struct asus_kbd_leds *zenbook_duo_vendor_leds;
-
-/* Emit simulated Fn-row keys on if0 (matches Mode B Fn+F1–F3 KEY_Fn on if00). */
-static bool fn_row_media_keys;
-module_param(fn_row_media_keys, bool, 0644);
-MODULE_PARM_DESC(fn_row_media_keys,
-		 "Simulate with KEY_MUTE/VOLUMEDOWN/VOLUMEUP instead of KEY_F1–F3");
+static struct hid_device *zenbook_duo_consumer_hdev;
 
 static int zenbook_fn_row_policy_event(struct hid_device *hdev,
 				       struct asus_drvdata *drvdata,
@@ -138,31 +134,48 @@ static int zenbook_fn_row_policy_event(struct hid_device *hdev,
 static int zenbook_fn_row_policy_raw(struct hid_device *hdev,
 				     struct asus_drvdata *drvdata,
 				     u8 *data, int size);
+static int zenbook_fn_row_policy_vendor_raw(struct hid_device *hdev,
+					    u8 *data, int size);
 """
 
 FN_ROW_POLICY_IMPL = """
 #define ZENBOOK_HID_F1\t\t0x3a
 #define ZENBOOK_HID_F12\t\t0x45
 #define ZENBOOK_HID_ESC\t\t0x29
+#define ZENBOOK_IF0_MOD_GUI\t(BIT(3) | BIT(7))
 
-static bool zenbook_is_duo_main_keyboard(struct hid_device *hdev,
-					 struct asus_drvdata *drvdata)
+static bool zenbook_is_duo_usb_if(struct hid_device *hdev, unsigned int ifnum_want)
 {
 	struct usb_interface *intf;
 	struct usb_device *udev;
-
-	(void)drvdata;
 
 	if (!hid_is_usb(hdev))
 		return false;
 
 	intf = to_usb_interface(hdev->dev.parent);
-	if (intf->altsetting->desc.bInterfaceNumber != 0)
+	if (intf->altsetting->desc.bInterfaceNumber != ifnum_want)
 		return false;
 
 	udev = interface_to_usbdev(intf);
 	return le16_to_cpu(udev->descriptor.idProduct) ==
 		USB_DEVICE_ID_ASUSTEK_ZENBOOK_DUO_KEYBOARD;
+}
+
+static bool zenbook_is_duo_main_keyboard(struct hid_device *hdev,
+					 struct asus_drvdata *drvdata)
+{
+	(void)drvdata;
+	return zenbook_is_duo_usb_if(hdev, 0);
+}
+
+static bool zenbook_is_duo_consumer_if3(struct hid_device *hdev)
+{
+	return zenbook_is_duo_usb_if(hdev, 3);
+}
+
+static bool zenbook_is_duo_vendor_if4(struct hid_device *hdev)
+{
+	return zenbook_is_duo_usb_if(hdev, 4);
 }
 
 static int zenbook_fn_row_hid_usage_bit(u8 usage)
@@ -186,37 +199,23 @@ static bool zenbook_fn_row_report_has_usage(const u8 *data, int size, u8 usage)
 	return false;
 }
 
-static bool zenbook_fn_row_report_simulate(const u8 *data, int size)
+static bool zenbook_fn_row_is_f13(int bit)
 {
-	int i, bit;
-
-	for (i = 0; i < size; i++) {
-		bit = zenbook_fn_row_hid_usage_bit(data[i]);
-		if (bit >= 0 && (fn_row_policy & BIT(bit)))
-			return true;
-	}
-	return false;
+	return bit >= 0 && bit <= 2;
 }
 
-static void zenbook_fn_row_toggle_backlight(void)
+static bool zenbook_fn_row_is_f412(int bit)
 {
-	struct asus_kbd_leds *led = zenbook_duo_vendor_leds;
-	unsigned long flags;
-	unsigned int next;
-
-	if (!led)
-		return;
-
-	spin_lock_irqsave(&led->lock, flags);
-	next = led->brightness ? 0 : 3;
-	spin_unlock_irqrestore(&led->lock, flags);
-
-	asus_kbd_backlight_set(&led->listener, next);
+	return bit >= 3 && bit <= 11;
 }
 
-static void zenbook_fn_row_emit_key(struct hid_device *hdev, unsigned int keycode)
+static void zenbook_fn_row_emit_on_hdev(struct hid_device *hdev,
+					unsigned int keycode)
 {
 	struct hid_input *hidinput;
+
+	if (!hdev)
+		return;
 
 	list_for_each_entry(hidinput, &hdev->inputs, list) {
 		if (!hidinput->input)
@@ -230,51 +229,58 @@ static void zenbook_fn_row_emit_key(struct hid_device *hdev, unsigned int keycod
 	}
 }
 
-static unsigned int zenbook_fn_row_sim_keycode(u8 usage)
+static void zenbook_fn_row_step_backlight(void)
 {
-	if (fn_row_media_keys) {
-		switch (usage) {
-		case 0x3a:
-			return KEY_MUTE;
-		case 0x3b:
-			return KEY_VOLUMEDOWN;
-		case 0x3c:
-			return KEY_VOLUMEUP;
-		default:
-			return 0;
-		}
-	}
+	struct asus_kbd_leds *led = zenbook_duo_vendor_leds;
+	unsigned long flags;
+	unsigned int next, cur;
 
-	switch (usage) {
-	case 0x3a:
-		return KEY_F1;
-	case 0x3b:
-		return KEY_F2;
-	case 0x3c:
-		return KEY_F3;
-	default:
-		return 0;
-	}
+	if (!led)
+		return;
+
+	spin_lock_irqsave(&led->lock, flags);
+	cur = led->brightness;
+	next = cur >= 3 ? 0 : cur + 1;
+	spin_unlock_irqrestore(&led->lock, flags);
+
+	asus_kbd_backlight_set(&led->listener, next);
 }
 
-static void zenbook_fn_row_simulate_usage(struct hid_device *hdev, u8 usage)
+static void zenbook_fn_row_f13_plain(struct hid_device *if0, u8 usage, bool sim_fn)
 {
+	struct hid_device *target = if0;
 	unsigned int keycode;
 
-	switch (usage) {
-	case 0x3a:
-	case 0x3b:
-	case 0x3c:
-		keycode = zenbook_fn_row_sim_keycode(usage);
-		if (keycode)
-			zenbook_fn_row_emit_key(hdev, keycode);
-		break;
-	case 0x3d:
-		zenbook_fn_row_toggle_backlight();
-		break;
-	default:
-		break;
+	if (sim_fn) {
+		target = zenbook_duo_consumer_hdev;
+		switch (usage) {
+		case 0x3a:
+			keycode = KEY_MUTE;
+			break;
+		case 0x3b:
+			keycode = KEY_VOLUMEDOWN;
+			break;
+		case 0x3c:
+			keycode = KEY_VOLUMEUP;
+			break;
+		default:
+			return;
+		}
+	} else {
+		keycode = KEY_F1 + (usage - ZENBOOK_HID_F1);
 	}
+
+	zenbook_fn_row_emit_on_hdev(target, keycode);
+}
+
+static void zenbook_fn_row_f412_plain_passthrough(struct hid_device *if0, u8 usage)
+{
+	int bit = zenbook_fn_row_hid_usage_bit(usage);
+
+	if (bit < 3)
+		return;
+
+	zenbook_fn_row_emit_on_hdev(if0, KEY_F1 + bit);
 }
 
 static int zenbook_fn_row_policy_raw(struct hid_device *hdev,
@@ -283,31 +289,39 @@ static int zenbook_fn_row_policy_raw(struct hid_device *hdev,
 {
 	static u8 prev[8];
 	static int prev_len;
-	int i, swallow;
+	int i, bit, swallow;
 	u8 usage;
+	bool rising;
 
 	if (!fn_row_policy || !zenbook_is_duo_main_keyboard(hdev, drvdata) || size < 1)
 		return 0;
 
-	swallow = zenbook_fn_row_report_simulate(data, size) ||
-		  zenbook_fn_row_report_simulate(prev, prev_len);
+	/* Meta / Super combos must reach userspace (desktop shortcuts). */
+	if (data[0] & ZENBOOK_IF0_MOD_GUI)
+		return 0;
 
-	if (swallow) {
-		for (i = 0; i < size; i++) {
-			usage = data[i];
-			if (zenbook_fn_row_hid_usage_bit(usage) < 0 ||
-			    !(fn_row_policy & BIT(zenbook_fn_row_hid_usage_bit(usage))))
+	swallow = 0;
+	for (i = 2; i < size && i < 8; i++) {
+		usage = data[i];
+		bit = zenbook_fn_row_hid_usage_bit(usage);
+		if (bit < 0 || bit > 11)
+			continue;
+
+		rising = !zenbook_fn_row_report_has_usage(prev, prev_len, usage) &&
+			 zenbook_fn_row_report_has_usage(data, size, usage);
+
+		if (zenbook_fn_row_is_f13(bit)) {
+			if (!(fn_row_policy & BIT(bit)) && !rising)
 				continue;
-			if (!zenbook_fn_row_report_has_usage(prev, prev_len, usage))
-				zenbook_fn_row_simulate_usage(hdev, usage);
+			if (rising)
+				zenbook_fn_row_f13_plain(hdev, usage,
+							 !!(fn_row_policy & BIT(bit)));
+			swallow = 1;
+		} else if (zenbook_fn_row_is_f412(bit) && (fn_row_policy & BIT(bit))) {
+			if (rising)
+				zenbook_fn_row_f412_plain_passthrough(hdev, usage);
+			swallow = 1;
 		}
-		if (size <= (int)sizeof(prev)) {
-			memcpy(prev, data, size);
-			prev_len = size;
-		} else {
-			prev_len = 0;
-		}
-		return -1;
 	}
 
 	if (size <= (int)sizeof(prev)) {
@@ -315,6 +329,33 @@ static int zenbook_fn_row_policy_raw(struct hid_device *hdev,
 		prev_len = size;
 	} else {
 		prev_len = 0;
+	}
+
+	return swallow ? -1 : 0;
+}
+
+static int zenbook_fn_row_policy_vendor_raw(struct hid_device *hdev,
+					    u8 *data, int size)
+{
+	static bool f4_vendor_down;
+
+	if (!fn_row_policy || !zenbook_is_duo_vendor_if4(hdev))
+		return 0;
+
+	if (!(fn_row_policy & BIT(3)) || size < 2 || data[0] != 0x5a)
+		return 0;
+
+	if (data[1] == 0xc7) {
+		bool down = size < 3 || data[2] == 0x00;
+		if (down && !f4_vendor_down)
+			zenbook_fn_row_step_backlight();
+		f4_vendor_down = down;
+		return -1;
+	}
+
+	if (data[1] == 0x00 && f4_vendor_down) {
+		f4_vendor_down = false;
+		return -1;
 	}
 
 	return 0;
@@ -335,30 +376,25 @@ static int zenbook_fn_row_policy_event(struct hid_device *hdev,
 				       unsigned int keycode, __s32 value)
 {
 	int bit;
+	struct asus_drvdata *vendor;
 
-	if (!fn_row_policy || !zenbook_is_duo_main_keyboard(hdev, drvdata))
+	if (!fn_row_policy || !zenbook_is_duo_main_keyboard(hdev, drvdata) || !value)
 		return 0;
 
 	bit = zenbook_fn_row_key_bit(keycode);
-	if (bit < 0 || !(fn_row_policy & BIT(bit)))
+	if (bit < 3 || !(fn_row_policy & BIT(bit)))
 		return 0;
 
-	if (value && keycode == KEY_F4)
-		zenbook_fn_row_toggle_backlight();
-	else if (value) {
-		unsigned int sim = 0;
-
-		if (keycode == KEY_F1)
-			sim = zenbook_fn_row_sim_keycode(0x3a);
-		else if (keycode == KEY_F2)
-			sim = zenbook_fn_row_sim_keycode(0x3b);
-		else if (keycode == KEY_F3)
-			sim = zenbook_fn_row_sim_keycode(0x3c);
-		if (sim)
-			zenbook_fn_row_emit_key(hdev, sim);
+	/* Mode B: KEY_F4 on if0 is Fn+F4 — stepped backlight, not plain F4. */
+	if (keycode == KEY_F4 && zenbook_duo_vendor_leds) {
+		vendor = hid_get_drvdata(zenbook_duo_vendor_leds->hdev);
+		if (vendor && !vendor->fn_lock) {
+			zenbook_fn_row_step_backlight();
+			return 1;
+		}
 	}
 
-	return 1;
+	return 0;
 }
 """
 
@@ -530,6 +566,9 @@ def port_hid_asus(src: Path, dst: Path) -> None:
         "{\n"
         "\tstruct asus_drvdata *drvdata = hid_get_drvdata(hdev);\n"
         "\tint ret;\n\n"
+        "\tret = zenbook_fn_row_policy_vendor_raw(hdev, data, size);\n"
+        "\tif (ret)\n"
+        "\t\treturn ret;\n\n"
         "\tret = zenbook_fn_row_policy_raw(hdev, drvdata, data, size);\n"
         "\tif (ret)\n"
         "\t\treturn ret;\n\n"
@@ -565,6 +604,9 @@ def port_hid_asus(src: Path, dst: Path) -> None:
 \t    !asus_kbd_wmi_led_control_present(hdev) &&
 \t    asus_kbd_register_leds(hdev))
 \t\thid_warn(hdev, "Failed to initialize backlight.\\n");
+
+\tif (zenbook_is_duo_consumer_if3(hdev))
+\t\tzenbook_duo_consumer_hdev = hdev;
 
 \treturn 0;
 }"""
