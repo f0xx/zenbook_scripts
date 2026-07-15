@@ -111,6 +111,173 @@ static bool asus_fn_lock_default_for_device(struct hid_device *hdev,
 }
 """
 
+FN_ROW_POLICY_PARAMS = """
+/*
+ * Per-key Fn-row policy on UX8406 main keyboard (USB if0).
+ * Bits 0-11: F1-F12, bit 12: Esc, bits 13-31 reserved.
+ * 0 = plain passthrough (KEY_Fn only), 1 = simulate Fn+Fn in driver.
+ */
+static u32 fn_row_policy;
+module_param(fn_row_policy, uint, 0644);
+MODULE_PARM_DESC(fn_row_policy,
+		 "Fn-row bitmask for Zenbook Duo main keyboard (USB if0): "
+		 "bit0=F1..bit11=F12, bit12=Esc; 0=passthrough, 1=simulate Fn layer");
+
+static struct asus_kbd_leds *zenbook_duo_vendor_leds;
+
+static int zenbook_fn_row_policy_event(struct hid_device *hdev,
+				       struct asus_drvdata *drvdata,
+				       unsigned int keycode, __s32 value);
+static int zenbook_fn_row_policy_raw(struct hid_device *hdev,
+				     struct asus_drvdata *drvdata,
+				     u8 *data, int size);
+"""
+
+FN_ROW_POLICY_IMPL = """
+#define ZENBOOK_HID_F1\t\t0x3a
+#define ZENBOOK_HID_F12\t\t0x45
+#define ZENBOOK_HID_ESC\t\t0x29
+
+static bool zenbook_is_duo_main_keyboard(struct hid_device *hdev,
+					 struct asus_drvdata *drvdata)
+{
+	struct usb_interface *intf;
+	struct usb_device *udev;
+
+	(void)drvdata;
+
+	if (!hid_is_usb(hdev))
+		return false;
+
+	intf = to_usb_interface(hdev->dev.parent);
+	if (intf->altsetting->desc.bInterfaceNumber != 0)
+		return false;
+
+	udev = interface_to_usbdev(intf);
+	return le16_to_cpu(udev->descriptor.idProduct) ==
+		USB_DEVICE_ID_ASUSTEK_ZENBOOK_DUO_KEYBOARD;
+}
+
+static int zenbook_fn_row_hid_usage_bit(u8 usage)
+{
+	if (usage >= ZENBOOK_HID_F1 && usage <= ZENBOOK_HID_F12)
+		return usage - ZENBOOK_HID_F1;
+	if (usage == ZENBOOK_HID_ESC)
+		return 12;
+
+	return -1;
+}
+
+static bool zenbook_fn_row_report_has_usage(const u8 *data, int size, u8 usage)
+{
+	int i;
+
+	for (i = 0; i < size; i++) {
+		if (data[i] == usage)
+			return true;
+	}
+	return false;
+}
+
+static bool zenbook_fn_row_report_simulate(const u8 *data, int size)
+{
+	int i, bit;
+
+	for (i = 0; i < size; i++) {
+		bit = zenbook_fn_row_hid_usage_bit(data[i]);
+		if (bit >= 0 && (fn_row_policy & BIT(bit)))
+			return true;
+	}
+	return false;
+}
+
+static void zenbook_fn_row_toggle_backlight(void)
+{
+	struct asus_kbd_leds *led = zenbook_duo_vendor_leds;
+	unsigned long flags;
+	unsigned int next;
+
+	if (!led)
+		return;
+
+	spin_lock_irqsave(&led->lock, flags);
+	next = led->brightness ? 0 : 3;
+	spin_unlock_irqrestore(&led->lock, flags);
+
+	asus_kbd_backlight_set(&led->listener, next);
+}
+
+static int zenbook_fn_row_policy_raw(struct hid_device *hdev,
+				     struct asus_drvdata *drvdata,
+				     u8 *data, int size)
+{
+	static u8 prev[8];
+	static int prev_len;
+	bool was_f4, is_f4;
+	int swallow;
+
+	if (!fn_row_policy || !zenbook_is_duo_main_keyboard(hdev, drvdata) || size < 1)
+		return 0;
+
+	is_f4 = zenbook_fn_row_report_has_usage(data, size, 0x3d);
+	was_f4 = prev_len > 0 &&
+		 zenbook_fn_row_report_has_usage(prev, prev_len, 0x3d);
+
+	swallow = zenbook_fn_row_report_simulate(data, size) ||
+		  zenbook_fn_row_report_simulate(prev, prev_len);
+
+	if (swallow) {
+		if (is_f4 && !was_f4 && (fn_row_policy & BIT(3)))
+			zenbook_fn_row_toggle_backlight();
+		if (size <= (int)sizeof(prev)) {
+			memcpy(prev, data, size);
+			prev_len = size;
+		} else {
+			prev_len = 0;
+		}
+		return -1;
+	}
+
+	if (size <= (int)sizeof(prev)) {
+		memcpy(prev, data, size);
+		prev_len = size;
+	} else {
+		prev_len = 0;
+	}
+
+	return 0;
+}
+
+static int zenbook_fn_row_key_bit(unsigned int keycode)
+{
+	if (keycode >= KEY_F1 && keycode <= KEY_F12)
+		return keycode - KEY_F1;
+	if (keycode == KEY_ESC)
+		return 12;
+
+	return -1;
+}
+
+static int zenbook_fn_row_policy_event(struct hid_device *hdev,
+				       struct asus_drvdata *drvdata,
+				       unsigned int keycode, __s32 value)
+{
+	int bit;
+
+	if (!fn_row_policy || !zenbook_is_duo_main_keyboard(hdev, drvdata))
+		return 0;
+
+	bit = zenbook_fn_row_key_bit(keycode);
+	if (bit < 0 || !(fn_row_policy & BIT(bit)))
+		return 0;
+
+	if (value && keycode == KEY_F4)
+		zenbook_fn_row_toggle_backlight();
+
+	return 1;
+}
+"""
+
 ZENBOOK_QUIRK_FILTER = """
 /* UX8406 exposes one PID on several USB interfaces; scope quirks narrowly. */
 static void asus_filter_zenbook_usb_quirks(struct hid_device *hdev,
@@ -197,7 +364,7 @@ def port_hid_asus(src: Path, dst: Path) -> None:
 
     text = insert_before(
         r"static int asus_event\(struct hid_device \*hdev, struct hid_field \*field,\n",
-        DMI_AND_WMI_CHECK + FN_LOCK_MODULE_BLOCK,
+        DMI_AND_WMI_CHECK + FN_LOCK_MODULE_BLOCK + FN_ROW_POLICY_PARAMS,
         text,
     )
 
@@ -238,6 +405,16 @@ def port_hid_asus(src: Path, dst: Path) -> None:
 
     text = replace_once(old_event, new_event, text, "asus_event vendor block")
 
+    text = insert_after(
+        r"\t\tdefault:\n\t\t\thid_warn\(hdev, \"Unmapped Asus vendor usagepage code 0x%02x\\n\",\n\t\t\t\t usage->hid & HID_USAGE\);\n\t\t\}\n\t\}",
+        """
+\tif (usage->type == EV_KEY &&
+\t    zenbook_fn_row_policy_event(hdev, drvdata, usage->code, value))
+\t\treturn 1;
+""",
+        text,
+    )
+
     text = replace_once(
         """\t\tcase KEY_FN_ESC:
 \t\t\tif (drvdata->quirks & QUIRK_HID_FN_LOCK) {
@@ -256,6 +433,25 @@ def port_hid_asus(src: Path, dst: Path) -> None:
 \t\t\tbreak;""",
         text,
         "asus_event KEY_FN_ESC toggle guard",
+    )
+
+    text = replace_once(
+        "static int asus_raw_event(struct hid_device *hdev,\n"
+        "\t\tstruct hid_report *report, u8 *data, int size)\n"
+        "{\n"
+        "\tstruct asus_drvdata *drvdata = hid_get_drvdata(hdev);\n\n"
+        "\tif (drvdata->battery && data[0] == BATTERY_REPORT_ID)",
+        "static int asus_raw_event(struct hid_device *hdev,\n"
+        "\t\tstruct hid_report *report, u8 *data, int size)\n"
+        "{\n"
+        "\tstruct asus_drvdata *drvdata = hid_get_drvdata(hdev);\n"
+        "\tint ret;\n\n"
+        "\tret = zenbook_fn_row_policy_raw(hdev, drvdata, data, size);\n"
+        "\tif (ret)\n"
+        "\t\treturn ret;\n\n"
+        "\tif (drvdata->battery && data[0] == BATTERY_REPORT_ID)",
+        text,
+        "asus_raw_event zenbook fn_row_policy",
     )
 
     old_fnlock = """\tif (drvdata->quirks & QUIRK_HID_FN_LOCK) {
@@ -355,9 +551,46 @@ def port_hid_asus(src: Path, dst: Path) -> None:
         "\t\tINIT_WORK(&drvdata->fn_lock_sync_work, asus_sync_fn_lock);\n"
         "\t\tschedule_work(&drvdata->fn_lock_sync_work);\n"
         "\t}\n\n"
+        "\tif ((drvdata->quirks & QUIRK_ZENBOOK_DUO_KEYBOARD) &&\n"
+        "\t    hid_is_usb(hdev) &&\n"
+        "\t    to_usb_interface(hdev->dev.parent)->altsetting->desc.bInterfaceNumber == 4 &&\n"
+        "\t    (drvdata->quirks & QUIRK_USE_KBD_BACKLIGHT) &&\n"
+        "\t    !drvdata->kbd_backlight &&\n"
+        "\t    !asus_kbd_wmi_led_control_present(hdev) &&\n"
+        "\t    asus_kbd_register_leds(hdev))\n"
+        "\t\thid_warn(hdev, \"Failed to initialize Zenbook Duo vendor backlight.\\n\");\n\n"
         "\tif (drvdata->quirks & (QUIRK_ROG_NKEY_KEYBOARD | QUIRK_ZENBOOK_DUO_KEYBOARD))\n\t\treturn 0;",
         text,
         "probe zenbook if4 fn_lock sync",
+    )
+
+    text = replace_once(
+        "\tret = asus_hid_register_listener(&drvdata->kbd_backlight->listener);\n"
+        "\tif (ret < 0) {\n"
+        "\t\t/* No need to have this still around */\n"
+        "\t\tdevm_kfree(&hdev->dev, drvdata->kbd_backlight);\n"
+        "\t}\n\n"
+        "\treturn ret;\n"
+        "}",
+        "\tret = asus_hid_register_listener(&drvdata->kbd_backlight->listener);\n"
+        "\tif (ret < 0) {\n"
+        "\t\t/* No need to have this still around */\n"
+        "\t\tdevm_kfree(&hdev->dev, drvdata->kbd_backlight);\n"
+        "\t} else if ((drvdata->quirks & QUIRK_ZENBOOK_DUO_KEYBOARD) &&\n"
+        "\t\t   hid_is_usb(hdev) &&\n"
+        "\t\t   to_usb_interface(hdev->dev.parent)->altsetting->desc.bInterfaceNumber == 4) {\n"
+        "\t\tzenbook_duo_vendor_leds = drvdata->kbd_backlight;\n"
+        "\t}\n\n"
+        "\treturn ret;\n"
+        "}",
+        text,
+        "zenbook_duo_vendor_leds on if4 register",
+    )
+
+    text = insert_before(
+        r"/\*\n \* \[0\]       REPORT_ID \(same value defined in report descriptor\)\n",
+        FN_ROW_POLICY_IMPL,
+        text,
     )
 
     text = insert_before(
