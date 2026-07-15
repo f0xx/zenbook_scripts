@@ -121,7 +121,8 @@ static u32 fn_row_policy;
 module_param(fn_row_policy, uint, 0644);
 MODULE_PARM_DESC(fn_row_policy,
 		 "Fn-row bitmask for Zenbook Duo main keyboard (USB if0): "
-		 "bit0=F1..bit11=F12, bit12=Esc; 0=passthrough, 1=simulate Fn layer");
+		 "bit0=F1..bit11=F12, bit12=Esc; 0=passthrough, 1=simulate Fn layer "
+		 "(F1=mute F2=vol- F3=vol+ F4=kbd backlight)");
 
 static struct asus_kbd_leds *zenbook_duo_vendor_leds;
 
@@ -207,28 +208,65 @@ static void zenbook_fn_row_toggle_backlight(void)
 	asus_kbd_backlight_set(&led->listener, next);
 }
 
+static void zenbook_fn_row_emit_key(struct hid_device *hdev, unsigned int keycode)
+{
+	struct hid_input *hidinput;
+
+	list_for_each_entry(hidinput, &hdev->inputs, list) {
+		if (!hidinput->input)
+			continue;
+		input_report_key(hidinput->input, keycode, 1);
+		input_sync(hidinput->input);
+		input_report_key(hidinput->input, keycode, 0);
+		input_sync(hidinput->input);
+		return;
+	}
+}
+
+static void zenbook_fn_row_simulate_usage(struct hid_device *hdev, u8 usage)
+{
+	switch (usage) {
+	case 0x3a:
+		zenbook_fn_row_emit_key(hdev, KEY_MUTE);
+		break;
+	case 0x3b:
+		zenbook_fn_row_emit_key(hdev, KEY_VOLUMEDOWN);
+		break;
+	case 0x3c:
+		zenbook_fn_row_emit_key(hdev, KEY_VOLUMEUP);
+		break;
+	case 0x3d:
+		zenbook_fn_row_toggle_backlight();
+		break;
+	default:
+		break;
+	}
+}
+
 static int zenbook_fn_row_policy_raw(struct hid_device *hdev,
 				     struct asus_drvdata *drvdata,
 				     u8 *data, int size)
 {
 	static u8 prev[8];
 	static int prev_len;
-	bool was_f4, is_f4;
-	int swallow;
+	int i, swallow;
+	u8 usage;
 
 	if (!fn_row_policy || !zenbook_is_duo_main_keyboard(hdev, drvdata) || size < 1)
 		return 0;
-
-	is_f4 = zenbook_fn_row_report_has_usage(data, size, 0x3d);
-	was_f4 = prev_len > 0 &&
-		 zenbook_fn_row_report_has_usage(prev, prev_len, 0x3d);
 
 	swallow = zenbook_fn_row_report_simulate(data, size) ||
 		  zenbook_fn_row_report_simulate(prev, prev_len);
 
 	if (swallow) {
-		if (is_f4 && !was_f4 && (fn_row_policy & BIT(3)))
-			zenbook_fn_row_toggle_backlight();
+		for (i = 0; i < size; i++) {
+			usage = data[i];
+			if (zenbook_fn_row_hid_usage_bit(usage) < 0 ||
+			    !(fn_row_policy & BIT(zenbook_fn_row_hid_usage_bit(usage))))
+				continue;
+			if (!zenbook_fn_row_report_has_usage(prev, prev_len, usage))
+				zenbook_fn_row_simulate_usage(hdev, usage);
+		}
 		if (size <= (int)sizeof(prev)) {
 			memcpy(prev, data, size);
 			prev_len = size;
@@ -273,6 +311,12 @@ static int zenbook_fn_row_policy_event(struct hid_device *hdev,
 
 	if (value && keycode == KEY_F4)
 		zenbook_fn_row_toggle_backlight();
+	else if (value && keycode == KEY_F1)
+		zenbook_fn_row_emit_key(hdev, KEY_MUTE);
+	else if (value && keycode == KEY_F2)
+		zenbook_fn_row_emit_key(hdev, KEY_VOLUMEDOWN);
+	else if (value && keycode == KEY_F3)
+		zenbook_fn_row_emit_key(hdev, KEY_VOLUMEUP);
 
 	return 1;
 }
