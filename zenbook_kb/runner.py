@@ -1,0 +1,36 @@
+"""Select and run the appropriate keyboard backlight transport."""
+
+from __future__ import annotations
+
+from zenbook_kb.detect import ConnectionInfo, ConnectionMode
+from zenbook_kb.limits import SYSFS_KBD_BACKLIGHT
+from zenbook_kb.transports.base import Transport, TransportError
+from zenbook_kb.transports.bluetooth import BluetoothTransport, transport_for as bt_for
+from zenbook_kb.transports.usb import UsbTransport, transport_for as usb_for
+
+
+def _set_sysfs_brightness(level: int) -> bool:
+    led = SYSFS_KBD_BACKLIGHT / "brightness"
+    if not led.exists():
+        return False
+    try:
+        led.write_text(f"{level}\n")
+    except OSError:
+        return False
+    return True
+
+
+def get_transport(info: ConnectionInfo, usb_windex: int = 4) -> Transport:
+    if info.mode is ConnectionMode.USB:
+        return usb_for(info, windex=usb_windex)
+    return bt_for(info)
+
+
+def set_brightness(info: ConnectionInfo, level: int, usb_windex: int = 4) -> str:
+    if _set_sysfs_brightness(level):
+        return "sysfs"
+    transport = get_transport(info, usb_windex=usb_windex)
+    if not transport.is_available():
+        raise TransportError(f"{transport.name} transport is not available")
+    transport.set_brightness(level)
+    return transport.name

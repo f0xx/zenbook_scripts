@@ -1,0 +1,27 @@
+# Example acpid rule for ASUS WMI keyboard-backlight notifies.
+#
+# 1. Run as root: acpi_listen
+# 2. Press Fn+F4 on the detachable keyboard (USB and Bluetooth separately).
+# 3. Note the line that appears, e.g.:
+#      wmi PNP0C14:02 000000c4 00000000
+#    The third field is often the WMI notify code (0xc4 = brighter, 0xc5 = dimmer).
+#
+# 4. Copy this file to /etc/acpi/events/ and uncomment the matching event= line.
+# 5. Reload: kill -HUP "$(pidof acpid)"
+#
+# Note: On UX8406 the dedicated Fn+F4 key usually arrives as a standard Linux
+# input event (KEY_KBDILLUM*) on the keyboard's HID interface 3 — use
+# kb-brightness-hotkeys instead. WMI/acpid is a fallback when the key is routed
+# through the laptop EC only.
+
+# Brighter (WMI 0xc4) — adjust the hex value to match acpi_listen output
+#event=wmi PNP0C14:02 000000c4
+#action=/usr/local/bin/kb-brightness +1
+
+# Dimmer (WMI 0xc5)
+#event=wmi PNP0C14:02 000000c5
+#action=/usr/local/bin/kb-brightness -1
+
+# Toggle / cycle (WMI 0xc7)
+#event=wmi PNP0C14:02 000000c7
+#action=/usr/local/bin/kb-brightness +1

@@ -1,0 +1,174 @@
+#!/usr/bin/env bash
+# ASUS ScreenPad Plus control (Zenbook Duo UX5400EA and similar).
+#
+# Usage:
+#   screenpad get                 Current brightness (0 if off)
+#   screenpad get_max             Max brightness
+#   screenpad status              Human-readable status
+#   screenpad on [n]              Power on (default: last / 180)
+#   screenpad off                 Power off (remembers last brightness)
+#   screenpad toggle [n]          Toggle on/off
+#   screenpad set <n>             Set 0..max (0 = off)
+#   screenpad <n>                 Alias for set
+#   screenpad +<n> / -<n>         Relative adjust (powers on if needed)
+#   screenpad up|down             Step by 25
+#   screenpad sync                Match main panel brightness % once
+#
+# See lib/screenpad.sh for the bl_power re-enable quirk on current kernels.
+
+set -euo pipefail
+
+zenbook_kb_find_root() {
+	local here candidate
+
+	here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+	if [[ -f "${here}/../lib/screenpad.sh" ]]; then
+		echo "$(cd "${here}/.." && pwd)"
+		return 0
+	fi
+
+	if [[ -f /usr/local/share/zenbook-scripts/lib/screenpad.sh ]]; then
+		echo /usr/local/share/zenbook-scripts
+		return 0
+	fi
+
+	for candidate in "${here}/.." "${here}"; do
+		candidate="$(cd "${candidate}" && pwd)"
+		if [[ -f "${candidate}/lib/screenpad.sh" ]]; then
+			echo "${candidate}"
+			return 0
+		fi
+	done
+
+	echo "zenbook-scripts lib/screenpad.sh not found" >&2
+	return 1
+}
+
+SCRIPT_DIR="$(zenbook_kb_find_root)"
+# shellcheck source=lib/screenpad.sh
+source "${SCRIPT_DIR}/lib/screenpad.sh"
+
+usage() {
+	sed -n '2,16p' "$0"
+}
+
+if [[ $# -lt 1 ]]; then
+	usage >&2
+	exit 2
+fi
+
+if ! zenbook_screenpad_present; then
+	echo "asus_screenpad backlight not found (need asus-nb-wmi + ScreenPad hardware)" >&2
+	exit 1
+fi
+
+ARG="$1"
+shift || true
+
+case "${ARG}" in
+	-h|--help)
+		usage
+		exit 0
+		;;
+	get)
+		if zenbook_screenpad_is_on; then
+			zenbook_screenpad_read_brightness
+		else
+			echo 0
+		fi
+		;;
+	get_max|max)
+		zenbook_screenpad_max
+		;;
+	status)
+		power="$(zenbook_screenpad_read_bl_power)"
+		bright="$(zenbook_screenpad_read_brightness)"
+		max="$(zenbook_screenpad_max)"
+		if zenbook_screenpad_is_on; then
+			state="on"
+		else
+			state="off"
+		fi
+		conn="$(zenbook_screenpad_drm_connected 2>/dev/null || true)"
+		echo "state=${state} brightness=${bright}/${max} bl_power=${power} last=$(zenbook_screenpad_last)"
+		if [[ -n "${conn}" ]]; then
+			echo "drm=$(basename "${conn}") status=$(cat "${conn}/status")"
+			if [[ -s "${conn}/modes" ]]; then
+				echo "modes=$(tr '\n' ' ' <"${conn}/modes" | sed 's/ *$//')"
+			fi
+		else
+			echo "drm=none (panel may still be EC-off; try: screenpad on)"
+		fi
+		;;
+	on)
+		zenbook_screenpad_on "${1:-}"
+		;;
+	off)
+		zenbook_screenpad_off
+		;;
+	toggle)
+		if zenbook_screenpad_is_on; then
+			zenbook_screenpad_off
+		else
+			zenbook_screenpad_on "${1:-}"
+		fi
+		;;
+	set)
+		if [[ $# -lt 1 ]]; then
+			echo "Usage: screenpad set <0-$(zenbook_screenpad_max)>" >&2
+			exit 2
+		fi
+		zenbook_screenpad_set "$1"
+		;;
+	sync)
+		zenbook_screenpad_sync_from_main
+		;;
+	up)
+		cur=0
+		if zenbook_screenpad_is_on; then
+			cur="$(zenbook_screenpad_read_brightness)"
+		fi
+		zenbook_screenpad_set "$((cur + 25))"
+		;;
+	down)
+		cur=0
+		if zenbook_screenpad_is_on; then
+			cur="$(zenbook_screenpad_read_brightness)"
+		fi
+		next=$((cur - 25))
+		if (( next < 0 )); then
+			next=0
+		fi
+		zenbook_screenpad_set "${next}"
+		;;
+	+*)
+		delta="${ARG#+}"
+		[[ "${delta}" =~ ^[0-9]+$ ]] || { echo "Invalid: ${ARG}" >&2; exit 2; }
+		cur=0
+		if zenbook_screenpad_is_on; then
+			cur="$(zenbook_screenpad_read_brightness)"
+		fi
+		zenbook_screenpad_set "$((cur + delta))"
+		;;
+	-*)
+		delta="${ARG#-}"
+		[[ "${delta}" =~ ^[0-9]+$ ]] || { echo "Invalid: ${ARG}" >&2; exit 2; }
+		cur=0
+		if zenbook_screenpad_is_on; then
+			cur="$(zenbook_screenpad_read_brightness)"
+		fi
+		next=$((cur - delta))
+		if (( next < 0 )); then
+			next=0
+		fi
+		zenbook_screenpad_set "${next}"
+		;;
+	[0-9]*)
+		zenbook_screenpad_set "${ARG}"
+		;;
+	*)
+		echo "Unknown command: ${ARG}" >&2
+		usage >&2
+		exit 2
+		;;
+esac

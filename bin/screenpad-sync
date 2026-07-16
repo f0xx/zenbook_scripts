@@ -1,0 +1,168 @@
+#!/usr/bin/env python3
+"""Sync ASUS ScreenPad brightness to the main panel backlight percentage.
+
+Watches the primary backlight (intel_backlight by default) and mirrors the
+percentage onto /sys/class/backlight/asus_screenpad, using the bl_power=1
+re-enable quirk required on current mainline kernels.
+
+Environment:
+  SCREENPAD_BACKLIGHT   Path to ScreenPad backlight (default: auto)
+  MAIN_BACKLIGHT        Path to main backlight (default: auto)
+  MIN_SCREENPAD_LEVEL   Floor while main > 0 (default: 20)
+  POLL_SECONDS          Poll interval fallback (default: 0.5)
+  ONCE                  If "1", sync once and exit
+"""
+
+from __future__ import annotations
+
+import os
+import sys
+import time
+from pathlib import Path
+
+
+SCREENPAD_DEFAULT = Path("/sys/class/backlight/asus_screenpad")
+MIN_ON = int(os.environ.get("MIN_SCREENPAD_LEVEL", "20"))
+POLL = float(os.environ.get("POLL_SECONDS", "0.5"))
+
+
+def _read_int(path: Path) -> int:
+    return int(path.read_text().strip())
+
+
+def _write(path: Path, value: int | str) -> None:
+    text = f"{value}\n"
+    try:
+        path.write_text(text)
+        return
+    except PermissionError:
+        pass
+    # Fallback via tee/sudo for interactive use; services should use udev perms.
+    import subprocess
+
+    subprocess.run(
+        ["sudo", "-n", "tee", str(path)],
+        input=text.encode(),
+        stdout=subprocess.DEVNULL,
+        check=True,
+    )
+
+
+def find_screenpad() -> Path:
+    env = os.environ.get("SCREENPAD_BACKLIGHT")
+    if env:
+        p = Path(env)
+        if (p / "brightness").is_file():
+            return p
+        raise SystemExit(f"SCREENPAD_BACKLIGHT not usable: {env}")
+    if (SCREENPAD_DEFAULT / "brightness").is_file():
+        return SCREENPAD_DEFAULT
+    raise SystemExit("no ScreenPad backlight found (asus_screenpad)")
+
+
+def find_main(exclude: Path) -> Path:
+    env = os.environ.get("MAIN_BACKLIGHT")
+    if env:
+        p = Path(env)
+        if (p / "brightness").is_file():
+            return p
+        raise SystemExit(f"MAIN_BACKLIGHT not usable: {env}")
+    root = Path("/sys/class/backlight")
+    preferred = ["intel_backlight", "amdgpu_bl1", "amdgpu_bl0", "acpi_video0"]
+    for name in preferred:
+        p = root / name
+        if p != exclude and (p / "brightness").is_file():
+            return p
+    for p in sorted(root.iterdir()):
+        if p == exclude:
+            continue
+        if (p / "brightness").is_file() and (p / "max_brightness").is_file():
+            return p
+    raise SystemExit("no main backlight found")
+
+
+def screenpad_on(sp: Path, level: int) -> None:
+    level = max(0, min(level, _read_int(sp / "max_brightness")))
+    # Quirk: non-zero bl_power required to apply LIGHT / re-enable panel.
+    _write(sp / "bl_power", 1)
+    _write(sp / "brightness", level)
+
+
+def sync_once(main: Path, sp: Path) -> int:
+    main_cur = _read_int(main / "brightness")
+    main_max = _read_int(main / "max_brightness")
+    sp_max = _read_int(sp / "max_brightness")
+    if main_max <= 0:
+        return 0
+    target = main_cur * sp_max // main_max
+    if main_cur > 0 and target < MIN_ON:
+        target = MIN_ON
+    if main_cur == 0:
+        # Keep EC powered so the DRM connector does not vanish.
+        target = MIN_ON
+    screenpad_on(sp, target)
+    return target
+
+
+def watch_loop(main: Path, sp: Path) -> None:
+    bright = main / "brightness"
+    last = None
+    use_inotify = False
+    try:
+        import inotify.adapters  # type: ignore
+
+        use_inotify = True
+    except ImportError:
+        use_inotify = False
+
+    if use_inotify:
+        import inotify.adapters
+
+        i = inotify.adapters.Inotify()
+        i.add_watch(str(bright.parent), mask=inotify.constants.IN_MODIFY)  # type: ignore[attr-defined]
+        for event in i.event_gen(yield_nones=False):
+            (_, type_names, path, filename) = event
+            if filename != "brightness":
+                continue
+            if "IN_MODIFY" not in type_names:
+                continue
+            try:
+                cur = _read_int(bright)
+            except OSError:
+                continue
+            if cur == last:
+                continue
+            last = cur
+            sync_once(main, sp)
+        return
+
+    while True:
+        try:
+            cur = _read_int(bright)
+        except OSError:
+            time.sleep(POLL)
+            continue
+        if cur != last:
+            last = cur
+            try:
+                sync_once(main, sp)
+            except Exception as exc:  # noqa: BLE001 — keep daemon alive
+                print(f"sync failed: {exc}", file=sys.stderr)
+        time.sleep(POLL)
+
+
+def main(argv: list[str] | None = None) -> int:
+    argv = list(sys.argv[1:] if argv is None else argv)
+    once = os.environ.get("ONCE", "0") == "1" or "--once" in argv
+    sp = find_screenpad()
+    main_bl = find_main(sp)
+    target = sync_once(main_bl, sp)
+    print(f"synced {main_bl.name} -> {sp.name} brightness={target}", flush=True)
+    if once:
+        return 0
+    watch_loop(main_bl, sp)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

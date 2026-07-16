@@ -1,0 +1,26 @@
+# Zenbook Duo keyboard backlight defaults
+# Copy to ~/.config/zenbook-scripts/zenbook-duo.conf
+
+[keyboard]
+# Pogo-pin USB keyboard (Primax detachable keyboard)
+usb_vendor_id = 0b05
+usb_product_id = 1b2c
+
+# Bluetooth keyboard when detached
+bt_vendor_id = 0b05
+bt_product_id = 1b2d
+
+# USB HID interface index for SET_REPORT (see lsusb -v)
+usb_windex = 4
+
+# Cached default when hardware read is unavailable
+default_brightness = 1
+
+# Optional overrides (defaults: min=0 max=3 for UX8406)
+# brightness_min = 0
+# brightness_max = 3
+
+[duo]
+# Used by duo.sh integration
+default_backlight = 1
+default_scale = 1

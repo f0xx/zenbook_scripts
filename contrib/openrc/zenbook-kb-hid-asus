@@ -1,0 +1,38 @@
+#!/sbin/openrc-run
+# OpenRC: load UX8406 patched hid-asus.ko at default runlevel and rebind keyboard HID nodes.
+#
+# Install via configure.py. Runs before zenbook-kb-hotkeys.
+
+name="zenbook-kb-hid-asus"
+description="Zenbook Duo UX8406 hid-asus sideload"
+
+: "${boot_script:=/usr/local/libexec/zenbook-hid-asus-boot.sh}"
+
+depend() {
+	need localmount
+	after modules
+	before zenbook-kb-hotkeys zenbook-kb-lid
+	use logger
+	keyword -docker -lxc -systemd
+}
+
+start() {
+	if [ ! -x "${boot_script}" ]; then
+		eerror "missing ${boot_script}"
+		return 1
+	fi
+	ebegin "Sideloading UX8406 hid-asus"
+	"${boot_script}"
+	eend $?
+}
+
+stop() {
+	# No daemon — avoid start-stop-daemon noise on shutdown.
+	:
+}
+
+stop_pre() {
+	if [ -x /usr/local/bin/kb-brightness-sleep ]; then
+		/usr/local/bin/kb-brightness-sleep save 2>/dev/null || true
+	fi
+}

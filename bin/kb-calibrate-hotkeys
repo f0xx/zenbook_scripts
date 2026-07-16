@@ -1,0 +1,65 @@
+#!/usr/bin/env bash
+# Guided Zenbook Duo hotkey calibration (plain F vs Fn+F).
+#
+# Requires root — re-invokes via sudo -E when needed, preserving HOME.
+#
+# Usage:
+#   kb-calibrate-hotkeys              Full F1–F10 + Fn+ walkthrough
+#   kb-calibrate-hotkeys --quick      F1–F4 only (good first pass)
+#   kb-calibrate-hotkeys --dual-fn-lock --quick   # fn-lock A+B → union conf
+#
+# Stop the hotkey listener first:
+#   sudo rc-service zenbook-kb-hotkeys stop
+#
+# Output: ~/.config/zenbook-scripts/calibration/<board>.json
+#         ~/.config/zenbook-scripts/calibration/<board>-suggested.conf
+
+set -euo pipefail
+
+zenbook_kb_find_root() {
+    local here
+
+    here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    if [[ -f "${here}/../zenbook_kb/calibrate.py" ]]; then
+        echo "$(cd "${here}/.." && pwd)"
+        return 0
+    fi
+    if [[ -f /usr/local/share/zenbook-scripts/zenbook_kb/calibrate.py ]]; then
+        echo /usr/local/share/zenbook-scripts
+        return 0
+    fi
+    echo "zenbook_kb/calibrate.py not found" >&2
+    return 1
+}
+
+SCRIPT_DIR="$(zenbook_kb_find_root)"
+CALIB_PY="${SCRIPT_DIR}/zenbook_kb/calibrate.py"
+INVOKING_USER="${USER:-$(id -un)}"
+INVOKING_HOME="${HOME:-$(getent passwd "${INVOKING_USER}" 2>/dev/null | cut -d: -f6)}"
+
+_run_calibrator() {
+    export PYTHONPATH="${SCRIPT_DIR}${PYTHONPATH:+:${PYTHONPATH}}"
+    export ZENBOOK_CALIB_USER="${ZENBOOK_CALIB_USER:-${INVOKING_USER}}"
+    export ZENBOOK_CALIB_HOME="${ZENBOOK_CALIB_HOME:-${INVOKING_HOME}}"
+    export HOME="${ZENBOOK_CALIB_HOME}"
+    exec python3 "${CALIB_PY}" "$@"
+}
+
+if [[ "$(id -u)" -ne 0 ]]; then
+    exec sudo -E env \
+        "PYTHONPATH=${SCRIPT_DIR}${PYTHONPATH:+:${PYTHONPATH}}" \
+        "HOME=${INVOKING_HOME}" \
+        "ZENBOOK_CALIB_USER=${INVOKING_USER}" \
+        "ZENBOOK_CALIB_HOME=${INVOKING_HOME}" \
+        python3 "${CALIB_PY}" "$@"
+fi
+
+# Already root via sudo: HOME is often /root unless -E was used.
+if [[ -n "${SUDO_USER:-}" ]]; then
+    INVOKING_HOME="$(getent passwd "${SUDO_USER}" | cut -d: -f6)"
+    export ZENBOOK_CALIB_USER="${SUDO_USER}"
+    export ZENBOOK_CALIB_HOME="${INVOKING_HOME}"
+    export HOME="${INVOKING_HOME}"
+fi
+
+_run_calibrator "$@"

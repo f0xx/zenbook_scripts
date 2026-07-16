@@ -1,0 +1,3 @@
+# Optional overrides for zenbook-screenpad / screenpad-boot
+# SCREENPAD_BOOT_MODE=on|off|sync|restore
+SCREENPAD_BOOT_MODE=on

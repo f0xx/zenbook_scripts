@@ -1,0 +1,19 @@
+# Managed by zenbook-scripts configure.py — default-runlevel UX8406 hid-asus sideload.
+#
+# sideload: yes | no | auto
+#   yes  — wait up to usb_wait_secs for docked USB keyboard, then insmod + rebind
+#   no   — boot script exits immediately (stock in-tree hid_asus)
+#   auto — skip sideload when keyboard is not docked at boot (no wait loop)
+sideload=yes
+#
+# Optional .ko override (default: /usr/lib/modules/zenbook-hid-asus/$(uname -r)/hid-asus.ko)
+#ko_path=
+#
+# Fn-lock (kernel module params at insmod — machine-wide):
+#   fn_lock_default: 0=Mode B (Fn+F4 backlight), 1=Mode A (plain F-keys)
+#   fn_lock_allow_toggle: 1=Fn+Esc may switch after load (not remembered across insmod)
+fn_lock_default=0
+fn_lock_allow_toggle=1
+#
+# Seconds to wait for docked keyboard 0b05:1b2c after boot (ignored when sideload=auto)
+usb_wait_secs=15

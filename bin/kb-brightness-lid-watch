@@ -1,0 +1,61 @@
+#!/usr/bin/env bash
+# Watch logind/elogind LidClosed and dim/restore Zenbook keyboard backlight.
+# acpid lid events are not delivered when elogind owns the lid switch.
+
+set -euo pipefail
+
+zenbook_kb_run_user() {
+	if [[ -r /etc/conf.d/zenbook-kb-hotkeys ]]; then
+		grep -E '^command_user=' /etc/conf.d/zenbook-kb-hotkeys 2>/dev/null \
+			| head -1 \
+			| sed 's/^command_user=//' \
+			| tr -d '"' \
+			| cut -d: -f1
+	fi
+}
+
+USER="$(zenbook_kb_run_user)"
+if [[ -n "${USER}" && "${USER}" != root ]]; then
+	export ZENBOOK_CALIB_USER="${USER}"
+fi
+
+SLEEP_BIN="${KB_BRIGHTNESS_SLEEP_BIN:-/usr/local/bin/kb-brightness-sleep}"
+BUS=org.freedesktop.login1
+PATH_OBJ=/org/freedesktop/login1
+IFACE=org.freedesktop.login1.Manager
+PROP=LidClosed
+
+_lid_closed() {
+	busctl get-property "${BUS}" "${PATH_OBJ}" "${IFACE}" "${PROP}" 2>/dev/null \
+		| awk '{print $2}'
+}
+
+_apply() {
+	local state="$1"
+	case "${state}" in
+		true)  "${SLEEP_BIN}" lid-close ;;
+		false) "${SLEEP_BIN}" lid-open ;;
+	esac
+}
+
+if ! busctl status "${BUS}" >/dev/null 2>&1; then
+	echo "logind (${BUS}) not available" >&2
+	exit 1
+fi
+
+last="$(_lid_closed)"
+logger -t zenbook-kb-brightness "lid-watch: started (LidClosed=${last})"
+
+while true; do
+	sleep 0.4
+	current="$(_lid_closed)" || continue
+	if [[ "${current}" == "${last}" ]]; then
+		continue
+	fi
+	if _apply "${current}"; then
+		logger -t zenbook-kb-brightness "lid-watch: LidClosed=${current}"
+	else
+		logger -t zenbook-kb-brightness "lid-watch: action failed for LidClosed=${current}"
+	fi
+	last="${current}"
+done

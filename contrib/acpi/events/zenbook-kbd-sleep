@@ -1,0 +1,8 @@
+# Zenbook detachable keyboard — save backlight before sleep, restore after resume.
+# Install: cp to /etc/acpi/events/ and reload acpid (kill -HUP $(pidof acpid)).
+
+event=button[ /]lid
+action=/usr/local/libexec/zenbook-kbd-sleep.sh %e
+
+event=button/sleep
+action=/usr/local/libexec/zenbook-kbd-sleep.sh %e

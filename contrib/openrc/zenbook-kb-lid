@@ -1,0 +1,37 @@
+#!/sbin/openrc-run
+# OpenRC: watch logind LidClosed for keyboard backlight save/restore.
+#
+# Install via configure.py (elogind systems — acpid does not receive lid events).
+
+name="zenbook-kb-lid"
+description="Zenbook Duo keyboard backlight on lid open/close"
+
+: "${command:=/usr/local/bin/kb-brightness-lid-watch}"
+: "${command_background:=yes}"
+: "${pidfile:=/run/${RC_SVCNAME}.pid}"
+: "${output_log:=/var/log/${RC_SVCNAME}.log}"
+: "${error_log:=/var/log/${RC_SVCNAME}.log}"
+
+depend() {
+	need localmount
+	after elogind dbus
+	use logger
+}
+
+start_pre() {
+	checkpath -d -m 0755 -o root:root /run
+	if [ -n "${output_log:-}" ]; then
+		checkpath -f -m 0664 -o root:root "$output_log"
+	fi
+	if ! busctl status org.freedesktop.login1 >/dev/null 2>&1; then
+		eerror "org.freedesktop.login1 not available (install/start elogind)"
+		return 1
+	fi
+}
+
+stop_pre() {
+	# Save brightness before shutdown/reboot (restored at next service start).
+	if [ -x /usr/local/bin/kb-brightness-sleep ]; then
+		/usr/local/bin/kb-brightness-sleep save 2>/dev/null || true
+	fi
+}

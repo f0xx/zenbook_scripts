@@ -1,0 +1,14 @@
+[Unit]
+Description=Zenbook ScreenPad brightness sync
+After=zenbook-screenpad.service systemd-modules-load.service
+Wants=zenbook-screenpad.service
+
+[Service]
+Type=simple
+ExecStartPre=/usr/local/bin/screenpad-boot
+ExecStart=/usr/local/bin/screenpad-sync
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

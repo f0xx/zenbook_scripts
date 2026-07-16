@@ -1,0 +1,130 @@
+#!/usr/bin/env bash
+# Save / restore keyboard backlight around sleep, lid close, and resume.
+#
+# Usage:
+#   kb-brightness-sleep pre              # before suspend/hibernate (save + dim)
+#   kb-brightness-sleep post             # after resume (restore)
+#   kb-brightness-sleep save             # snapshot current brightness only
+#   kb-brightness-sleep restore          # apply saved brightness (service start)
+#   kb-brightness-sleep lid-close        # lid shut (save + turn off)
+#   kb-brightness-sleep lid-open         # lid open (restore)
+
+set -euo pipefail
+
+zenbook_kb_find_root() {
+    local here
+    here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    if [[ -f "${here}/../lib/snapshot.sh" ]]; then
+        echo "$(cd "${here}/.." && pwd)"
+        return 0
+    fi
+    if [[ -f /usr/local/share/zenbook-scripts/lib/snapshot.sh ]]; then
+        echo /usr/local/share/zenbook-scripts
+        return 0
+    fi
+    echo "zenbook-scripts lib/ not found" >&2
+    return 1
+}
+
+SCRIPT_DIR="$(zenbook_kb_find_root)"
+# shellcheck source=lib/protocol.sh
+source "${SCRIPT_DIR}/lib/protocol.sh"
+# shellcheck source=lib/state.sh
+source "${SCRIPT_DIR}/lib/state.sh"
+# shellcheck source=lib/detect.sh
+source "${SCRIPT_DIR}/lib/detect.sh"
+# shellcheck source=lib/hidraw.sh
+source "${SCRIPT_DIR}/lib/hidraw.sh"
+# shellcheck source=lib/transport_usb.sh
+source "${SCRIPT_DIR}/lib/transport_usb.sh"
+# shellcheck source=lib/transport_bluetooth.sh
+source "${SCRIPT_DIR}/lib/transport_bluetooth.sh"
+# shellcheck source=lib/limits.sh
+source "${SCRIPT_DIR}/lib/limits.sh"
+# shellcheck source=lib/fn_lock.sh
+source "${SCRIPT_DIR}/lib/fn_lock.sh"
+# shellcheck source=lib/snapshot.sh
+source "${SCRIPT_DIR}/lib/snapshot.sh"
+
+MODE="auto"
+POST_DELAY="${ZENBOOK_KB_RESUME_DELAY:-3}"
+SNAPSHOT="${ZENBOOK_KB_SLEEP_SNAPSHOT:-${ZENBOOK_KB_DEFAULT_SNAPSHOT}}"
+
+zenbook_kb_load_config
+
+_pre() {
+    zenbook_kb_snapshot_write "${SNAPSHOT}" >/dev/null
+    MIN="$(zenbook_kb_get_min)"
+    zenbook_kb_apply_brightness "${MIN}" >/dev/null 2>&1 || true
+    logger -t zenbook-kb-brightness "saved snapshot ${SNAPSHOT} before sleep"
+}
+
+_post() {
+    local i=0 restored=""
+    while (( i < POST_DELAY )); do
+        if zenbook_kb_detect_mode "${MODE}" >/dev/null 2>&1 \
+            || zenbook_kb_sysfs_brightness_path >/dev/null 2>&1; then
+            break
+        fi
+        sleep 1
+        i=$((i + 1))
+    done
+	if restored="$(zenbook_kb_snapshot_restore "${SNAPSHOT}" 2>/dev/null)"; then
+        zenbook_kb_apply_brightness "${restored}" >/dev/null || true
+        logger -t zenbook-kb-brightness "restored brightness ${restored} from ${SNAPSHOT}"
+    else
+        logger -t zenbook-kb-brightness "restore skipped (no snapshot)"
+    fi
+    if declare -F zenbook_kb_fn_lock_restore >/dev/null 2>&1; then
+        if fn_lock="$(zenbook_kb_fn_lock_restore 2>/dev/null)"; then
+            mode="$(zenbook_kb_fn_lock_mode_name "${fn_lock}" 2>/dev/null || echo "${fn_lock}")"
+            logger -t zenbook-kb-brightness "restored fn-lock mode ${mode} after brightness"
+        fi
+    fi
+}
+
+_lid_close() {
+    zenbook_kb_snapshot_write "${SNAPSHOT}" >/dev/null
+    MIN="$(zenbook_kb_get_min)"
+    zenbook_kb_apply_brightness "${MIN}" >/dev/null 2>&1 || true
+    logger -t zenbook-kb-brightness "lid close: saved and dimmed"
+}
+
+_lid_open() {
+    _post
+    logger -t zenbook-kb-brightness "lid open: restore attempted"
+}
+
+_save() {
+    local fn_lock mode
+    zenbook_kb_snapshot_write "${SNAPSHOT}" >/dev/null
+    fn_lock="$(zenbook_kb_fn_lock_read_current 2>/dev/null || echo "?")"
+    mode="$(zenbook_kb_fn_lock_mode_name "${fn_lock}" 2>/dev/null || echo "?")"
+    logger -t zenbook-kb-brightness "saved snapshot ${SNAPSHOT} (brightness=$(zenbook_kb_state_read 0), fn_lock_mode=${mode})"
+}
+
+case "${1:-}" in
+    pre|suspend|sleep)
+        _pre
+        ;;
+    post|resume|restore)
+        _post
+        ;;
+    save)
+        _save
+        ;;
+    lid-close|lid_close)
+        _lid_close
+        ;;
+    lid-open|lid_open)
+        _lid_open
+        ;;
+    -h|--help)
+        sed -n '2,9p' "$0"
+        exit 0
+        ;;
+    *)
+        echo "Unknown action: ${1:-}" >&2
+        exit 2
+        ;;
+esac
