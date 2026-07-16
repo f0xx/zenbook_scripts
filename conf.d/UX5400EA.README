@@ -1,0 +1,21 @@
+# UX5400EA notes (ScreenPad Plus)
+#
+# This model does not use the UX8406 detachable-keyboard HID Aura path.
+# See README.ux5400.md § "Zenbook Duo UX5400EA" and DEPLOY.md § "UX5400EA / ScreenPad Plus".
+#
+# Tools:
+#   screenpad, screenpad-boot, screenpad-sync, kb-platform-profile
+#
+# Sysfs:
+#   /sys/class/leds/asus::kbd_backlight     keyboard 0–3 (WMI)
+#   /sys/class/backlight/asus_screenpad     ScreenPad 0–255 + bl_power quirk
+#   /sys/firmware/acpi/platform_profile     quiet|balanced|performance
+#
+# State:
+#   /var/lib/zenbook-scripts/screenpad-brightness
+#
+# Services (after configure.py / USE=screenpad):
+#   zenbook-screenpad, zenbook-screenpad-sync
+#
+# OpenRGB / rogauracore: not applicable (no USB Aura Core HID).
+# Fan PWM curves: unsupported (ENODEV); use platform_profile only.

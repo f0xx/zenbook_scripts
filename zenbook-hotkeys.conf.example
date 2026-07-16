@@ -34,7 +34,7 @@
 # Examples — uncomment or edit:
 # KEY_FN_F4 = kb-brightness:toggle
 # KEY_FN_F5 = display-brightness:down
-# KEY_PROG4 = shell:kb-platform-profile cycle   # planned — see PLANNED.md
+# KEY_PROG4 = shell:kb-platform-profile cycle
 # KEY_BRIGHTNESSUP = display-brightness:up
 # KEY_BRIGHTNESSDOWN = display-brightness:down
 # KEY_MICMUTE = audio:mic-mute

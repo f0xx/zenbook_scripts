@@ -15,16 +15,26 @@ INSTALL_BIN_HOTKEYS = Path("/usr/local/bin/kb-brightness-hotkeys")
 INSTALL_BIN_CALIBRATE = Path("/usr/local/bin/kb-calibrate-hotkeys")
 INSTALL_BIN_SLEEP = Path("/usr/local/bin/kb-brightness-sleep")
 INSTALL_BIN_LID_WATCH = Path("/usr/local/bin/kb-brightness-lid-watch")
+INSTALL_BIN_SCREENPAD = Path("/usr/local/bin/screenpad")
+INSTALL_BIN_SCREENPAD_SYNC = Path("/usr/local/bin/screenpad-sync")
+INSTALL_BIN_SCREENPAD_BOOT = Path("/usr/local/bin/screenpad-boot")
+INSTALL_BIN_PLATFORM_PROFILE = Path("/usr/local/bin/kb-platform-profile")
 UDEV_RULES = Path("/etc/udev/rules.d/99-zenbook-kb-hotkeys.rules")
+UDEV_SCREENPAD_RULES = Path("/etc/udev/rules.d/99-zenbook-screenpad.rules")
 UDEV_HELPER = Path("/usr/local/libexec/zenbook-kb-hotkeys-udev")
 OPENRC_INIT = Path("/etc/init.d/zenbook-kb-hotkeys")
 OPENRC_LID_INIT = Path("/etc/init.d/zenbook-kb-lid")
 OPENRC_HID_ASUS_INIT = Path("/etc/init.d/zenbook-kb-hid-asus")
 OPENRC_HID_ASUS_CONF = Path("/etc/conf.d/zenbook-kb-hid-asus")
+OPENRC_SCREENPAD_INIT = Path("/etc/init.d/zenbook-screenpad")
+OPENRC_SCREENPAD_SYNC_INIT = Path("/etc/init.d/zenbook-screenpad-sync")
+OPENRC_SCREENPAD_CONF = Path("/etc/conf.d/zenbook-screenpad")
 INSTALL_LIBEXEC = Path("/usr/local/libexec")
 INSTALLED_KO_ROOT = Path("/usr/lib/modules/zenbook-hid-asus")
 OPENRC_CONF = Path("/etc/conf.d/zenbook-kb-hotkeys")
 SYSTEMD_UNIT = Path("/etc/systemd/system/zenbook-kb-hotkeys.service")
+SYSTEMD_SCREENPAD_UNIT = Path("/etc/systemd/system/zenbook-screenpad.service")
+SYSTEMD_SCREENPAD_SYNC_UNIT = Path("/etc/systemd/system/zenbook-screenpad-sync.service")
 SYSTEMD_SLEEP_HOOK = Path("/usr/lib/systemd/system-sleep/zenbook-kb-brightness")
 ACPI_EVENTS_DIR = Path("/etc/acpi/events")
 ACPI_SLEEP_EVENT = ACPI_EVENTS_DIR / "zenbook-kbd-sleep"
@@ -85,8 +95,12 @@ def install_kb_brightness_tree(script_dir: Path) -> None:
         "fn_lock.sh",
         "transport_usb.sh",
         "transport_bluetooth.sh",
+        "screenpad.sh",
+        "platform_profile.sh",
     ):
-        _sudo(["cp", str(script_dir / "lib" / name), f"{INSTALL_SHARE}/lib/"])
+        src = script_dir / "lib" / name
+        if src.is_file():
+            _sudo(["cp", str(src), f"{INSTALL_SHARE}/lib/"])
     _sudo(["cp", "-r", f"{script_dir}/zenbook_kb/.", f"{INSTALL_SHARE}/zenbook_kb/"])
     conf_d = script_dir / "conf.d"
     if conf_d.is_dir():
@@ -110,6 +124,15 @@ def install_kb_brightness_tree(script_dir: Path) -> None:
     if calibrate_bin.is_file():
         _sudo(["cp", str(calibrate_bin), str(INSTALL_BIN_CALIBRATE)])
         _sudo(["chmod", "a+x", str(INSTALL_BIN_CALIBRATE)])
+    for src, dest in (
+        (script_dir / "bin" / "screenpad", INSTALL_BIN_SCREENPAD),
+        (script_dir / "bin" / "screenpad-sync", INSTALL_BIN_SCREENPAD_SYNC),
+        (script_dir / "bin" / "screenpad-boot", INSTALL_BIN_SCREENPAD_BOOT),
+        (script_dir / "bin" / "kb-platform-profile", INSTALL_BIN_PLATFORM_PROFILE),
+    ):
+        if src.is_file():
+            _sudo(["cp", str(src), str(dest)])
+            _sudo(["chmod", "a+x", str(dest)])
     _sudo(["chmod", "a+x", str(INSTALL_BIN_BRIGHTNESS), str(INSTALL_BIN_HOTKEYS)])
     example_hotkeys = script_dir / "zenbook-hotkeys.conf.example"
     if example_hotkeys.is_file():
@@ -117,20 +140,41 @@ def install_kb_brightness_tree(script_dir: Path) -> None:
         _sudo(["cp", str(example_hotkeys), str(dest)])
 
 
+def _append_sudoers_line(line: str) -> bool:
+    if (
+        subprocess.run(
+            ["sudo", "grep", "-qF", line, "/etc/sudoers"],
+            check=False,
+        ).returncode
+        == 0
+    ):
+        return False
+    _sudo(["sh", "-c", f"echo '{line}' >> /etc/sudoers"])
+    return True
+
+
 def install_sudoers_kb_brightness() -> None:
     user = resolve_run_user()
     if not user:
         return
     sudoers_line = f"{user} ALL=NOPASSWD:{INSTALL_BIN_BRIGHTNESS} *"
-    if (
-        subprocess.run(
-            ["sudo", "grep", "-qF", sudoers_line, "/etc/sudoers"],
-            check=False,
-        ).returncode
-        != 0
-    ):
-        _sudo(["sh", "-c", f"echo '{sudoers_line}' >> /etc/sudoers"])
+    if _append_sudoers_line(sudoers_line):
         print(f"Added sudoers entry for passwordless {INSTALL_BIN_BRIGHTNESS}")
+
+
+def install_sudoers_ux5400() -> None:
+    """Passwordless screenpad + platform-profile for the install user."""
+    user = resolve_run_user()
+    if not user:
+        return
+    for path in (
+        INSTALL_BIN_SCREENPAD,
+        INSTALL_BIN_PLATFORM_PROFILE,
+        INSTALL_BIN_SCREENPAD_BOOT,
+    ):
+        line = f"{user} ALL=NOPASSWD:{path} *"
+        if _append_sudoers_line(line):
+            print(f"Added sudoers entry for passwordless {path}")
 
 
 def install_udev_rules(script_dir: Path) -> None:
@@ -322,6 +366,86 @@ def install_openrc_hid_asus_service(script_dir: Path, *, enable_service: bool = 
     print(f"Installed OpenRC service {OPENRC_HID_ASUS_INIT} (default runlevel sideload)")
 
 
+def install_udev_screenpad_rules(script_dir: Path) -> None:
+    src = script_dir / "contrib" / "udev" / "99-zenbook-screenpad.rules"
+    if not src.is_file():
+        return
+    _sudo(["mkdir", "-p", "/var/lib/zenbook-scripts"])
+    _sudo(["chmod", "0775", "/var/lib/zenbook-scripts"])
+    _sudo(["cp", str(src), str(UDEV_SCREENPAD_RULES)])
+    _sudo(["udevadm", "control", "--reload-rules"])
+    _sudo(["udevadm", "trigger", "--subsystem-match=backlight", "--action=add"])
+    print(f"Installed {UDEV_SCREENPAD_RULES}")
+
+
+def install_openrc_screenpad(script_dir: Path, *, with_sync: bool = True) -> None:
+    boot_src = script_dir / "contrib" / "openrc" / "zenbook-screenpad"
+    sync_src = script_dir / "contrib" / "openrc" / "zenbook-screenpad-sync"
+    conf_src = script_dir / "contrib" / "openrc" / "conf.d" / "zenbook-screenpad"
+    if boot_src.is_file():
+        _sudo(["cp", str(boot_src), str(OPENRC_SCREENPAD_INIT)])
+        _sudo(["chmod", "a+x", str(OPENRC_SCREENPAD_INIT)])
+        if conf_src.is_file() and not OPENRC_SCREENPAD_CONF.exists():
+            _sudo(["cp", str(conf_src), str(OPENRC_SCREENPAD_CONF)])
+        if shutil.which("rc-update"):
+            subprocess.run(
+                ["sudo", "rc-update", "add", "zenbook-screenpad", "default"],
+                check=False,
+            )
+        if shutil.which("rc-service"):
+            subprocess.run(["sudo", "rc-service", "zenbook-screenpad", "start"], check=False)
+        print(f"Installed OpenRC service {OPENRC_SCREENPAD_INIT}")
+    if with_sync and sync_src.is_file():
+        _sudo(["cp", str(sync_src), str(OPENRC_SCREENPAD_SYNC_INIT)])
+        _sudo(["chmod", "a+x", str(OPENRC_SCREENPAD_SYNC_INIT)])
+        _sudo(["touch", "/var/log/zenbook-screenpad-sync.log"])
+        if shutil.which("rc-update"):
+            subprocess.run(
+                ["sudo", "rc-update", "add", "zenbook-screenpad-sync", "default"],
+                check=False,
+            )
+        if shutil.which("rc-service"):
+            subprocess.run(
+                ["sudo", "rc-service", "zenbook-screenpad-sync", "restart"],
+                check=False,
+            )
+        print(f"Installed OpenRC service {OPENRC_SCREENPAD_SYNC_INIT}")
+
+
+def install_systemd_screenpad(script_dir: Path, *, with_sync: bool = True) -> None:
+    boot_src = script_dir / "contrib" / "systemd" / "zenbook-screenpad.service"
+    sync_src = script_dir / "contrib" / "systemd" / "zenbook-screenpad-sync.service"
+    if boot_src.is_file():
+        _sudo(["cp", str(boot_src), str(SYSTEMD_SCREENPAD_UNIT)])
+        _sudo(["systemctl", "daemon-reload"])
+        _sudo(["systemctl", "enable", "--now", "zenbook-screenpad.service"])
+        print(f"Installed {SYSTEMD_SCREENPAD_UNIT}")
+    if with_sync and sync_src.is_file():
+        _sudo(["cp", str(sync_src), str(SYSTEMD_SCREENPAD_SYNC_UNIT)])
+        _sudo(["systemctl", "daemon-reload"])
+        _sudo(["systemctl", "enable", "--now", "zenbook-screenpad-sync.service"])
+        print(f"Installed {SYSTEMD_SCREENPAD_SYNC_UNIT}")
+
+
+def install_screenpad_support(
+    script_dir: Path,
+    *,
+    init_system: str | None = None,
+    with_sync: bool = True,
+) -> str:
+    """Install ScreenPad CLI, udev, boot restore, optional sync daemon."""
+    init = init_system or detect_init_system()
+    install_kb_brightness_tree(script_dir)
+    install_sudoers_ux5400()
+    install_udev_screenpad_rules(script_dir)
+    if init == "systemd":
+        install_systemd_screenpad(script_dir, with_sync=with_sync)
+    else:
+        install_openrc_screenpad(script_dir, with_sync=with_sync)
+    print(f"Installed {INSTALL_BIN_SCREENPAD}, {INSTALL_BIN_PLATFORM_PROFILE}")
+    return init
+
+
 def install_hotkey_service(script_dir: Path, init_system: str | None = None) -> str:
     """Install udev rules + init-system service. Returns detected init name."""
     init = init_system or detect_init_system()
@@ -338,11 +462,36 @@ def install_hotkey_service(script_dir: Path, init_system: str | None = None) -> 
     return init
 
 
-def install_all(script_dir: Path, *, with_hotkey_service: bool = True) -> str | None:
+def install_all(
+    script_dir: Path,
+    *,
+    with_hotkey_service: bool = True,
+    with_screenpad: bool | None = None,
+    with_screenpad_sync: bool = True,
+) -> str | None:
+    from zenbook_kb.dmi import has_platform_profile, has_screenpad_sysfs, is_ux5400
+
     install_kb_brightness_tree(script_dir)
     install_sudoers_kb_brightness()
     print(f"Installed {INSTALL_BIN_BRIGHTNESS} and {INSTALL_BIN_HOTKEYS}")
     print(f"Support files under {INSTALL_SHARE}/")
+
+    if with_screenpad is None:
+        with_screenpad = is_ux5400() or has_screenpad_sysfs()
+    if with_screenpad:
+        install_sudoers_ux5400()
+        install_udev_screenpad_rules(script_dir)
+        init_preview = detect_init_system()
+        if init_preview == "systemd":
+            install_systemd_screenpad(script_dir, with_sync=with_screenpad_sync)
+        else:
+            install_openrc_screenpad(script_dir, with_sync=with_screenpad_sync)
+        print(f"ScreenPad tools: {INSTALL_BIN_SCREENPAD}")
+    elif has_platform_profile():
+        # Still install CLI + sudoers for platform profile on other ASUS boards.
+        install_sudoers_ux5400()
+        print(f"Platform profile CLI: {INSTALL_BIN_PLATFORM_PROFILE}")
+
     if not with_hotkey_service:
         return None
     init = install_hotkey_service(script_dir)
