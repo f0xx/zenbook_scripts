@@ -179,7 +179,12 @@ FN_ROW_POLICY_IMPL = """
 #define ZENBOOK_HID_F12\t\t0x45
 #define ZENBOOK_HID_ESC\t\t0x29
 #define ZENBOOK_HID_P\t\t0x13
+#define ZENBOOK_IF0_MOD_CTRL\t(BIT(0) | BIT(4))
+#define ZENBOOK_IF0_MOD_ALT\t(BIT(2) | BIT(6))
 #define ZENBOOK_IF0_MOD_GUI\t(BIT(3) | BIT(7))
+/* Alt/Ctrl/Meta+F must stay KEY_Fn for the desktop — not Fn-row specials. */
+#define ZENBOOK_IF0_MOD_DESKTOP\t(ZENBOOK_IF0_MOD_CTRL | ZENBOOK_IF0_MOD_ALT | \
+				 ZENBOOK_IF0_MOD_GUI)
 
 /*
  * Unused after Mode B swap (policy bit clear → plain KEY_Fn / Fn special).
@@ -277,6 +282,12 @@ static bool zenbook_fn_row_report_has_usage(const u8 *data, int size, u8 usage)
 static bool zenbook_fn_row_is_f13(int bit)
 {
 	return bit >= 0 && bit <= 2;
+}
+
+/* True when Alt/Ctrl/Meta held — do not apply bare Fn→special remaps. */
+static bool zenbook_if0_desktop_mods(void)
+{
+	return !!(zenbook_if0_modifiers & ZENBOOK_IF0_MOD_DESKTOP);
 }
 
 static unsigned int zenbook_fn_row_f13_media_key(int bit)
@@ -473,7 +484,7 @@ static int zenbook_fn_row_fn_f13_event(struct hid_device *hdev,
 	/* Parsed if3 volume: only used when bit clear (plain → KEY_Fn). */
 	if (!fn_row_policy || !zenbook_is_duo_consumer_if3(hdev))
 		return 0;
-	if (zenbook_if0_modifiers & ZENBOOK_IF0_MOD_GUI)
+	if (zenbook_if0_desktop_mods())
 		return 0;
 
 	switch (usage->code) {
@@ -511,7 +522,8 @@ static int zenbook_fn_row_fn_f56_event(struct hid_device *hdev,
 		return 0;
 	if (!zenbook_is_duo_main_keyboard(hdev, drvdata))
 		return 0;
-	if (zenbook_if0_modifiers & ZENBOOK_IF0_MOD_GUI)
+	/* Alt+F4 must close windows — not kbd BL; same for Ctrl/Meta+F*. */
+	if (zenbook_if0_desktop_mods())
 		return 0;
 
 	/*
@@ -727,6 +739,16 @@ static int zenbook_fn_row_policy_consumer_raw(struct hid_device *hdev,
 		/* Meta+plain F1–F3: if3 media → KEY_Fn for workspace bindings. */
 		if (rising && if0)
 			zenbook_fn_row_meta_emit_fkey(if0, bit);
+		return -1;
+	}
+
+	if (zenbook_if0_modifiers & (ZENBOOK_IF0_MOD_ALT | ZENBOOK_IF0_MOD_CTRL)) {
+		/*
+		 * Mode B: Alt/Ctrl+F1–F3 still emit if3 media. Desktop wants
+		 * Alt+F2 (Plasma launcher), etc. — emit KEY_Fn; modifiers stay on if0.
+		 */
+		if (rising && if0)
+			zenbook_fn_row_emit_on_hdev(if0, KEY_F1 + bit);
 		return -1;
 	}
 
@@ -963,6 +985,15 @@ static int zenbook_fn_row_policy_vendor_raw(struct hid_device *hdev,
 			}
 			if (down && rising && zenbook_duo_main_hdev)
 				zenbook_fn_row_emit_on_hdev(zenbook_duo_main_hdev, fkey);
+			return -1;
+		}
+
+		if (zenbook_if0_modifiers & (ZENBOOK_IF0_MOD_ALT | ZENBOOK_IF0_MOD_CTRL)) {
+			/* Alt/Ctrl+plain F*: Mode B vendor special → KEY_Fn for desktop. */
+			if (rising && zenbook_duo_main_hdev)
+				zenbook_fn_row_emit_on_hdev(zenbook_duo_main_hdev, fkey);
+			if (bit == 3 && !down)
+				zenbook_fn_row_f4_press_end();
 			return -1;
 		}
 
