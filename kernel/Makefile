@@ -1,4 +1,6 @@
-.PHONY: all build clean patches build-7.0.12 build-7.1.3
+.PHONY: all build clean patches build-7.0.12 build-7.1.3 \
+	install modules_install install-7.0.12 install-7.1.3 \
+	modules_install-7.0.12 modules_install-7.1.3
 
 KERNEL_DIR := $(dir $(lastword $(MAKEFILE_LIST)))
 OOT        := $(KERNEL_DIR)hid-asus-oot
@@ -18,6 +20,26 @@ build-7.0.12:
 
 build-7.1.3:
 	$(MAKE) -C "$(OOT)" KDIR="$(KDIR_713)"
+
+# Root required. modules_install → kbuild (…/extra/); install also copies to
+# /usr/lib/modules/zenbook-hid-asus/<kver>/ for boot sideload.
+modules_install:
+	$(MAKE) -C "$(OOT)" KDIR="$(KDIR)" modules_install
+
+install:
+	$(MAKE) -C "$(OOT)" KDIR="$(KDIR)" install
+
+modules_install-7.0.12:
+	$(MAKE) -C "$(OOT)" KDIR="$(KDIR_7012)" modules_install
+
+install-7.0.12:
+	$(MAKE) -C "$(OOT)" KDIR="$(KDIR_7012)" install
+
+modules_install-7.1.3:
+	$(MAKE) -C "$(OOT)" KDIR="$(KDIR_713)" modules_install
+
+install-7.1.3:
+	$(MAKE) -C "$(OOT)" KDIR="$(KDIR_713)" install
 
 clean:
 	$(MAKE) -C "$(OOT)" clean

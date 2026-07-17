@@ -180,9 +180,16 @@ FN_ROW_POLICY_IMPL = """
 #define ZENBOOK_HID_ESC\t\t0x29
 #define ZENBOOK_HID_P\t\t0x13
 #define ZENBOOK_IF0_MOD_GUI\t(BIT(3) | BIT(7))
-#define ZENBOOK_F4_VENDOR_DEFER_MS\t25
 
-static void zenbook_fn_row_emit_win_p(struct hid_device *hdev);
+/*
+ * Unused after Mode B swap (policy bit clear → plain KEY_Fn / Fn special).
+ * Enable to revive deferred vendor→KEY_F4 inject, stepped kbd BL, or F4–F12
+ * plain passthrough helpers.
+ */
+/* #define ZENBOOK_FN_ROW_LEGACY_F4 */
+
+#ifdef ZENBOOK_FN_ROW_LEGACY_F4
+#define ZENBOOK_F4_VENDOR_DEFER_MS\t25
 
 static void zenbook_f4_vendor_dw_fn(struct work_struct *work);
 
@@ -208,6 +215,9 @@ static void zenbook_f4_vendor_arm(void)
 	schedule_delayed_work(&zenbook_f4_vendor_dw,
 			    msecs_to_jiffies(ZENBOOK_F4_VENDOR_DEFER_MS));
 }
+#endif /* ZENBOOK_FN_ROW_LEGACY_F4 */
+
+static void zenbook_fn_row_emit_win_p(struct hid_device *hdev);
 
 static bool zenbook_is_duo_usb_if(struct hid_device *hdev, unsigned int ifnum_want)
 {
@@ -589,6 +599,7 @@ static void zenbook_fn_row_emit_f4_once(struct hid_device *if0)
 	zenbook_fn_row_emit_on_hdev(if0, KEY_F4);
 }
 
+#ifdef ZENBOOK_FN_ROW_LEGACY_F4
 static void zenbook_f4_vendor_dw_fn(struct work_struct *work)
 {
 	(void)work;
@@ -601,6 +612,7 @@ static void zenbook_f4_vendor_dw_fn(struct work_struct *work)
 	if (zenbook_duo_main_hdev)
 		zenbook_fn_row_emit_f4_once(zenbook_duo_main_hdev);
 }
+#endif /* ZENBOOK_FN_ROW_LEGACY_F4 */
 
 static void zenbook_fn_row_f4_press_end(void)
 {
@@ -610,6 +622,7 @@ static void zenbook_fn_row_f4_press_end(void)
 	zenbook_f4_hw_key_seen = false;
 }
 
+#ifdef ZENBOOK_FN_ROW_LEGACY_F4
 static void zenbook_fn_row_step_backlight(void)
 {
 	struct asus_kbd_leds *led = zenbook_duo_vendor_leds;
@@ -654,6 +667,7 @@ static void zenbook_fn_row_f412_plain_passthrough(struct hid_device *if0, u8 usa
 
 	zenbook_fn_row_emit_on_hdev(if0, KEY_F1 + bit);
 }
+#endif /* ZENBOOK_FN_ROW_LEGACY_F4 */
 
 static int zenbook_fn_row_policy_consumer_raw(struct hid_device *hdev,
 					      u8 *data, int size)

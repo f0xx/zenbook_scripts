@@ -264,7 +264,7 @@ Compared Gentoo sources at `/usr/src/linux-7.0.12-gentoo-r1` and `/usr/src/linux
 | **hid-asus** general | Older init | Refactored init | Helps other ASUS HID devices; no Zenbook Duo IDs |
 | **asus_armoury** | Present | Same | BIOS tuning only; no keyboard backlight attrs |
 
-**Bottom line:** upgrading is worthwhile for general fixes, but does **not** upstream Zenbook Duo keyboard patches ([asusctl #25](https://github.com/OpenGamingCollective/asusctl/issues/25)). Expect the same userspace workflow.
+**Bottom line:** upgrading is worthwhile for general fixes, but does **not** upstream Zenbook Duo keyboard patches ([asusctl #25](https://github.com/OpenGamingCollective/asusctl/issues/25)). Expect the same userspace workflow. The oot port in [`kernel/`](kernel/) builds on both **7.0.12** and **7.1.3** (`make -C kernel patches`, `make -C kernel build-7.1.3`).
 
 ### After upgrading — quick check
 
@@ -272,8 +272,18 @@ Compared Gentoo sources at `/usr/src/linux-7.0.12-gentoo-r1` and `/usr/src/linux
 uname -r
 lsusb | grep -i 'zenbook duo'
 ls /sys/class/leds/asus*
-grep DRIVER /sys/bus/hid/devices/*1B2C*/uevent   # today: hid-generic
+grep DRIVER /sys/bus/hid/devices/*1B2C*/uevent   # stock: hid-generic; oot: asus
 ```
+
+Rebuild and install the oot module for the new `uname -r`:
+
+```bash
+make -C kernel build          # or build-7.1.3
+sudo make -C kernel install   # → /usr/lib/modules/zenbook-hid-asus/$(uname -r)/
+sudo rc-service zenbook-kb-hid-asus restart
+```
+
+Details: [`kernel/README.md`](kernel/README.md) (build, `install` / `modules_install`, `fn_row_policy=7`).
 
 ---
 
@@ -297,15 +307,18 @@ zenbook_kb/                  Python package (protocol, transports, hotkey, insta
 
 ### Experimental: kernel LED path
 
-When `hid-asus` binds `0b05:1b2c` / `0b05:1b2d`:
+When oot `hid-asus` binds `0b05:1b2c` / `0b05:1b2d` (see [`kernel/README.md`](kernel/README.md)):
 
 ```bash
+make -C kernel build && sudo make -C kernel install
+# sideload: sudo ./kernel/scripts/switch-hid-asus.sh sideload
+# or OpenRC: zenbook-kb-hid-asus with fn_row_policy=7 in /etc/conf.d/zenbook-kb-hid-asus
+
 ls /sys/class/leds/asus::kbd_backlight/
 echo 2 | sudo tee /sys/class/leds/asus::kbd_backlight/brightness
 ```
 
-Community kernel work: [hacker1024/linux `ux8406-hid`](https://github.com/hacker1024/linux/compare/v6.14.4...ux8406-hid).
-
+Community kernel work: [hacker1024/linux `ux8406-hid`](https://github.com/hacker1024/linux/compare/v6.14.4...ux8406-hid). Docked Fn-row default after install: **`fn_row_policy=7`** (plain F4–F12 as F-keys; Fn+F specials — brightness, backlight, Win+P, ASUS key).
 ### Experimental: asusctl / asusd
 
 Does **not** replace these scripts until `hid-asus` exposes `asus::kbd_backlight`. `asus_armoury` has no keyboard brightness attribute on UX8406.

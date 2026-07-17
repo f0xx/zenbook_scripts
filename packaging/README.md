@@ -7,18 +7,27 @@ repo root. This tree holds **maintainer** recipes per distro.
 
 | Path | Purpose |
 |------|---------|
-| `gentoo/zenbook_scripts-9999.ebuild` | Live git package (`EGIT`) |
+| `gentoo/zenbook-scripts-9999.ebuild` | Live git package (`EGIT`) |
 | `gentoo/zenbook_scripts-0.1.ebuild.stub` | Template for first release tag |
 
 Copy ebuilds into a local overlay, e.g.:
 
 ```bash
-mkdir -p /var/db/repos/local/overlay/app-laptop/zenbook_scripts
-cp packaging/gentoo/zenbook_scripts-9999.ebuild \
-   /var/db/repos/local/overlay/app-laptop/zenbook_scripts/
-ebuild …/zenbook_scripts-9999.ebuild manifest
-emerge -av app-laptop/zenbook_scripts
+mkdir -p /var/db/repos/local/overlay/app-laptop/zenbook-scripts
+cp packaging/gentoo/zenbook-scripts-9999.ebuild \
+   /var/db/repos/local/overlay/app-laptop/zenbook-scripts/zenbook-scripts-9999.ebuild
+ebuild …/zenbook-scripts-9999.ebuild manifest
+emerge -av app-laptop/zenbook-scripts
 ```
+
+From a git checkout (without emerge), install the oot module only:
+
+```bash
+make -C kernel build && sudo make -C kernel install
+# → /usr/lib/modules/zenbook-hid-asus/$(uname -r)/hid-asus.ko
+```
+
+See [`kernel/README.md`](../kernel/README.md) for `install` vs `modules_install`.
 
 ## USE flags (Gentoo)
 
@@ -45,7 +54,7 @@ USE="hotkeys kernel zenbook_ux8406" emerge -av app-laptop/zenbook_scripts
 | oot `hid-asus.ko` | `/usr/lib/modules/zenbook-hid-asus/<kver>/hid-asus.ko` |
 | Manual sideload | `/usr/local/libexec/zenbook-hid-asus-switch` |
 | Boot sideload | OpenRC `zenbook-kb-hid-asus` → `zenbook-hid-asus-boot.sh` |
-| Boot config | `/etc/conf.d/zenbook-kb-hid-asus` (`sideload=yes\|no\|auto`) |
+| Boot config | `/etc/conf.d/zenbook-kb-hid-asus` (`sideload=…`, `fn_row_policy=7`) |
 
 Re-emerge after **each kernel upgrade** (`KV_FULL` changes).
 
