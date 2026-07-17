@@ -1,0 +1,25 @@
+#!/sbin/openrc-run
+# Mirror main panel brightness onto ASUS ScreenPad Plus.
+
+name="zenbook-screenpad-sync"
+description="Zenbook ScreenPad brightness sync"
+
+: "${command:=/usr/local/bin/screenpad-sync}"
+: "${command_background:=yes}"
+: "${pidfile:=/run/${RC_SVCNAME}.pid}"
+: "${output_log:=/var/log/${RC_SVCNAME}.log}"
+: "${error_log:=/var/log/${RC_SVCNAME}.log}"
+
+depend() {
+	need localmount
+	after zenbook-screenpad modules
+}
+
+start_pre() {
+	if [ -x /usr/local/bin/screenpad-boot ]; then
+		SCREENPAD_BOOT_MODE=on /usr/local/bin/screenpad-boot >/dev/null 2>&1 || true
+	fi
+	if [ -n "${output_log:-}" ]; then
+		checkpath -f -m 0644 -o root:root "${output_log}"
+	fi
+}

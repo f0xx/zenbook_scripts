@@ -1,10 +1,14 @@
-# zenbook_scripts
+# Zenbook scripts — UX5400EA (ScreenPad) + shared tooling
 
-a set up various useful Asus Zenbook scripts and patches
+Model docs for branch `zenbook_ux5400e`. Repo index: [`README.md`](README.md).
 
-Scripts for the ASUS Zenbook Duo UX8406 detachable keyboard backlight, Fn+ hotkeys, and related laptop integration.
--
-Tested with the Primax detachable keyboard (`0b05:1b2c` USB / `0b05:1b2d` Bluetooth).
+Also includes shared UX8406-oriented keyboard tooling inherited from `zenbook_ux8406ma`
+(detachable keyboard backlight / Fn+ hotkeys). Prefer that branch for dock-focused work.
+
+Tested ScreenPad path on **UX5400EA** (`asus_screenpad`, DRM `HDMI-A-2`).
+Detachable keyboard path tested with Primax (`0b05:1b2c` USB / `0b05:1b2d` Bluetooth).
+
+---
 
 ## Quick start
 
@@ -264,7 +268,7 @@ Compared Gentoo sources at `/usr/src/linux-7.0.12-gentoo-r1` and `/usr/src/linux
 | **hid-asus** general | Older init | Refactored init | Helps other ASUS HID devices; no Zenbook Duo IDs |
 | **asus_armoury** | Present | Same | BIOS tuning only; no keyboard backlight attrs |
 
-**Bottom line:** upgrading is worthwhile for general fixes, but does **not** upstream Zenbook Duo keyboard patches ([asusctl #25](https://github.com/OpenGamingCollective/asusctl/issues/25)). Expect the same userspace workflow. The oot port in [`kernel/`](kernel/) builds on both **7.0.12** and **7.1.3** (`make -C kernel patches`, `make -C kernel build-7.1.3`).
+**Bottom line:** upgrading is worthwhile for general fixes, but does **not** upstream Zenbook Duo keyboard patches ([asusctl #25](https://github.com/OpenGamingCollective/asusctl/issues/25)). Expect the same userspace workflow.
 
 ### After upgrading — quick check
 
@@ -272,18 +276,8 @@ Compared Gentoo sources at `/usr/src/linux-7.0.12-gentoo-r1` and `/usr/src/linux
 uname -r
 lsusb | grep -i 'zenbook duo'
 ls /sys/class/leds/asus*
-grep DRIVER /sys/bus/hid/devices/*1B2C*/uevent   # stock: hid-generic; oot: asus
+grep DRIVER /sys/bus/hid/devices/*1B2C*/uevent   # today: hid-generic
 ```
-
-Rebuild and install the oot module for the new `uname -r`:
-
-```bash
-make -C kernel build          # or build-7.1.3
-sudo make -C kernel install   # → /usr/lib/modules/zenbook-hid-asus/$(uname -r)/
-sudo rc-service zenbook-kb-hid-asus restart
-```
-
-Details: [`kernel/README.md`](kernel/README.md) (build, `install` / `modules_install`, `fn_row_policy=7`).
 
 ---
 
@@ -307,18 +301,15 @@ zenbook_kb/                  Python package (protocol, transports, hotkey, insta
 
 ### Experimental: kernel LED path
 
-When oot `hid-asus` binds `0b05:1b2c` / `0b05:1b2d` (see [`kernel/README.md`](kernel/README.md)):
+When `hid-asus` binds `0b05:1b2c` / `0b05:1b2d`:
 
 ```bash
-make -C kernel build && sudo make -C kernel install
-# sideload: sudo ./kernel/scripts/switch-hid-asus.sh sideload
-# or OpenRC: zenbook-kb-hid-asus with fn_row_policy=7 in /etc/conf.d/zenbook-kb-hid-asus
-
 ls /sys/class/leds/asus::kbd_backlight/
 echo 2 | sudo tee /sys/class/leds/asus::kbd_backlight/brightness
 ```
 
-Community kernel work: [hacker1024/linux `ux8406-hid`](https://github.com/hacker1024/linux/compare/v6.14.4...ux8406-hid). Docked Fn-row default after install: **`fn_row_policy=7`** (plain F4–F12 as F-keys; Fn+F specials — brightness, backlight, Win+P, ASUS key).
+Community kernel work: [hacker1024/linux `ux8406-hid`](https://github.com/hacker1024/linux/compare/v6.14.4...ux8406-hid).
+
 ### Experimental: asusctl / asusd
 
 Does **not** replace these scripts until `hid-asus` exposes `asus::kbd_backlight`. `asus_armoury` has no keyboard brightness attribute on UX8406.
@@ -327,7 +318,7 @@ Does **not** replace these scripts until `hid-asus` exposes `asus::kbd_backlight
 
 | Path | Status |
 |------|--------|
-| `/sys/class/backlight/asus_screenpad/` | Spurious WMI device; not the detachable keyboard |
+| `/sys/class/backlight/asus_screenpad/` | ScreenPad Plus backlight (UX5400 etc.); **not** the UX8406 detachable keyboard |
 | `/sys/class/leds/asus::kbd_backlight/` | Not present until `hid-asus` lands |
 | `asus_armoury` firmware attributes | No keyboard brightness |
 | WMI-only userspace | Targets laptop EC, not BT keyboard MCU |
@@ -366,6 +357,10 @@ backlight.py                  backward-compatible alias
 brightness.sh                 bash wrapper → kb-brightness
 bin/kb-brightness             brightness CLI
 bin/kb-brightness-hotkeys     Fn+ / special-key listener
+bin/kb-platform-profile       ACPI platform_profile (quiet/balanced/performance)
+bin/screenpad                 ScreenPad Plus on/off/brightness (UX5400)
+bin/screenpad-boot            boot restore oneshot
+bin/screenpad-sync            mirror main panel brightness %
 configure.py                  console configurator + installer
 configure.sh                  whiptail configurator
 configure_gui.py              PySide6 GUI configurator
@@ -373,13 +368,95 @@ zenbook-duo.conf.example      keyboard / duo settings
 zenbook-hotkeys.conf.example  Fn+ key bindings
 zenbook_kb/                   Python library
 zenbook_kb/install.py         install helpers (udev, OpenRC, systemd)
-lib/                          bash modules
+zenbook_kb/dmi.py             DMI / ScreenPad detection
+lib/                          bash modules (incl. screenpad.sh, platform_profile.sh)
 contrib/acpi/                 example acpid WMI rules
-contrib/openrc/               OpenRC init script
+contrib/openrc/               OpenRC init scripts (hotkeys + ScreenPad)
 contrib/udev/                 udev rules + replug helper
-contrib/systemd/              systemd unit template
+contrib/systemd/              systemd units (hotkeys + ScreenPad)
+conf.d/UX5400EA.README        UX5400 model notes
 kbd_test.sh                   brightness cycle test
 ```
+
+---
+
+## Zenbook Duo UX5400EA (ScreenPad Plus)
+
+Branch `zenbook_ux5400e`. Fixed keyboard (WMI white backlight) + secondary ScreenPad
+(DRM connector, usually `HDMI-A-2`) when EC-powered.
+
+| Sysfs | Role |
+|-------|------|
+| `/sys/class/leds/asus::kbd_backlight/` | Keyboard backlight 0–3 (WMI; works out of the box) |
+| `/sys/class/backlight/asus_screenpad/` | ScreenPad brightness 0–255 + power |
+| `/sys/firmware/acpi/platform_profile` | `quiet` / `balanced` / `performance` (no custom fan curves) |
+
+### CLI
+
+```bash
+screenpad status
+screenpad on [n]          # default: last level or 180
+screenpad off
+screenpad toggle
+screenpad set <0-255>     # 0 = off
+screenpad sync            # one-shot match main panel %
+screenpad-sync [--once]   # daemon (or one-shot)
+
+kb-platform-profile get|list|set <name>|cycle
+```
+
+**Kernel quirk (mainline before screenpad power fixes):** writing brightness with
+`bl_power=0` keeps the panel off. `screenpad on` always sets `bl_power=1` then
+brightness, then nudges DRM `detect` so `HDMI-A-2` reappears.
+
+Last brightness is stored in `/var/lib/zenbook-scripts/screenpad-brightness`.
+
+### Install / services
+
+Auto-detected when DMI contains `UX5400` or `asus_screenpad` exists:
+
+```bash
+sudo ./configure.py --defaults --all-yes
+# or ScreenPad-only:
+python3 -c "from pathlib import Path; from zenbook_kb.install import install_screenpad_support; install_screenpad_support(Path('.'))"
+```
+
+| Piece | Path |
+|-------|------|
+| CLIs | `/usr/local/bin/screenpad`, `screenpad-boot`, `screenpad-sync`, `kb-platform-profile` |
+| udev | `/etc/udev/rules.d/99-zenbook-screenpad.rules` (group `video` write) |
+| OpenRC | `zenbook-screenpad`, `zenbook-screenpad-sync` |
+| systemd | `zenbook-screenpad.service`, `zenbook-screenpad-sync.service` |
+| Boot mode | `/etc/conf.d/zenbook-screenpad` → `SCREENPAD_BOOT_MODE=on\|off\|sync\|restore` |
+
+```bash
+rc-service zenbook-screenpad status
+rc-service zenbook-screenpad-sync status
+# Manual brightness only (disable sync):
+sudo rc-service zenbook-screenpad-sync stop
+```
+
+OpenRGB / rogauracore: **not applicable** (no USB Aura Core HID on this model).
+
+### Troubleshooting
+
+```bash
+# Panel gone, touchpad still works?
+screenpad status
+# expect: state=off or drm=none →
+screenpad on 180
+kscreen-doctor -o | grep -A2 HDMI
+
+# Permissions (should be root:video rw after udev)
+ls -l /sys/class/backlight/asus_screenpad/brightness
+groups | grep video
+
+# Fans: only profiles, not PWM curves
+dmesg | grep fan_curve_get_factory_default   # ENODEV is normal
+kb-platform-profile list
+```
+
+See also [`PLANNED.md`](PLANNED.md) (implemented feature notes) and [`DEPLOY.md`](DEPLOY.md).
 
 ---
 
@@ -401,9 +478,3 @@ Special thanks to the people and projects this work builds on:
 - [zenbook-duo-2024-ux8406ma-linux (Alesya Huzik)](https://github.com/alesya-h/zenbook-duo-2024-ux8406ma-linux)
 - [asusctl UX8406 tracking](https://github.com/OpenGamingCollective/asusctl/issues/25)
 - [hacker1024 ux8406-hid kernel branch](https://github.com/hacker1024/linux/compare/v6.14.4...ux8406-hid)
-
-## Models:
-
-- [Asus Zenbook UX8406(MA)](https://github.com/f0xx/zenbook_scripts/tree/zenbook_ux8406ma) - [README.ux8406.md](README.ux8406.md)
-- [Asus Zenbook UX5400(E)](https://github.com/f0xx/zenbook_scripts/tree/zenbook_ux5400e) — [README.ux5400.md](README.ux5400.md)
-- [Asus Zenbook UX582(LR)](https://github.com/f0xx/zenbook_scripts/tree/zenbook_ux582lr) - WIP

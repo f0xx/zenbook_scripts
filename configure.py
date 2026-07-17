@@ -14,7 +14,14 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
-from zenbook_kb.install import detect_init_system, install_all, install_kb_brightness_tree
+from zenbook_kb.install import (
+    detect_init_system,
+    install_all,
+    install_kb_brightness_tree,
+    install_screenpad_support,
+    install_sudoers_kb_brightness,
+)
+from zenbook_kb.dmi import has_screenpad_sysfs, is_ux5400, product_name
 from zenbook_kb.users import default_duo_config, default_hotkeys_config, resolve_config_dir
 
 EXAMPLE_CONFIG = Path(__file__).resolve().parent / "zenbook-duo.conf.example"
@@ -105,8 +112,12 @@ def main(argv: list[str] | None = None) -> int:
     duo = cfg.setdefault("duo", {})
 
     init_system = detect_init_system()
+    dmi_name = product_name() or "unknown"
+    screenpad = has_screenpad_sysfs() or is_ux5400()
     print("Zenbook Duo keyboard configurator")
+    print(f"Detected DMI product: {dmi_name}")
     print(f"Detected connection: {detect_keyboard()}")
+    print(f"Detected ScreenPad sysfs: {'yes' if has_screenpad_sysfs() else 'no'}")
     print(f"Detected init system: {init_system} ({'systemctl found' if init_system == 'systemd' else 'OpenRC-like'})")
     print()
 
@@ -129,6 +140,20 @@ def main(argv: list[str] | None = None) -> int:
     if yes_no("Test brightness now?", default_no=True, assume_yes=args.all_yes):
         test_brightness(script_dir, int(kb["default_brightness"]))
 
+    if screenpad and yes_no(
+        "Install ScreenPad + platform-profile tools (UX5400 / asus_screenpad)?",
+        default_no=False,
+        assume_yes=args.all_yes,
+    ):
+        with_sync = yes_no(
+            "Also install ScreenPad brightness-sync service?",
+            default_no=False,
+            assume_yes=args.all_yes,
+        )
+        install_screenpad_support(script_dir, with_sync=with_sync)
+        print("Try: screenpad status && screenpad on 180")
+        print("Try: kb-platform-profile list && kb-platform-profile cycle")
+
     if yes_no(
         "Install kb-brightness + Fn+ hotkey service to /usr/local?",
         default_no=True,
@@ -139,7 +164,12 @@ def main(argv: list[str] | None = None) -> int:
             default_no=False,
             assume_yes=args.all_yes,
         )
-        install_all(script_dir, with_hotkey_service=with_hotkeys)
+        install_all(
+            script_dir,
+            with_hotkey_service=with_hotkeys,
+            with_screenpad=screenpad,
+            with_screenpad_sync=True,
+        )
         if with_hotkeys:
             print()
             print("Try: kb-brightness-hotkeys --dry-run   (press Fn+ keys)")
@@ -150,9 +180,11 @@ def main(argv: list[str] | None = None) -> int:
                 print("Service: systemctl status zenbook-kb-hotkeys.service")
     elif yes_no("Install scripts only (no udev/service)?", default_no=True, assume_yes=args.all_yes):
         install_kb_brightness_tree(script_dir)
-        from zenbook_kb.install import install_sudoers_kb_brightness
-
         install_sudoers_kb_brightness()
+        if screenpad:
+            from zenbook_kb.install import install_sudoers_ux5400
+
+            install_sudoers_ux5400()
 
     return 0
 

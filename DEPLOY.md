@@ -12,11 +12,12 @@ Kernel module tests and config-only edits often need **no** reinstall.
 | **Edited `~/.config/zenbook-scripts/zenbook-hotkeys.conf`** | No | **Yes** | No | No |
 | **Edited `zenbook_kb/*.py`** in the git repo | **Yes** | **Yes** | No | No |
 | **Edited `brightness.py`, `bin/kb-brightness*`** | **Yes** | Only if hotkey wrapper changed | No | No |
+| **Edited `bin/screenpad*`, `bin/kb-platform-profile`, `lib/screenpad.sh`** | **Yes** | No — restart `zenbook-screenpad-sync` if that daemon changed | No | No |
 | **Edited `contrib/openrc/` or udev rules** | **Yes** (install step) | **Yes** (or `rc-update` / `udevadm trigger`) | No | No |
 | **Edited `kernel/` patches or port script** | No | No | **Yes** (`make -f kernel/Makefile build-current`) | **Yes** after rebuild |
-| **Only use `kb-brightness` CLI** (brightness up/down) | No | No | No | No |
+| **Only use `kb-brightness` / `screenpad` CLI** | No | No | No | No |
 | **Kernel upgrade** (new `uname -r`) | No | No | **Yes** for new KDIR | **Yes** (rebuild + load on new kernel) |
-| **Testing from git tree without installing** | No | No | No | No — run `PYTHONPATH=. python3 zenbook_kb/hotkey.py …` |
+| **Testing from git tree without installing** | No | No | No | No — run `./bin/screenpad` or `PYTHONPATH=. python3 …` |
 
 ## What “install” does
 
@@ -25,10 +26,13 @@ Kernel module tests and config-only edits often need **no** reinstall.
 | Source | Destination |
 |--------|-------------|
 | `bin/kb-brightness`, `bin/kb-brightness-hotkeys` | `/usr/local/bin/` |
+| `bin/screenpad`, `screenpad-boot`, `screenpad-sync`, `kb-platform-profile` | `/usr/local/bin/` (when ScreenPad / UX5400 path runs) |
 | `zenbook_kb/`, `brightness.py`, `lib/` | `/usr/local/share/zenbook-scripts/` |
 | `conf.d/` | `/usr/local/share/zenbook-scripts/conf.d/` |
-| `contrib/udev/` | `/etc/udev/rules.d/`, `/usr/local/libexec/` |
-| `contrib/openrc/` | `/etc/init.d/zenbook-kb-hotkeys`, `/etc/conf.d/zenbook-kb-hotkeys` |
+| `contrib/udev/99-zenbook-kb-hotkeys.rules` | `/etc/udev/rules.d/`, `/usr/local/libexec/` |
+| `contrib/udev/99-zenbook-screenpad.rules` | `/etc/udev/rules.d/` |
+| `contrib/openrc/zenbook-kb-*` | `/etc/init.d/`, `/etc/conf.d/` |
+| `contrib/openrc/zenbook-screenpad*` | `/etc/init.d/zenbook-screenpad`, `zenbook-screenpad-sync` |
 
 **OpenRC service** runs `/usr/local/bin/kb-brightness-hotkeys` as the installing user
 (`command_user` in `/etc/conf.d/zenbook-kb-hotkeys`). Do not copy `contrib/openrc/` by hand —
@@ -263,3 +267,40 @@ untrusted users `input`, `plugdev`, or write access to `/dev/hidraw*` if you run
 **Do not** run `zenbook-kb-hotkeys` as root; `configure.py` sets a normal user.
 Re-run `configure.py` after adding untrusted sudoers rules that expose `kb-brightness`
 to extra users.
+
+## UX5400EA / ScreenPad Plus
+
+| Piece | Path / service |
+|-------|----------------|
+| CLI | `/usr/local/bin/screenpad`, `screenpad-boot`, `screenpad-sync`, `kb-platform-profile` |
+| Last brightness | `/var/lib/zenbook-scripts/screenpad-brightness` |
+| udev | `/etc/udev/rules.d/99-zenbook-screenpad.rules` (`video` group write) |
+| Boot oneshot | OpenRC `zenbook-screenpad` / systemd `zenbook-screenpad.service` |
+| Brightness sync | OpenRC `zenbook-screenpad-sync` / systemd `zenbook-screenpad-sync.service` |
+| Boot mode | `/etc/conf.d/zenbook-screenpad` → `SCREENPAD_BOOT_MODE=on\|off\|sync\|restore` |
+
+### G. “ScreenPad disappeared (touchpad only)”
+
+```bash
+screenpad status          # often state=off / drm=none
+screenpad on 180          # bl_power quirk + DRM detect
+kscreen-doctor -o         # expect HDMI-A-2 connected
+```
+
+No reinstall. If permissions fail: `groups | grep video` and re-trigger udev, or use sudo.
+
+### H. “Redeploy ScreenPad userspace after git pull”
+
+```bash
+sudo python3 configure.py --defaults --all-yes
+# or ScreenPad-only:
+python3 -c "from pathlib import Path; from zenbook_kb.install import install_screenpad_support; install_screenpad_support(Path('.'))"
+sudo rc-service zenbook-screenpad-sync restart
+```
+
+Manual brightness only: `sudo rc-service zenbook-screenpad-sync stop`.
+
+| Action | Typical requirement |
+|--------|---------------------|
+| `screenpad` / `kb-platform-profile` | install user (sudoers) or group `video` for ScreenPad sysfs |
+| Sync daemon | root OpenRC/systemd service |

@@ -34,6 +34,7 @@ See [`kernel/README.md`](../kernel/README.md) for `install` vs `modules_install`
 | Flag | Default | Meaning |
 |------|---------|---------|
 | `hotkeys` | on | udev + OpenRC services (hotkeys, lid watcher, sleep hooks) |
+| `screenpad` | off | ScreenPad CLI + udev + `zenbook-screenpad` / `-sync` (UX5400) |
 | `kernel` | on | Build/install oot `hid-asus.ko` + boot sideload service |
 | `qt6` | off | `configure_gui.py` (PySide6) |
 | `zenbook_ux8406` | on | Install `conf.d/UX8406*` evdev profiles |
@@ -46,11 +47,21 @@ emerge -av app-laptop/zenbook_scripts
 USE="hotkeys kernel zenbook_ux8406" emerge -av app-laptop/zenbook_scripts
 ```
 
+Recommended UX5400EA (ScreenPad, no oot hid-asus):
+
+```bash
+USE="screenpad -kernel -zenbook_ux8406" emerge -av app-laptop/zenbook_scripts
+```
+
 ### Installed paths (Gentoo / configure.py)
 
 | Component | Path |
 |-----------|------|
 | Userspace tree | `/usr/local/share/zenbook-scripts/` |
+| ScreenPad CLIs | `/usr/local/bin/screenpad`, `screenpad-boot`, `screenpad-sync` |
+| Platform profile CLI | `/usr/local/bin/kb-platform-profile` |
+| ScreenPad udev | `/etc/udev/rules.d/99-zenbook-screenpad.rules` |
+| ScreenPad services | OpenRC `zenbook-screenpad`, `zenbook-screenpad-sync` |
 | oot `hid-asus.ko` | `/usr/lib/modules/zenbook-hid-asus/<kver>/hid-asus.ko` |
 | Manual sideload | `/usr/local/libexec/zenbook-hid-asus-switch` |
 | Boot sideload | OpenRC `zenbook-kb-hid-asus` → `zenbook-hid-asus-boot.sh` |

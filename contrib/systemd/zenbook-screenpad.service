@@ -1,0 +1,13 @@
+[Unit]
+Description=Zenbook ScreenPad boot restore
+After=systemd-modules-load.service
+Before=display-manager.service
+
+[Service]
+Type=oneshot
+Environment=SCREENPAD_BOOT_MODE=on
+ExecStart=/usr/local/bin/screenpad-boot
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

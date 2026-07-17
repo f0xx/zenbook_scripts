@@ -1,18 +1,6 @@
-# Planned features (not implemented yet)
+# Planned features
 
-## `kb-platform-profile` — fan / thermal mode helper
-
-UX8406 has **no dedicated Fn key** for platform profile. Fn+F5 is **display brightness down**.
-
-What works today (kernel only):
-
-```bash
-cat /sys/firmware/acpi/platform_profile
-echo performance | sudo tee /sys/firmware/acpi/platform_profile
-# choices: quiet balanced performance
-```
-
-Planned CLI:
+## `kb-platform-profile` — implemented
 
 ```bash
 kb-platform-profile get
@@ -21,9 +9,32 @@ kb-platform-profile set balanced
 kb-platform-profile cycle         # quiet → balanced → performance → …
 ```
 
-Optional later: bind an unmapped key from calibration JSON, or a desktop shortcut — not Fn+F5.
+Custom fan PWM curves remain unavailable on UX5400EA / UX8406 (`fan_curve_get_factory_default` → ENODEV).
 
-`asusctl` / per-fan PWM curves are unlikely on this board (`fan_curve_get_factory_default` fails in dmesg).
+---
+
+## ScreenPad Plus (UX5400EA) — implemented
+
+```bash
+screenpad status
+screenpad on [n]          # re-enable quirk: bl_power=1 then brightness
+screenpad off
+screenpad toggle
+screenpad set <0-255>
+screenpad sync            # one-shot match main panel %
+screenpad-sync            # daemon (OpenRC/systemd)
+screenpad-boot            # boot restore oneshot
+```
+
+Install (auto-detected when `asus_screenpad` or DMI UX5400):
+
+```bash
+sudo ./configure.py --defaults --all-yes
+# or ScreenPad-only:
+# python3 -c "from pathlib import Path; from zenbook_kb.install import install_screenpad_support; install_screenpad_support(Path('.'))"
+```
+
+OpenRGB / rogauracore: **not applicable** on UX5400EA (no USB Aura Core HID; white kbd backlight is WMI `asus::kbd_backlight`).
 
 ---
 
@@ -99,12 +110,6 @@ sudo ./kernel/scripts/switch-hid-asus.sh keep
 
 | Check | Pass |
 |-------|------|
-| USB `0b05:1b2c` present (if docked) | lsusb |
-| Touchpad node if5 → `hid-multitouch` | sysfs |
-| Vendor if4 → `asus` (sideload) or `hid-generic` (stock) | sysfs |
-| `event*` nodes for Primax keyboard exist | `/dev/input` |
-| Optional: user confirms typing in prompt | manual |
-
-### Your idea?
-
-If you have a preferred flow (e.g. always BT fallback, timed rollback, TTY prompt), note it here or in an issue — the script is designed to be extended.
+| Keyboard interfaces bound to `asus` (sideload) or expected stock drivers | yes |
+| Touchpad remains `hid-multitouch` | yes |
+| `asus::kbd_backlight` sysfs present (sideload) | yes |

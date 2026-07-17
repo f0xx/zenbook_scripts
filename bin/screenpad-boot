@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+# Restore ScreenPad power/brightness after boot (UX5400EA quirk path).
+# Intended for OpenRC/systemd oneshot. Default: turn on at last/default level.
+
+set -euo pipefail
+
+zenbook_kb_find_root() {
+	local here candidate
+	here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+	if [[ -f "${here}/../lib/screenpad.sh" ]]; then
+		echo "$(cd "${here}/.." && pwd)"
+		return 0
+	fi
+	if [[ -f /usr/local/share/zenbook-scripts/lib/screenpad.sh ]]; then
+		echo /usr/local/share/zenbook-scripts
+		return 0
+	fi
+	echo "lib/screenpad.sh not found" >&2
+	return 1
+}
+
+SCRIPT_DIR="$(zenbook_kb_find_root)"
+# shellcheck source=lib/screenpad.sh
+source "${SCRIPT_DIR}/lib/screenpad.sh"
+
+MODE="${SCREENPAD_BOOT_MODE:-on}"  # on|off|restore|sync
+
+if ! zenbook_screenpad_present; then
+	echo "screenpad-boot: asus_screenpad absent — skip"
+	exit 0
+fi
+
+case "${MODE}" in
+	off)
+		zenbook_screenpad_off >/dev/null
+		echo "screenpad-boot: off"
+		;;
+	sync)
+		zenbook_screenpad_sync_from_main >/dev/null
+		echo "screenpad-boot: synced from main"
+		;;
+	restore|on|*)
+		# Always re-enable with quirk; empty = last/default.
+		level="$(zenbook_screenpad_on)"
+		echo "screenpad-boot: on brightness=${level}"
+		;;
+esac

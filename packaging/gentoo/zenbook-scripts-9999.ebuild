@@ -5,7 +5,7 @@ EAPI=8
 
 inherit git-r3 linux-info openrc
 
-DESCRIPTION="ASUS Zenbook Duo UX8406 detachable keyboard brightness, Fn+ hotkeys, and oot hid-asus"
+DESCRIPTION="ASUS Zenbook Duo scripts (UX8406 keyboard + UX5400 ScreenPad)"
 HOMEPAGE="https://github.com/f0xx/zenbook_scripts"
 EGIT_REPO_URI="https://github.com/f0xx/zenbook_scripts.git"
 
@@ -13,7 +13,7 @@ LICENSE="GPL-2+"
 SLOT="0"
 KEYWORDS=""
 
-IUSE="hotkeys kernel qt6 zenbook_ux8406"
+IUSE="hotkeys kernel qt6 screenpad zenbook_ux8406"
 REQUIRED_USE="kernel? ( zenbook_ux8406 )"
 
 RDEPEND="
@@ -23,6 +23,9 @@ RDEPEND="
 		sys-auth/udev
 		acpid
 		virtual/elogind
+	)
+	screenpad? (
+		sys-auth/udev
 	)
 	qt6? ( dev-python/pyside6 )
 	kernel? (
@@ -65,7 +68,10 @@ src_install() {
 	fi
 
 	# User-facing CLIs
-	dobin configure.py configure.sh bin/kb-brightness
+	dobin configure.py configure.sh bin/kb-brightness bin/kb-platform-profile
+	if use screenpad || use hotkeys; then
+		dobin bin/screenpad bin/screenpad-boot bin/screenpad-sync
+	fi
 	if use hotkeys; then
 		dobin \
 			bin/kb-brightness-hotkeys \
@@ -101,6 +107,19 @@ src_install() {
 		doins contrib/modprobe/zenbook-hid-asus.conf
 	fi
 
+	if use screenpad; then
+		insinto /etc/udev/rules.d
+		doins contrib/udev/99-zenbook-screenpad.rules
+
+		newinitd contrib/openrc/zenbook-screenpad zenbook-screenpad
+		newinitd contrib/openrc/zenbook-screenpad-sync zenbook-screenpad-sync
+		newconfd contrib/openrc/conf.d/zenbook-screenpad zenbook-screenpad
+
+		insinto /etc/systemd/system
+		doins contrib/systemd/zenbook-screenpad.service
+		doins contrib/systemd/zenbook-screenpad-sync.service
+	fi
+
 	if use kernel; then
 		insinto "${ZENBOOK_LIBEXEC}"
 		newins kernel/scripts/switch-hid-asus.sh zenbook-hid-asus-switch
@@ -120,7 +139,7 @@ src_install() {
 		doins "${ko}"
 	fi
 
-	dodoc README.ux8406.md DEPLOY.md LICENSE kernel/README.md packaging/README.md PLANNED.md
+	dodoc README.md README.ux5400.md DEPLOY.md LICENSE kernel/README.md packaging/README.md PLANNED.md
 }
 
 pkg_postinst() {

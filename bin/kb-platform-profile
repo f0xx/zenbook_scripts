@@ -1,0 +1,93 @@
+#!/usr/bin/env bash
+# ACPI platform_profile helper (ASUS throttle_thermal_policy / platform_profile).
+#
+# Usage:
+#   kb-platform-profile get
+#   kb-platform-profile list
+#   kb-platform-profile set <quiet|balanced|performance|...>
+#   kb-platform-profile cycle
+#
+# Custom fan PWM curves are not available on UX5400EA / UX8406 (WMI fan_curve
+# methods return ENODEV). Use these profiles instead.
+
+set -euo pipefail
+
+zenbook_kb_find_root() {
+	local here candidate
+
+	here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+	if [[ -f "${here}/../lib/platform_profile.sh" ]]; then
+		echo "$(cd "${here}/.." && pwd)"
+		return 0
+	fi
+
+	if [[ -f /usr/local/share/zenbook-scripts/lib/platform_profile.sh ]]; then
+		echo /usr/local/share/zenbook-scripts
+		return 0
+	fi
+
+	for candidate in "${here}/.." "${here}"; do
+		candidate="$(cd "${candidate}" && pwd)"
+		if [[ -f "${candidate}/lib/platform_profile.sh" ]]; then
+			echo "${candidate}"
+			return 0
+		fi
+	done
+
+	echo "zenbook-scripts lib/platform_profile.sh not found" >&2
+	return 1
+}
+
+SCRIPT_DIR="$(zenbook_kb_find_root)"
+# shellcheck source=lib/platform_profile.sh
+source "${SCRIPT_DIR}/lib/platform_profile.sh"
+
+usage() {
+	sed -n '2,10p' "$0"
+}
+
+if [[ $# -lt 1 ]]; then
+	usage >&2
+	exit 2
+fi
+
+if ! zenbook_platform_profile_present; then
+	echo "platform_profile sysfs not found" >&2
+	exit 1
+fi
+
+CMD="$1"
+shift || true
+
+case "${CMD}" in
+	-h|--help)
+		usage
+		exit 0
+		;;
+	get)
+		zenbook_platform_profile_get
+		;;
+	list|choices)
+		zenbook_platform_profile_list
+		;;
+	set)
+		if [[ $# -lt 1 ]]; then
+			echo "Usage: kb-platform-profile set <profile>" >&2
+			exit 2
+		fi
+		zenbook_platform_profile_set "$1"
+		;;
+	cycle|next)
+		zenbook_platform_profile_cycle
+		;;
+	*)
+		# Allow: kb-platform-profile balanced
+		if zenbook_platform_profile_list | grep -qx "${CMD}"; then
+			zenbook_platform_profile_set "${CMD}"
+		else
+			echo "Unknown command: ${CMD}" >&2
+			usage >&2
+			exit 2
+		fi
+		;;
+esac
