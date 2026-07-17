@@ -155,6 +155,17 @@ make -C kernel build && sudo make -C kernel install
 
 See [`kernel/README.md`](../kernel/README.md). Re-emerge after **each kernel upgrade**.
 
+### Installed paths (Gentoo ebuild)
+
+| Component | Path |
+|-----------|------|
+| CLIs | `/usr/bin/` (`kb-brightness`, `configure.py`, …) |
+| Helpers | `/usr/libexec/` (udev, ACPI sleep, hid-asus switch/boot) |
+| Share tree | `/usr/share/zenbook-scripts/` |
+| oot `hid-asus.ko` | `/usr/lib/modules/zenbook-hid-asus/<kver>/` |
+
+`configure.py` from a git checkout still targets **`/usr/local`** (manual installs). The ebuild rewrites packaged unit/helper scripts to `/usr` and does **not** run `configure.py` in `pkg_postinst`.
+
 ## USE flags
 
 | Flag | Default | Meaning |
