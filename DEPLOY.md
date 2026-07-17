@@ -138,15 +138,17 @@ After `configure.py` install (or Gentoo `emerge` with `USE=kernel`):
 Build + install module into system path:
 
 ```bash
-make -f kernel/Makefile build-current
-sudo python3 configure.py --defaults --all-yes
+make -C kernel build          # or: make -f kernel/Makefile build-current
+sudo make -C kernel install   # kbuild updates/ + /usr/lib/modules/zenbook-hid-asus/$(uname -r)/
+# alternative: sudo python3 configure.py --defaults --all-yes
 ```
+
+`sudo make -C kernel modules_install` runs kbuild only (no zenbook sideload copy). See [`kernel/README.md`](kernel/README.md).
 
 Disable sideload service: set `sideload=no` in `/etc/conf.d/zenbook-kb-hid-asus` and
 `rc-update del zenbook-kb-hid-asus default`.
 
-**Re-emerge / re-run configure after each kernel upgrade** — the `.ko` is per `uname -r`.
-
+**Re-emerge / re-run `make -C kernel install` (or configure) after each kernel upgrade** — the `.ko` is per `uname -r`.
 Service order at login/default: `zenbook-kb-hid-asus` → `zenbook-kb-hotkeys` + `zenbook-kb-lid`.
 
 **Restart speed:** `rc-service zenbook-kb-hid-asus restart` uses a **quick reload** when the
@@ -173,7 +175,10 @@ Snapshot: `~/.config/zenbook-scripts/zenbook_duo.save` (from `command_user`) —
 | `usb_wait_secs` | seconds | How long to wait for docked keyboard when `sideload=yes` |
 | `fn_lock_default` | `-1`, `0`, `1` | Initial layout at module load (see below) |
 | `fn_lock_allow_toggle` | `0`, `1` | Whether Fn+Esc / vendor `0x4e` may switch layout |
+| `fn_row_policy` | decimal bitmask | Per-key Fn-row merge; recommended docked **`7`** (F4–F12 swapped, F1–F3 Mode B); full `insmod` only |
 
+`/etc/modprobe.d/zenbook-hid-asus.conf` does **not** apply to sideload (`insmod`); set
+`fn_row_policy` in this conf.d file (or `ROW_POLICY=7 ./kmod_deploy.sh`).
 OpenRC may log `flock failed` / `already starting` if `zenbook-kb-hid-asus` restarts
 while `zenbook-kb-hotkeys` is still stopping. The switch script waits for a clean stop;
 `zenbook-kb-hotkeys` also waits in `start_pre`. If it persists: `rc-service zenbook-kb-hotkeys zap`

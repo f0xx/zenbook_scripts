@@ -69,11 +69,13 @@ _read_snapshot_fn_lock_default() {
 }
 FN_LOCK_DEFAULT="${ZENBOOK_FN_LOCK_DEFAULT:-0}"
 FN_LOCK_ALLOW_TOGGLE="${ZENBOOK_FN_LOCK_ALLOW_TOGGLE:-0}"
+FN_ROW_POLICY="${ZENBOOK_FN_ROW_POLICY:-0}"
 if [[ -f /etc/conf.d/zenbook-kb-hid-asus ]]; then
 	# shellcheck disable=SC1091
 	source /etc/conf.d/zenbook-kb-hid-asus
 	FN_LOCK_DEFAULT="${fn_lock_default:-${FN_LOCK_DEFAULT}}"
 	FN_LOCK_ALLOW_TOGGLE="${fn_lock_allow_toggle:-${FN_LOCK_ALLOW_TOGGLE}}"
+	FN_ROW_POLICY="${fn_row_policy:-${FN_ROW_POLICY}}"
 fi
 SNAPSHOT="/var/tmp/zenbook-hid-asus.snapshot"
 RUN_STATE="/run/zenbook-hid-asus"
@@ -370,7 +372,9 @@ _cmd_sideload() {
 	rmmod hid_asus 2>/dev/null || true
 	local fn_lock_insmod
 	fn_lock_insmod="$(_read_snapshot_fn_lock_default)"
-	if ! insmod "$KO" fn_lock_default="${fn_lock_insmod}" fn_lock_allow_toggle="${FN_LOCK_ALLOW_TOGGLE}"; then
+	if ! insmod "$KO" fn_lock_default="${fn_lock_insmod}" \
+		fn_lock_allow_toggle="${FN_LOCK_ALLOW_TOGGLE}" \
+		fn_row_policy="${FN_ROW_POLICY}"; then
 		echo "insmod failed — restoring stock" >&2
 		_watchdog_cancel
 		_cmd_stock_force
@@ -389,7 +393,7 @@ _cmd_sideload() {
 		return 1
 	fi
 
-	echo "sideload: sysfs checks passed (fn_lock_default=${fn_lock_insmod})"
+	echo "sideload: sysfs checks passed (fn_lock_default=${fn_lock_insmod} fn_row_policy=${FN_ROW_POLICY})"
 	if _zenbook_source_fn_lock; then
 		zenbook_kb_load_config
 		zenbook_kb_fn_lock_clear_toggled 2>/dev/null || true

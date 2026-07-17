@@ -35,17 +35,41 @@ def _load_key_names() -> dict[int, str]:
 
 
 def _zenbook_input_devices() -> list[Path]:
+    """Evdev nodes for the docked 1b2c keyboard (if0–if4) and WMI hotkeys."""
     out: list[Path] = []
     for event_dir in sorted(Path("/sys/class/input").glob("event*")):
         name_path = event_dir / "device" / "name"
         if not name_path.is_file():
             continue
         name = name_path.read_text().strip()
-        if "Zenbook Duo" in name or name == "Asus WMI hotkeys":
-            dev = Path("/dev/input") / event_dir.name
-            if dev.exists():
-                out.append(dev)
+        try:
+            path_upper = str((event_dir / "device").resolve()).upper()
+        except OSError:
+            path_upper = ""
+        is_dock = "0B05:1B2C" in path_upper or "0B05/1B2C" in path_upper
+        is_wmi = name == "Asus WMI hotkeys"
+        if not is_dock and not is_wmi:
+            continue
+        dev = Path("/dev/input") / event_dir.name
+        if dev.exists():
+            out.append(dev)
     return out
+
+
+def _evdev_iface_label(dev: Path) -> str:
+    """Best-effort USB interface + HID id for an evdev node."""
+    try:
+        path = str((Path("/sys/class/input") / dev.name / "device").resolve())
+    except OSError:
+        return dev.name
+    m = __import__("re").search(
+        r":1\.(\d+)/0003:0B05:1B2C\.([0-9A-Fa-f]+)", path, __import__("re").IGNORECASE
+    )
+    if m:
+        return f"{dev.name} if{m.group(1)} hid={m.group(2)}"
+    if "1B2C" in path.upper():
+        return f"{dev.name} (1b2c)"
+    return dev.name
 
 
 def _zenbook_hidraws() -> list[Path]:
@@ -82,7 +106,12 @@ def _usb_interrupt_eps():
     return eps
 
 
-def sniff_all(duration_s: float = 30.0, out_path: Path | None = None) -> int:
+def sniff_all(
+    duration_s: float = 30.0,
+    out_path: Path | None = None,
+    *,
+    with_usb: bool = False,
+) -> int:
     global KEY_NAMES
     KEY_NAMES = _load_key_names()
 
@@ -102,7 +131,7 @@ def sniff_all(duration_s: float = 30.0, out_path: Path | None = None) -> int:
         try:
             fd = os.open(dev, os.O_RDONLY | os.O_NONBLOCK)
             evdev_fds[fd] = dev
-            emit(f"evdev watch: {dev}")
+            emit(f"evdev watch: {_evdev_iface_label(dev)} — {dev}")
         except OSError as exc:
             emit(f"evdev skip {dev}: {exc}")
 
@@ -116,12 +145,15 @@ def sniff_all(duration_s: float = 30.0, out_path: Path | None = None) -> int:
             emit(f"hidraw skip {dev}: {exc}")
 
     usb_eps = []
-    try:
-        usb_eps = _usb_interrupt_eps()
-        for _dev, inum, ep in usb_eps:
-            emit(f"usb watch: interface {inum} ep {ep.bEndpointAddress:#x}")
-    except Exception as exc:
-        emit(f"usb setup failed: {exc}")
+    if with_usb:
+        try:
+            usb_eps = _usb_interrupt_eps()
+            for _dev, inum, ep in usb_eps:
+                emit(f"usb watch: interface {inum} ep {ep.bEndpointAddress:#x}")
+        except Exception as exc:
+            emit(f"usb setup failed: {exc}")
+    else:
+        emit("usb: skipped (pyusb detach breaks sideloaded evdev; pass --with-usb to force)")
 
     if not evdev_fds and not hidraw_fds and not usb_eps:
         emit("Nothing to watch.")
@@ -147,6 +179,12 @@ def sniff_all(duration_s: float = 30.0, out_path: Path | None = None) -> int:
                         try:
                             data = os.read(fd, INPUT_EVENT_SIZE * 16)
                         except BlockingIOError:
+                            break
+                        except OSError as exc:
+                            if exc.errno in {5, 19}:  # EIO / ENODEV — device went away
+                                emit(f"evdev lost {evdev_fds[fd].name}: {exc}")
+                                os.close(fd)
+                                del evdev_fds[fd]
                             break
                         if not data:
                             break
@@ -199,3 +237,35 @@ def sniff_all(duration_s: float = 30.0, out_path: Path | None = None) -> int:
         emit(f"Wrote {out_path}")
 
     return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        description="Sniff Zenbook Duo key events (evdev + hidraw + USB)."
+    )
+    parser.add_argument(
+        "seconds",
+        nargs="?",
+        type=float,
+        default=30.0,
+        help="Sniff duration in seconds (default: 30)",
+    )
+    parser.add_argument(
+        "-o",
+        "--output",
+        type=Path,
+        help="Write log lines to this file",
+    )
+    parser.add_argument(
+        "--with-usb",
+        action="store_true",
+        help="Also sniff USB interrupt endpoints (detaches kernel driver — breaks typing)",
+    )
+    args = parser.parse_args(argv)
+    return sniff_all(args.seconds, args.output, with_usb=args.with_usb)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

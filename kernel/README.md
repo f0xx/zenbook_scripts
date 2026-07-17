@@ -35,6 +35,41 @@ The patched module is built at:
 (kbuild runs under `/tmp/zenbook-hid-asus-linux-<version>/` because kernel
 `M=` paths cannot contain spaces.)
 
+## Install (root)
+
+```bash
+# kbuild → /lib/modules/<kver>/updates/hid-asus.ko.xz  AND
+# sideload path → /usr/lib/modules/zenbook-hid-asus/<kver>/hid-asus.ko
+sudo make install
+
+# kbuild modules_install only (no zenbook sideload copy)
+sudo make modules_install
+
+# Explicit kernel tree
+sudo make install-7.0.12
+sudo make install-7.1.3
+```
+
+| Target | Requires root | Result |
+|--------|---------------|--------|
+| `modules_install` | yes | kbuild external-module install under `/lib/modules/$(uname -r)/updates/` (+ `depmod`) |
+| `install` | yes | `modules_install` **plus** copy to `/usr/lib/modules/zenbook-hid-asus/$(uname -r)/` for OpenRC boot / `switch-hid-asus` |
+
+`DESTDIR` is honoured for staging (e.g. packaging). After `install`, boot sideload can load the module without a repo checkout:
+
+```bash
+# /etc/conf.d/zenbook-kb-hid-asus — default when ko_path unset:
+#   /usr/lib/modules/zenbook-hid-asus/$(uname -r)/hid-asus.ko
+sudo rc-service zenbook-kb-hid-asus restart
+# or: sudo ./scripts/switch-hid-asus.sh sideload
+```
+
+Quick rebuild + reload from the git tree (does not run `modules_install`):
+
+```bash
+ROW_POLICY=7 ./kmod_deploy.sh   # from repo root; build + insmod + rebind
+```
+
 ## Load / unload (testing)
 
 Stop userspace that holds the keyboard (`zenbook-kb-hotkeys`, etc.) first.
@@ -167,8 +202,31 @@ That is fine — `CONFIG_HID_ASUS=m` loads on demand. The patched module replace
 - **Module parameters** (oot `hid-asus` after sideload; set in `/etc/conf.d/zenbook-kb-hid-asus` at boot, or sysfs until reload):
   - `fn_lock_default` — `-1` = DMI default (UX8406 → Mode B), `0` = Mode B (Fn layer), `1` = Mode A (plain F-keys)
   - `fn_lock_allow_toggle` — `0` = Fn+Esc ignored (pinned), `1` = allow Fn+Esc / vendor `0x4e` toggle
+  - `fn_row_policy` — per-key merge bitmask on **Mode B** firmware (decimal):
 
-Full table and examples: [`DEPLOY.md`](../DEPLOY.md) §F (`/etc/conf.d/zenbook-kb-hid-asus`).
+| Bits | Keys | Bit **set** (1) | Bit **clear** (0) |
+|------|------|-----------------|-------------------|
+| 0–2 | F1–F3 | Re-emit plain if3 media on if0 (mixer-friendly) | Plain if3 media → `KEY_F1`–`F3` |
+| 3–11 | F4–F12 | Keep Mode B (plain = special, Fn = `KEY_Fn`) | **Swap:** plain = `KEY_Fn`, Fn+F = special |
+| 12 | Esc | reserved | reserved |
+
+**Confirmed docked default:** `fn_row_policy=7` (0x07) — bits 0–2 set, bits 3–11 clear:
+
+| Chord | Effect |
+|-------|--------|
+| Plain / Fn / Meta F1–F3 | Mode B + EC volume on Fn; Meta → workspace |
+| Plain F4–F6, F7, F12 | `KEY_F*` (desktop bindings) |
+| Fn+F4 | kbd backlight toggle |
+| Fn+F5/F6 | screen brightness |
+| Fn+F7 | Win+P (Plasma display switch) |
+| Fn+F12 | ASUS / MyASUS key (`KEY_PROG1`, vendor `0x86`) |
+| Meta+F4–F12 | workspace / desktop Meta+F |
+
+Examples: `fn_row_policy=0` disables remaps; `fn_row_policy=15` keeps Mode B F4 (plain BL) — usually wrong for the table above.
+
+Meta/Super on if0 is handled for F-row shortcuts; plain F7’s firmware Win+P is remapped to `KEY_F7` when bit 6 is clear (intentional Meta+P on this keyboard then also becomes `KEY_F7` — use Fn+F7 for display switch).
+
+Full conf.d reference: [`DEPLOY.md`](../DEPLOY.md) §F (`/etc/conf.d/zenbook-kb-hid-asus`).
 
 ```bash
 # Pin Mode B, allow Fn+Esc toggle:
@@ -177,8 +235,8 @@ Full table and examples: [`DEPLOY.md`](../DEPLOY.md) §F (`/etc/conf.d/zenbook-k
 # Pin Mode B, no toggle (default UX8406 docked setup):
 echo 'options hid_asus fn_lock_default=0 fn_lock_allow_toggle=0' | \
   sudo tee /etc/modprobe.d/zenbook-hid-asus.conf
+# Note: boot sideload uses insmod — set fn_row_policy=7 in conf.d, not only modprobe.d.
 ```
-
 ## Patches
 
 Unified diffs (for reference / manual apply) live under `patches/`. The build
