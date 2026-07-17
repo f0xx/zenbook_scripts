@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE pkgmetadata SYSTEM "https://www.gentoo.org/dtd/metadata.dtd">
+<pkgmetadata>
+	<!-- Not an official Gentoo package; community overlay only. -->
+	<maintainer type="person">
+		<email>noreply@users.noreply.github.com</email>
+		<name>f0xx / community</name>
+		<description>
+			Unofficial. No Gentoo project QA. Prefer GitHub issues/PRs.
+		</description>
+	</maintainer>
+	<upstream>
+		<remote-id type="github">f0xx/zenbook_scripts</remote-id>
+	</upstream>
+	<use>
+		<flag name="hotkeys">
+			Install udev rules, ACPI/sleep hooks, and OpenRC hotkey / lid services
+		</flag>
+		<flag name="kernel">
+			Build and install out-of-tree hid-asus.ko plus OpenRC boot sideload
+			(UX8406 docked keyboard)
+		</flag>
+		<flag name="qt6">Install configure_gui.py (PySide6)</flag>
+		<flag name="screenpad">
+			UX5400 ScreenPad CLI, udev rules, and OpenRC/systemd units
+		</flag>
+		<flag name="zenbook_ux8406">Install UX8406 conf.d evdev/usb profiles</flag>
+	</use>
+</pkgmetadata>

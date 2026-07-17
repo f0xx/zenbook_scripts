@@ -17,8 +17,10 @@ KERNELRELEASE ?= $(shell cat "$(KDIR)/include/config/kernel.release" 2>/dev/null
 ifeq ($(KERNELRELEASE),)
 KERNELRELEASE := $(patsubst linux-%,%,$(KVER))
 endif
-# kbuild cannot use module paths containing spaces; build under /tmp.
-BUILDDIR := /tmp/zenbook-hid-asus-$(KVER)
+# kbuild M= paths cannot contain spaces; default under /tmp, per-UID so a
+# prior root build does not leave a dir the portage user cannot write.
+# Ebuild/emerge should pass BUILDDIR=$(T)/hid-asus-oot.
+BUILDDIR ?= /tmp/zenbook-hid-asus-$(KVER)-$(shell id -u)
 ARTIFACTS := $(ROOT)/build/$(KVER)
 # Boot/sideload path (see switch-hid-asus.sh / OpenRC boot hook).
 ZENBOOK_KO_ROOT ?= /usr/lib/modules/zenbook-hid-asus
@@ -38,7 +40,8 @@ prepare:
 	cp "$(BUILDDIR)/hid-asus.c" "$(ARTIFACTS)/hid-asus.c"
 
 modules: prepare
-	$(MAKE) -C "$(KDIR)" M="$(BUILDDIR)" modules
+	# Portage exports ARCH=amd64; kbuild wants ARCH=x86 on that host.
+	$(MAKE) -C "$(KDIR)" M="$(BUILDDIR)" ARCH="$(or $(KERNEL_ARCH),$(shell uname -m | sed -e s/x86_64/x86/ -e s/i.86/x86/))" modules
 	@cp -f "$(BUILDDIR)/hid-asus.ko" "$(ARTIFACTS)/" 2>/dev/null || \
 	 cp -f "$(BUILDDIR)/hid-asus.ko.xz" "$(ARTIFACTS)/" 2>/dev/null || true
 

@@ -1,0 +1,105 @@
+name: Bug report
+description: Something broken on UX8406 / UX5400 / related tooling
+title: "[bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for filing a bug. This is a **community** project (not official ASUS/distro QA).
+        Please fill the checklist so we can reproduce.
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched existing issues for a duplicate
+          required: true
+        - label: I am on a tagged release or can name the git commit / branch
+          required: true
+        - label: I understand PRs need review; this issue is for bugs, not drive-by patches
+          required: true
+
+  - type: dropdown
+    id: model
+    attributes:
+      label: Hardware model
+      options:
+        - UX8406MA / UX8406 (Duo keyboard)
+        - UX5400EA / UX5400 (ScreenPad)
+        - UX582LR
+        - Other / unknown
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: zenbook_scripts version
+      description: Tag (e.g. v0.0.1_hf1), Gentoo PV (e.g. 0.0.1_p1), or commit SHA
+      placeholder: v0.0.1_hf1
+    validations:
+      required: true
+
+  - type: input
+    id: kernel
+    attributes:
+      label: Kernel / distro
+      description: e.g. 7.0.12-gentoo-r1, Ubuntu 24.04 + 6.8.x
+      placeholder: uname -r and distro
+    validations:
+      required: true
+
+  - type: dropdown
+    id: install
+    attributes:
+      label: Install method
+      options:
+        - Gentoo ebuild (overlay)
+        - configure.py from git/tarball
+        - Manual / other
+        - Not installed (testing from tree)
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. …
+        2. …
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: ux8406
+    attributes:
+      label: UX8406 extras (if applicable)
+      options:
+        - label: Docked USB keyboard (0b05:1b2c) connected
+        - label: Using sideloaded hid-asus (not stock only)
+        - label: fn_row_policy=7 (or state your value)
+        - label: Hotkey service stopped while testing module (zenbook-kb-hotkeys)
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs / evidence
+      description: dmesg snippets, `kb-brightness-hotkeys --show-profile`, sniff output, etc.
+      render: shell

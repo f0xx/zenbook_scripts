@@ -29,7 +29,9 @@ else
 	KO="${REPO_KO}"
 fi
 REBIND_SCRIPT="${SCRIPT_DIR}/rebind-hid-asus.sh"
-if [[ ! -x "${REBIND_SCRIPT}" && -x /usr/local/libexec/zenbook-hid-asus-rebind ]]; then
+if [[ ! -x "${REBIND_SCRIPT}" && -x /usr/libexec/zenbook-hid-asus-rebind ]]; then
+	REBIND_SCRIPT="/usr/libexec/zenbook-hid-asus-rebind"
+elif [[ ! -x "${REBIND_SCRIPT}" && -x /usr/local/libexec/zenbook-hid-asus-rebind ]]; then
 	REBIND_SCRIPT="/usr/local/libexec/zenbook-hid-asus-rebind"
 fi
 _zenbook_source_fn_lock() {
@@ -37,6 +39,7 @@ _zenbook_source_fn_lock() {
 	here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 	for root in \
 		"$(cd "${here}/../.." 2>/dev/null && pwd)" \
+		"/usr/share/zenbook-scripts" \
 		"/usr/local/share/zenbook-scripts"; do
 		if [[ -f "${root}/lib/protocol.sh" && -f "${root}/lib/fn_lock.sh" ]]; then
 			set +u
@@ -90,6 +93,7 @@ _zenbook_source_openrc_wait() {
 	here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 	for root in \
 		"$(cd "${here}/../.." 2>/dev/null && pwd)/lib" \
+		"/usr/share/zenbook-scripts/lib" \
 		"/usr/local/share/zenbook-scripts/lib"; do
 		if [[ -f "${root}/openrc-wait.sh" ]]; then
 			set +u

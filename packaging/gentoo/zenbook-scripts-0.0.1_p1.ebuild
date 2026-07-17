@@ -3,15 +3,21 @@
 
 EAPI=8
 
-inherit git-r3 linux-info toolchain-funcs
+inherit linux-info toolchain-funcs
 
 DESCRIPTION="ASUS Zenbook Duo scripts (UX8406 keyboard + UX5400 ScreenPad)"
 HOMEPAGE="https://github.com/f0xx/zenbook_scripts"
-EGIT_REPO_URI="https://github.com/f0xx/zenbook_scripts.git"
+
+# Upstream tag v0.0.1_hf1 → Gentoo PV 0.0.1_p1 (_hf is not a legal PMS suffix).
+# GitHub archive dir uses the repo name (underscore), not ${PN}.
+MY_PN="zenbook_scripts"
+MY_PV="0.0.1_hf1"
+SRC_URI="https://github.com/f0xx/${MY_PN}/archive/refs/tags/v${MY_PV}.tar.gz -> ${MY_PN}-${MY_PV}.tar.gz"
+S="${WORKDIR}/${MY_PN}-${MY_PV}"
 
 LICENSE="GPL-2+"
 SLOT="0"
-KEYWORDS=""
+KEYWORDS="~amd64"
 
 IUSE="+hotkeys +kernel qt6 screenpad +zenbook_ux8406"
 REQUIRED_USE="kernel? ( zenbook_ux8406 )"
@@ -29,8 +35,9 @@ RDEPEND="
 	)
 	qt6? ( dev-python/pyside:6 )
 "
-# Build oot hid-asus against /usr/src/linux (gentoo-sources, …).
-# Avoid virtual/dist-kernel — it pulls gentoo-kernel and USE conflicts.
+# Build oot hid-asus against whatever provides /usr/src/linux (gentoo-sources,
+# etc.). Do NOT depend on virtual/dist-kernel — that forces gentoo-kernel and
+# unrelated USE fights (secureboot/modules-sign) for source-based kernels.
 DEPEND="
 	${RDEPEND}
 	kernel? (
@@ -62,6 +69,8 @@ zenbook_rewrite_usr_prefix() {
 }
 
 # Prefer linux-info KV_OUT_DIR (modules …/build if present, else /usr/src/linux).
+# Source-based gentoo-sources often have no /lib/modules/<KV>/build until
+# modules_install — dist-kernel always has that symlink.
 zenbook_kernel_kdir() {
 	local kdir="${KERNEL_SRC_PATH:-${KV_OUT_DIR}}"
 
@@ -86,6 +95,7 @@ zenbook_kernel_release() {
 		echo "$(<"${kdir}/include/config/kernel.release")"
 		return
 	fi
+	# Fallback: dirname linux-7.0.12-gentoo-r1 → 7.0.12-gentoo-r1
 	release=$(basename "$(realpath -e "${kdir}" 2>/dev/null || echo "${kdir}")")
 	echo "${release#linux-}"
 }
@@ -93,6 +103,7 @@ zenbook_kernel_release() {
 pkg_setup() {
 	if use kernel; then
 		linux-info_pkg_setup
+		# Resolve KDIR early so emerge fails with a clear message.
 		zenbook_kernel_kdir >/dev/null
 		if [[ ${KV_FULL} != "$(uname -r)" ]]; then
 			ewarn "Building oot hid-asus for ${KV_FULL}, running kernel is $(uname -r)."
@@ -110,7 +121,8 @@ src_compile() {
 		# Portage ARCH=amd64 breaks kbuild (expects ARCH=x86).
 		local -x ARCH
 		ARCH="$(tc-arch-kernel)"
-		# BUILDDIR under ${T}: avoid unwritable stale /tmp/zenbook-hid-asus-*.
+		# BUILDDIR under ${T}: /tmp/zenbook-hid-asus-* may be owned by a
+		# prior interactive build (foxx/root) and is unwritable to portage.
 		emake -C "${S}/kernel" build-current \
 			KDIR="${kdir}" \
 			BUILDDIR="${T}/hid-asus-oot"
@@ -199,6 +211,7 @@ src_install() {
 		newconfd contrib/openrc/conf.d/zenbook-kb-hid-asus zenbook-kb-hid-asus
 
 		local ko kver
+		# OOT Makefile writes to kernel/build/<realpath-basename>/hid-asus.ko
 		ko="$(find "${S}/kernel/build" -name 'hid-asus.ko' -print -quit)"
 		[[ -n ${ko} && -f ${ko} ]] || die "missing built module under ${S}/kernel/build/"
 		kver="$(zenbook_kernel_release)"

@@ -15,7 +15,9 @@ _PKG_ROOT = Path(__file__).resolve().parent.parent
 _DMI_SYSFS = Path("/sys/class/dmi/id")
 
 # Installed share tree overrides project-relative conf.d when present.
+# Prefer Gentoo/distro /usr/share, then configure.py's /usr/local.
 _CONF_SEARCH = (
+    Path("/usr/share/zenbook-scripts/conf.d"),
     Path("/usr/local/share/zenbook-scripts/conf.d"),
     _PKG_ROOT / "conf.d",
 )

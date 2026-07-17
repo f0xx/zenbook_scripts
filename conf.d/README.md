@@ -1,7 +1,8 @@
 # Hotkey mapping playground (`conf.d/`)
 
-Profiles are **`.conf` files** in this directory (and
-`/usr/local/share/zenbook-scripts/conf.d/` after install). They layer like
+Profiles are **`.conf` files** in this directory (and after install under
+`/usr/share/zenbook-scripts/conf.d/` for the Gentoo ebuild, or
+`/usr/local/share/zenbook-scripts/conf.d/` for `configure.py`). They layer like
 `conf.d` on typical Unix services:
 
 1. `00-default.*.conf` — base options (always loaded when matched)
