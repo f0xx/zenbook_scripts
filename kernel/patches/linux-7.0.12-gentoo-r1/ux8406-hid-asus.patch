@@ -1,5 +1,5 @@
 --- /usr/src/linux-7.0.12-gentoo-r1/drivers/hid/hid-asus.c	2026-06-14 17:04:59.848466360 +0200
-+++ build/linux-7.0.12-gentoo-r1/hid-asus.c	2026-07-17 17:41:23.807973173 +0200
++++ build/linux-7.0.12-gentoo-r1/hid-asus.c	2026-07-17 17:49:38.143630714 +0200
 @@ -32,6 +32,9 @@
  #include <linux/usb.h> /* For to_usb_interface for T100 touchpad intf check */
  #include <linux/power_supply.h>

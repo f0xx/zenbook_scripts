@@ -1115,12 +1115,37 @@ def port_hid_asus(src: Path, dst: Path) -> None:
 
     text = replace_once(old_event, new_event, text, "asus_event vendor block")
 
-    text = replace_once(
-        "\tstruct asus_drvdata *drvdata = hid_get_drvdata(hdev);\n\t\n\tif ((usage->hid & HID_USAGE_PAGE) == HID_UP_ASUSVENDOR &&\n\t    (usage->hid & HID_USAGE) != 0x00 &&\n\t    (usage->hid & HID_USAGE) != 0xff && !usage->type) {\n\t\tswitch (usage->hid & HID_USAGE) {",
-        "\tstruct asus_drvdata *drvdata = hid_get_drvdata(hdev);\n\n\tzenbook_fn_row_super_track(hdev, drvdata, usage, value);\n\n\tif (zenbook_fn_row_policy_f4_event(hdev, usage, value))\n\t\treturn 1;\n\n\tif (zenbook_fn_row_fn_f13_event(hdev, usage, value))\n\t\treturn 1;\n\n\tif (zenbook_fn_row_f56_vendor_event(hdev, usage, value))\n\t\treturn 1;\n\n\tif (zenbook_fn_row_fn_f56_event(hdev, usage, value))\n\t\treturn 1;\n\n\tif ((usage->hid & HID_USAGE_PAGE) == HID_UP_ASUSVENDOR &&\n\t    (usage->hid & HID_USAGE) != 0x00 &&\n\t    (usage->hid & HID_USAGE) != 0xff && !usage->type) {\n\t\tswitch (usage->hid & HID_USAGE) {",
-        text,
-        "asus_event fn_row_policy first",
+    # 7.0.12 stock had a tab on the blank line after drvdata; 7.1.3+ is plain \n\n.
+    asus_event_hooks = (
+        "\tstruct asus_drvdata *drvdata = hid_get_drvdata(hdev);\n\n"
+        "\tzenbook_fn_row_super_track(hdev, drvdata, usage, value);\n\n"
+        "\tif (zenbook_fn_row_policy_f4_event(hdev, usage, value))\n"
+        "\t\treturn 1;\n\n"
+        "\tif (zenbook_fn_row_fn_f13_event(hdev, usage, value))\n"
+        "\t\treturn 1;\n\n"
+        "\tif (zenbook_fn_row_f56_vendor_event(hdev, usage, value))\n"
+        "\t\treturn 1;\n\n"
+        "\tif (zenbook_fn_row_fn_f56_event(hdev, usage, value))\n"
+        "\t\treturn 1;\n\n"
+        "\tif ((usage->hid & HID_USAGE_PAGE) == HID_UP_ASUSVENDOR &&\n"
+        "\t    (usage->hid & HID_USAGE) != 0x00 &&\n"
+        "\t    (usage->hid & HID_USAGE) != 0xff && !usage->type) {\n"
+        "\t\tswitch (usage->hid & HID_USAGE) {"
     )
+    for blank in ("\n\t\n", "\n\n"):
+        needle = (
+            "\tstruct asus_drvdata *drvdata = hid_get_drvdata(hdev);"
+            + blank
+            + "\tif ((usage->hid & HID_USAGE_PAGE) == HID_UP_ASUSVENDOR &&\n"
+            "\t    (usage->hid & HID_USAGE) != 0x00 &&\n"
+            "\t    (usage->hid & HID_USAGE) != 0xff && !usage->type) {\n"
+            "\t\tswitch (usage->hid & HID_USAGE) {"
+        )
+        if needle in text:
+            text = text.replace(needle, asus_event_hooks, 1)
+            break
+    else:
+        raise SystemExit("replace target not found (asus_event fn_row_policy first)")
 
     text = replace_once(
         """\t\tcase KEY_FN_ESC:

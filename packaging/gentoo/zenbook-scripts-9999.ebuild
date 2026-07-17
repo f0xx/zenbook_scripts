@@ -120,7 +120,7 @@ src_install() {
 		doins "${ko}"
 	fi
 
-	dodoc README.md DEPLOY.md LICENSE kernel/README.md packaging/README.md PLANNED.md
+	dodoc README.ux8406.md DEPLOY.md LICENSE kernel/README.md packaging/README.md PLANNED.md
 }
 
 pkg_postinst() {
