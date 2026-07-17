@@ -6,7 +6,9 @@ zenbook_kb_usb_set_brightness() {
     local script_dir="$2"
     local extra_args=()
     local brightness_py="${script_dir}/brightness.py"
-    if [[ ! -f "${brightness_py}" && -f /usr/local/share/zenbook-scripts/brightness.py ]]; then
+    if [[ ! -f "${brightness_py}" && -f /usr/share/zenbook-scripts/brightness.py ]]; then
+        brightness_py=/usr/share/zenbook-scripts/brightness.py
+    elif [[ ! -f "${brightness_py}" && -f /usr/local/share/zenbook-scripts/brightness.py ]]; then
         brightness_py=/usr/local/share/zenbook-scripts/brightness.py
     fi
 

@@ -39,9 +39,27 @@ DEPEND="
 	)
 "
 
-ZENBOOK_SHARE=/usr/local/share/zenbook-scripts
-ZENBOOK_LIBEXEC=/usr/local/libexec
+ZENBOOK_SHARE=/usr/share/zenbook-scripts
+ZENBOOK_LIBEXEC=/usr/libexec
 ZENBOOK_KO_ROOT=/usr/lib/modules/zenbook-hid-asus
+
+# Upstream trees default to /usr/local (configure.py). Distro packages use /usr.
+zenbook_rewrite_usr_prefix() {
+	local dir f
+
+	for dir in \
+		"${ED}${ZENBOOK_SHARE}" \
+		"${ED}${ZENBOOK_LIBEXEC}" \
+		"${ED}/usr/bin" \
+		"${ED}/etc" \
+		"${ED}/usr/lib/systemd"; do
+		[[ -d ${dir} ]] || continue
+		while IFS= read -r -d '' f; do
+			grep -q '/usr/local/' "${f}" 2>/dev/null || continue
+			sed -e 's|/usr/local/|/usr/|g' -i -- "${f}" || die "sed ${f}"
+		done < <(find "${dir}" -type f -print0)
+	done
+}
 
 # Prefer linux-info KV_OUT_DIR (modules …/build if present, else /usr/src/linux).
 zenbook_kernel_kdir() {
@@ -194,13 +212,16 @@ src_install() {
 		[[ -f "${S}/${doc}" ]] || continue
 		dodoc "${doc}"
 	done
+
+	zenbook_rewrite_usr_prefix
 }
 
 pkg_postinst() {
-	if use hotkeys; then
-		"${ROOT}${EPREFIX}/usr/bin/python3" \
-			"${ROOT}${EPREFIX}/usr/local/bin/configure.py" --defaults --all-yes || true
-	fi
+	# Do not run configure.py here — it installs into /usr/local and fights
+	# the Gentoo /usr layout.
+
+	elog "Gentoo layout: /usr/bin, /usr/libexec, /usr/share/zenbook-scripts"
+	elog "(configure.py from a git tree still uses /usr/local by design)."
 
 	if use kernel && [[ "${MERGE_TYPE}" != "binpkg" ]]; then
 		ewarn "Re-emerge app-laptop/zenbook-scripts after each kernel upgrade"
