@@ -50,16 +50,57 @@ ZENBOOK_SHARE=/usr/local/share/zenbook-scripts
 ZENBOOK_LIBEXEC=/usr/local/libexec
 ZENBOOK_KO_ROOT=/usr/lib/modules/zenbook-hid-asus
 
+# Prefer linux-info KV_OUT_DIR (modules …/build if present, else /usr/src/linux).
+# Source-based gentoo-sources often have no /lib/modules/<KV>/build until
+# modules_install — dist-kernel always has that symlink.
+zenbook_kernel_kdir() {
+	local kdir="${KERNEL_SRC_PATH:-${KV_OUT_DIR}}"
+
+	if [[ -z ${kdir} || ! -d ${kdir} ]]; then
+		kdir="${ESYSROOT}/lib/modules/${KV_FULL}/build"
+	fi
+	if [[ ! -d ${kdir} && -d ${KERNEL_DIR} ]]; then
+		kdir="${KERNEL_DIR}"
+	fi
+	[[ -d ${kdir} ]] || die \
+		"No kernel build tree for KDIR=${kdir:-unset} (KV_FULL=${KV_FULL}).\n" \
+		"  eselect kernel set <N> to your running kernel, or ensure\n" \
+		"  ${ESYSROOT}/lib/modules/\$(uname -r)/build exists (make modules_install)."
+	echo "${kdir}"
+}
+
+zenbook_kernel_release() {
+	local kdir release
+
+	kdir=$(zenbook_kernel_kdir)
+	if [[ -s ${kdir}/include/config/kernel.release ]]; then
+		echo "$(<"${kdir}/include/config/kernel.release")"
+		return
+	fi
+	# Fallback: dirname linux-7.0.12-gentoo-r1 → 7.0.12-gentoo-r1
+	release=$(basename "$(realpath -e "${kdir}" 2>/dev/null || echo "${kdir}")")
+	echo "${release#linux-}"
+}
+
 pkg_setup() {
 	if use kernel; then
 		linux-info_pkg_setup
+		# Resolve KDIR early so emerge fails with a clear message.
+		zenbook_kernel_kdir >/dev/null
+		if [[ ${KV_FULL} != "$(uname -r)" ]]; then
+			ewarn "Building oot hid-asus for ${KV_FULL}, running kernel is $(uname -r)."
+			ewarn "For a loadable module now: eselect kernel set to match uname -r, then re-emerge."
+		fi
 	fi
 }
 
 src_compile() {
 	if use kernel; then
-		emake -C "${S}/kernel" build-current \
-			KDIR="${KERNEL_SRC_PATH:-${ESYSROOT}/lib/modules/${KV_FULL}/build}"
+		local kdir
+
+		kdir=$(zenbook_kernel_kdir)
+		einfo "Building hid-asus against KDIR=${kdir}"
+		emake -C "${S}/kernel" build-current KDIR="${kdir}"
 	fi
 }
 
@@ -144,9 +185,12 @@ src_install() {
 		newinitd contrib/openrc/zenbook-kb-hid-asus zenbook-kb-hid-asus
 		newconfd contrib/openrc/conf.d/zenbook-kb-hid-asus zenbook-kb-hid-asus
 
-		local ko="${S}/kernel/build/linux-${KV_FULL}/hid-asus.ko"
-		[[ -f "${ko}" ]] || die "missing built module: ${ko}"
-		insinto "${ZENBOOK_KO_ROOT}/${KV_FULL}"
+		local ko kver
+		# OOT Makefile writes to kernel/build/<realpath-basename>/hid-asus.ko
+		ko="$(find "${S}/kernel/build" -name 'hid-asus.ko' -print -quit)"
+		[[ -n ${ko} && -f ${ko} ]] || die "missing built module under ${S}/kernel/build/"
+		kver="$(zenbook_kernel_release)"
+		insinto "${ZENBOOK_KO_ROOT}/${kver}"
 		doins "${ko}"
 	fi
 

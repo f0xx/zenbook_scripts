@@ -68,12 +68,15 @@ sudo cp packaging/gentoo/Manifest "${PKG}/"
 
 Patches (if ever needed) go in `app-laptop/zenbook-scripts/files/` and are referenced via `${FILESDIR}`. Stock ebuilds ship **no** patches.
 
-**`USE=kernel` build deps:** `virtual/linux-sources` + `dev-build/make` (works with **`sys-kernel/gentoo-sources`** and `/usr/src/linux`). It does **not** pull `virtual/dist-kernel` / `gentoo-kernel` (avoids `secureboot` ↔ `modules-sign` fights). Point the symlink at the tree you boot:
+**`USE=kernel` build deps:** `virtual/linux-sources` + `dev-build/make` (works with **`sys-kernel/gentoo-sources`**). It does **not** pull `virtual/dist-kernel` / `gentoo-kernel`.
+
+Point `/usr/src/linux` at the tree that matches your **running** kernel when you want a loadable module immediately. Dist-kernel users have `/lib/modules/$(uname -r)/build`; with gentoo-sources that symlink appears only after `make modules_install`. The ebuild falls back to `/usr/src/linux` when `…/build` is missing.
 
 ```bash
+uname -r
 eselect kernel list
-sudo eselect kernel set <N>    # e.g. gentoo-sources-7.0.12-r1
-ls -l /usr/src/linux
+sudo eselect kernel set <N>    # match uname -r (e.g. linux-7.0.12-gentoo-r1)
+ls -l /usr/src/linux /lib/modules/"$(uname -r)"/build
 ```
 
 ### 3. Manifest
