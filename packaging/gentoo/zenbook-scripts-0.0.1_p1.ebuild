@@ -100,7 +100,11 @@ src_compile() {
 
 		kdir=$(zenbook_kernel_kdir)
 		einfo "Building hid-asus against KDIR=${kdir}"
-		emake -C "${S}/kernel" build-current KDIR="${kdir}"
+		# BUILDDIR under ${T}: /tmp/zenbook-hid-asus-* may be owned by a
+		# prior interactive build (foxx/root) and is unwritable to portage.
+		emake -C "${S}/kernel" build-current \
+			KDIR="${kdir}" \
+			BUILDDIR="${T}/hid-asus-oot"
 	fi
 }
 

@@ -89,7 +89,10 @@ src_compile() {
 
 		kdir=$(zenbook_kernel_kdir)
 		einfo "Building hid-asus against KDIR=${kdir}"
-		emake -C "${S}/kernel" build-current KDIR="${kdir}"
+		# BUILDDIR under ${T}: avoid unwritable stale /tmp/zenbook-hid-asus-*.
+		emake -C "${S}/kernel" build-current \
+			KDIR="${kdir}" \
+			BUILDDIR="${T}/hid-asus-oot"
 	fi
 }
 
