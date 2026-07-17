@@ -20,20 +20,24 @@ RDEPEND="
 	>=dev-lang/python-3.10
 	dev-python/pyusb
 	hotkeys? (
-		sys-auth/udev
+		virtual/udev
 		sys-power/acpid
-		virtual/elogind
+		sys-auth/elogind
 	)
 	screenpad? (
-		sys-auth/udev
+		virtual/udev
 	)
-	qt6? ( dev-python/pyside6 )
+	qt6? ( dev-python/pyside:6 )
+"
+# Build oot hid-asus against /usr/src/linux (gentoo-sources, …).
+# Avoid virtual/dist-kernel — it pulls gentoo-kernel and USE conflicts.
+DEPEND="
+	${RDEPEND}
 	kernel? (
-		virtual/dist-kernel
-		>=sys-devel/make-4
+		virtual/linux-sources
+		dev-build/make
 	)
 "
-DEPEND="${RDEPEND}"
 
 ZENBOOK_SHARE=/usr/local/share/zenbook-scripts
 ZENBOOK_LIBEXEC=/usr/local/libexec

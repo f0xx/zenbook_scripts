@@ -35,20 +35,19 @@ Portage `Manifest` DIST name (after `->` rename): `zenbook_scripts-0.0.1_hf1.tar
 
 ## Gentoo (local overlay)
 
+Example overlay name: **`foxx`** at `/var/db/repos/foxx` (yours may differ).
+
 ### 1. Overlay
 
-Create or reuse a local overlay (example name `local`):
-
 ```bash
-sudo mkdir -p /var/db/repos/local/{metadata,profiles,app-laptop/zenbook-scripts}
-echo local | sudo tee /var/db/repos/local/profiles/repo_name
+sudo mkdir -p /var/db/repos/foxx/{metadata,profiles,app-laptop/zenbook-scripts}
+echo foxx | sudo tee /var/db/repos/foxx/profiles/repo_name
 printf '%s\n' 'masters = gentoo' 'thin-manifests = true' \
-  | sudo tee /var/db/repos/local/metadata/layout.conf
+  | sudo tee /var/db/repos/foxx/metadata/layout.conf
 
-# /etc/portage/repos.conf/local.conf
-cat <<'EOF' | sudo tee /etc/portage/repos.conf/local.conf
-[local]
-location = /var/db/repos/local
+cat <<'EOF' | sudo tee /etc/portage/repos.conf/foxx.conf
+[foxx]
+location = /var/db/repos/foxx
 masters = gentoo
 auto-sync = false
 EOF
@@ -56,28 +55,38 @@ EOF
 
 ### 2. Install ebuild (+ optional `files/`)
 
+From a git checkout of this repo (or copy from the release tarball’s `packaging/gentoo/`):
+
 ```bash
-PKG=/var/db/repos/local/app-laptop/zenbook-scripts
-sudo mkdir -p "${PKG}/files"   # only if you add patches later
+PKG=/var/db/repos/foxx/app-laptop/zenbook-scripts
+sudo mkdir -p "${PKG}"   # add "${PKG}/files" only if you ship patches
 sudo cp packaging/gentoo/zenbook-scripts-0.0.1_p1.ebuild "${PKG}/"
+sudo cp packaging/gentoo/zenbook-scripts-9999.ebuild "${PKG}/"   # optional live
 sudo cp packaging/gentoo/metadata.xml "${PKG}/"
 sudo cp packaging/gentoo/Manifest "${PKG}/"
-# Live git (optional):
-# sudo cp packaging/gentoo/zenbook-scripts-9999.ebuild "${PKG}/"
 ```
 
-Patches (if ever needed) go in `app-laptop/zenbook-scripts/files/` and are referenced from the ebuild via `${FILESDIR}`. The stock release ebuild ships **no** patches.
+Patches (if ever needed) go in `app-laptop/zenbook-scripts/files/` and are referenced via `${FILESDIR}`. Stock ebuilds ship **no** patches.
+
+**`USE=kernel` build deps:** `virtual/linux-sources` + `dev-build/make` (works with **`sys-kernel/gentoo-sources`** and `/usr/src/linux`). It does **not** pull `virtual/dist-kernel` / `gentoo-kernel` (avoids `secureboot` ↔ `modules-sign` fights). Point the symlink at the tree you boot:
+
+```bash
+eselect kernel list
+sudo eselect kernel set <N>    # e.g. gentoo-sources-7.0.12-r1
+ls -l /usr/src/linux
+```
 
 ### 3. Manifest
 
-If you changed `SRC_URI` or the ebuild, regenerate:
+After copying or editing ebuilds:
 
 ```bash
-cd /var/db/repos/local/app-laptop/zenbook-scripts
+cd /var/db/repos/foxx/app-laptop/zenbook-scripts
 sudo ebuild zenbook-scripts-0.0.1_p1.ebuild manifest
+# sudo ebuild zenbook-scripts-9999.ebuild manifest   # live; often empty DIST
 ```
 
-Or keep the shipped `Manifest` (hashes above). First fetch may pull from GitHub once Gentoo mirrors do not have the file yet.
+Or keep the shipped `Manifest` for `0.0.1_p1` (hashes above). First fetch may come from GitHub if Gentoo mirrors lack the file.
 
 ### 4. Optional: `eix-update`
 
@@ -87,12 +96,12 @@ command -v eix-update >/dev/null && sudo eix-update
 
 ### 5. Unmask (`~amd64` / live)
 
-Release ebuild uses `KEYWORDS="~amd64"` (testing). Live `9999` has empty `KEYWORDS` and needs `**`:
+Path is **`package.accept_keywords`** (plural). Release ebuild is `KEYWORDS="~amd64"`; live `9999` needs `**`:
 
 ```bash
 # /etc/portage/package.accept_keywords/zenbook-scripts
 echo 'app-laptop/zenbook-scripts ~amd64' | sudo tee /etc/portage/package.accept_keywords/zenbook-scripts
-# for 9999 only:
+# for 9999:
 # echo 'app-laptop/zenbook-scripts **' | sudo tee -a /etc/portage/package.accept_keywords/zenbook-scripts
 ```
 
@@ -112,7 +121,7 @@ emerge -av =app-laptop/zenbook-scripts-0.0.1_p1
 Manual phase walk (same as emerge internals):
 
 ```bash
-EBUILD=/var/db/repos/local/app-laptop/zenbook-scripts/zenbook-scripts-0.0.1_p1.ebuild
+EBUILD=/var/db/repos/foxx/app-laptop/zenbook-scripts/zenbook-scripts-0.0.1_p1.ebuild
 sudo ebuild "${EBUILD}" clean unpack prepare configure compile
 sudo ebuild "${EBUILD}" install
 sudo ebuild "${EBUILD}" qmerge   # or: preinst merge postinst
