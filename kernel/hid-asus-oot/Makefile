@@ -40,7 +40,8 @@ prepare:
 	cp "$(BUILDDIR)/hid-asus.c" "$(ARTIFACTS)/hid-asus.c"
 
 modules: prepare
-	$(MAKE) -C "$(KDIR)" M="$(BUILDDIR)" modules
+	# Portage exports ARCH=amd64; kbuild wants ARCH=x86 on that host.
+	$(MAKE) -C "$(KDIR)" M="$(BUILDDIR)" ARCH="$(or $(KERNEL_ARCH),$(shell uname -m | sed -e s/x86_64/x86/ -e s/i.86/x86/))" modules
 	@cp -f "$(BUILDDIR)/hid-asus.ko" "$(ARTIFACTS)/" 2>/dev/null || \
 	 cp -f "$(BUILDDIR)/hid-asus.ko.xz" "$(ARTIFACTS)/" 2>/dev/null || true
 

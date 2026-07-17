@@ -3,7 +3,7 @@
 
 EAPI=8
 
-inherit linux-info
+inherit linux-info toolchain-funcs
 
 DESCRIPTION="ASUS Zenbook Duo scripts (UX8406 keyboard + UX5400 ScreenPad)"
 HOMEPAGE="https://github.com/f0xx/zenbook_scripts"
@@ -100,6 +100,9 @@ src_compile() {
 
 		kdir=$(zenbook_kernel_kdir)
 		einfo "Building hid-asus against KDIR=${kdir}"
+		# Portage ARCH=amd64 breaks kbuild (expects ARCH=x86).
+		local -x ARCH
+		ARCH="$(tc-arch-kernel)"
 		# BUILDDIR under ${T}: /tmp/zenbook-hid-asus-* may be owned by a
 		# prior interactive build (foxx/root) and is unwritable to portage.
 		emake -C "${S}/kernel" build-current \
