@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Discussions / questions
+    url: https://github.com/f0xx/zenbook_scripts/issues
+    about: Prefer a bug report for hardware issues; use a clear title for how-to questions.

@@ -1,0 +1,48 @@
+name: Feature or packaging request
+description: Idea, distro packaging, or documentation improvement
+title: "[feat] "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Feature ideas are welcome. Implementation should land via **pull request** with review.
+        We do not maintain official distro packages; overlay/deb recipes are best-effort.
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched issues/PRs for a similar request
+          required: true
+        - label: I am willing to send a PR, or I understand this may stay unscheduled
+          required: false
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - UX8406 keyboard / hid-asus
+        - UX5400 ScreenPad
+        - Gentoo ebuild / overlay
+        - Debian/Ubuntu packaging
+        - Docs
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      description: What you want and why
+    validations:
+      required: true
+
+  - type: textarea
+    id: notes
+    attributes:
+      label: Extra notes
+      description: Links, sketches, related commits

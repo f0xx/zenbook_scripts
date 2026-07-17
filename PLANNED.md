@@ -65,7 +65,8 @@ Example: `contrib/modprobe/zenbook-hid-asus.conf` → `/etc/modprobe.d/`
 - `contrib/openrc/zenbook-hid-asus-boot.sh` — wait for USB dock, `insmod` + rebind
 - `/usr/lib/modules/zenbook-hid-asus/<kver>/hid-asus.ko` — installed `.ko` path
 - `/etc/conf.d/zenbook-kb-hid-asus` — `sideload=yes|no|auto`, fn-lock params, `usb_wait_secs`
-- `packaging/gentoo/zenbook_scripts-9999.ebuild` — `USE=kernel` builds and installs the above
+- `packaging/gentoo/zenbook-scripts-9999.ebuild` — `USE=kernel` builds and installs the above
+- `packaging/gentoo/zenbook-scripts-0.0.1_p1.ebuild` — release ebuild for upstream tag `v0.0.1_hf1`
 
 ---
 

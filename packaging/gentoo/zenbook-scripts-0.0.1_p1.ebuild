@@ -3,15 +3,21 @@
 
 EAPI=8
 
-inherit git-r3 linux-info
+inherit linux-info
 
 DESCRIPTION="ASUS Zenbook Duo scripts (UX8406 keyboard + UX5400 ScreenPad)"
 HOMEPAGE="https://github.com/f0xx/zenbook_scripts"
-EGIT_REPO_URI="https://github.com/f0xx/zenbook_scripts.git"
+
+# Upstream tag v0.0.1_hf1 → Gentoo PV 0.0.1_p1 (_hf is not a legal PMS suffix).
+# GitHub archive dir uses the repo name (underscore), not ${PN}.
+MY_PN="zenbook_scripts"
+MY_PV="0.0.1_hf1"
+SRC_URI="https://github.com/f0xx/${MY_PN}/archive/refs/tags/v${MY_PV}.tar.gz -> ${MY_PN}-${MY_PV}.tar.gz"
+S="${WORKDIR}/${MY_PN}-${MY_PV}"
 
 LICENSE="GPL-2+"
 SLOT="0"
-KEYWORDS=""
+KEYWORDS="~amd64"
 
 IUSE="+hotkeys +kernel qt6 screenpad +zenbook_ux8406"
 REQUIRED_USE="kernel? ( zenbook_ux8406 )"
