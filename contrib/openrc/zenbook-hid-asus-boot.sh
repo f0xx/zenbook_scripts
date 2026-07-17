@@ -28,6 +28,7 @@ KO="${ko_path:-/usr/lib/modules/zenbook-hid-asus/${KVER}/hid-asus.ko}"
 export ZENBOOK_HID_KO="${KO}"
 export ZENBOOK_FN_LOCK_DEFAULT="${fn_lock_default:-0}"
 export ZENBOOK_FN_LOCK_ALLOW_TOGGLE="${fn_lock_allow_toggle:-0}"
+export ZENBOOK_FN_ROW_POLICY="${fn_row_policy:-0}"
 export ZENBOOK_HID_QUICK_RELOAD="${ZENBOOK_HID_QUICK_RELOAD:-0}"
 export ZENBOOK_RC_SETTLE_SECS="${ZENBOOK_RC_SETTLE_SECS:-0}"
 

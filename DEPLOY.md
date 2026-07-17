@@ -169,6 +169,10 @@ Snapshot: `~/.config/zenbook-scripts/zenbook_duo.save` (from `command_user`) —
 | `usb_wait_secs` | seconds | How long to wait for docked keyboard when `sideload=yes` |
 | `fn_lock_default` | `-1`, `0`, `1` | Initial layout at module load (see below) |
 | `fn_lock_allow_toggle` | `0`, `1` | Whether Fn+Esc / vendor `0x4e` may switch layout |
+| `fn_row_policy` | decimal bitmask | Per-key Fn-row merge (`8` = F4 only, `15` = F1–F4); full `insmod` only |
+
+`/etc/modprobe.d/zenbook-hid-asus.conf` does **not** apply to sideload (`insmod`); set
+`fn_row_policy` in this conf.d file (or `ROW_POLICY=… ./kmod_deploy.sh`).
 
 OpenRC may log `flock failed` / `already starting` if `zenbook-kb-hid-asus` restarts
 while `zenbook-kb-hotkeys` is still stopping. The switch script waits for a clean stop;
