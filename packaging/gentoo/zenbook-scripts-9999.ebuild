@@ -134,8 +134,8 @@ src_install() {
 		newins contrib/udev/zenbook-kb-hotkeys-udev zenbook-kb-hotkeys-udev
 		newins contrib/acpi/zenbook-kbd-sleep.sh zenbook-kbd-sleep.sh
 		fperms 0755 \
-			"${ED}${ZENBOOK_LIBEXEC}/zenbook-kb-hotkeys-udev" \
-			"${ED}${ZENBOOK_LIBEXEC}/zenbook-kbd-sleep.sh"
+			"${ZENBOOK_LIBEXEC}/zenbook-kb-hotkeys-udev" \
+			"${ZENBOOK_LIBEXEC}/zenbook-kbd-sleep.sh"
 
 		insinto /etc/udev/rules.d
 		doins contrib/udev/99-zenbook-kb-hotkeys.rules
@@ -145,7 +145,7 @@ src_install() {
 
 		insinto /usr/lib/systemd/system-sleep
 		newins contrib/systemd/zenbook-kb-brightness-sleep zenbook-kb-brightness
-		fperms 0755 "${ED}/usr/lib/systemd/system-sleep/zenbook-kb-brightness"
+		fperms 0755 /usr/lib/systemd/system-sleep/zenbook-kb-brightness
 
 		newinitd contrib/openrc/zenbook-kb-hotkeys zenbook-kb-hotkeys
 		newinitd contrib/openrc/zenbook-kb-lid zenbook-kb-lid
@@ -173,9 +173,9 @@ src_install() {
 		newins kernel/scripts/rebind-hid-asus.sh zenbook-hid-asus-rebind
 		newins contrib/openrc/zenbook-hid-asus-boot.sh zenbook-hid-asus-boot.sh
 		fperms 0755 \
-			"${ED}${ZENBOOK_LIBEXEC}/zenbook-hid-asus-switch" \
-			"${ED}${ZENBOOK_LIBEXEC}/zenbook-hid-asus-rebind" \
-			"${ED}${ZENBOOK_LIBEXEC}/zenbook-hid-asus-boot.sh"
+			"${ZENBOOK_LIBEXEC}/zenbook-hid-asus-switch" \
+			"${ZENBOOK_LIBEXEC}/zenbook-hid-asus-rebind" \
+			"${ZENBOOK_LIBEXEC}/zenbook-hid-asus-boot.sh"
 
 		newinitd contrib/openrc/zenbook-kb-hid-asus zenbook-kb-hid-asus
 		newconfd contrib/openrc/conf.d/zenbook-kb-hid-asus zenbook-kb-hid-asus
