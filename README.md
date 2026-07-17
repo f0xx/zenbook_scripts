@@ -11,7 +11,7 @@ package. We do **not** act as distro maintainers or QA. Use at your own risk.
 |-------|------|--------|
 | [ASUS Zenbook UX8406 (MA)](README.ux8406.md) | [`README.ux8406.md`](README.ux8406.md) | [`zenbook_ux8406ma`](https://github.com/f0xx/zenbook_scripts/tree/zenbook_ux8406ma) |
 | [ASUS Zenbook UX5400 (E)](README.ux5400.md) | [`README.ux5400.md`](README.ux5400.md) | [`zenbook_ux5400e`](https://github.com/f0xx/zenbook_scripts/tree/zenbook_ux5400e) |
-| ASUS Zenbook UX582 (LR) | — | [`zenbook_ux582lr`](https://github.com/f0xx/zenbook_scripts/tree/zenbook_ux582lr) |
+| [ASUS ZenBook Pro Duo UX581](README.ux581.md) (sold as UX582) | [`README.ux581.md`](README.ux581.md) | [`zenbook_ux581`](https://github.com/f0xx/zenbook_scripts/tree/zenbook_ux581) |
 
 Model-specific READMEs live on `main` after merge; feature work continues on the model branches.
 
