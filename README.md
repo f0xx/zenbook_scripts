@@ -35,14 +35,19 @@ Source: https://github.com/f0xx/zenbook_scripts/archive/refs/tags/v0.0.1_hf1.tar
 
 ### Gentoo (short path)
 
-Full steps (overlay, `files/`, Manifest, unmask, emerge, services): **[packaging/README.md](packaging/README.md)**.
+Full steps (overlay, Manifest, unmask, emerge, `eselect kernel`, services): **[packaging/README.md](packaging/README.md)**.
+
+Ebuild installs under **`/usr`** (`/usr/bin`, `/usr/libexec`, `/usr/share/zenbook-scripts`).  
+`configure.py` from git still uses **`/usr/local`**.
 
 ```bash
 # After copying packaging/gentoo/* into your overlay's
 # app-laptop/zenbook-scripts/ and unmasking ~amd64:
+# eselect kernel set <N>   # match uname -r for USE=kernel
 emerge -av =app-laptop/zenbook-scripts-0.0.1_p1
 sudo rc-update add zenbook-kb-hid-asus boot    # UX8406 USE=kernel
 sudo rc-update add zenbook-kb-hotkeys default
+# fn_row_policy=7 in /etc/conf.d/zenbook-kb-hid-asus
 ```
 
 Live git: `zenbook-scripts-9999.ebuild` (needs `**` keywords).

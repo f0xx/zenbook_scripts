@@ -1,6 +1,6 @@
 # When to redeploy (install / restart)
 
-Quick rule: **only redeploy userspace when files under `/usr/local/` must change.**
+Quick rule: **only redeploy userspace when installed files under `/usr/` (Gentoo ebuild) or `/usr/local/` (`configure.py`) must change.**
 Kernel module tests and config-only edits often need **no** reinstall.
 
 ## Decision table

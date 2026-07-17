@@ -56,6 +56,8 @@ When you answer **yes** to install:
 | udev | `/etc/udev/rules.d/99-zenbook-kb-hotkeys.rules` + `/usr/local/libexec/zenbook-kb-hotkeys-udev` |
 | `input` group | Your user added (re-login required) |
 
+**Gentoo overlay package** (`app-laptop/zenbook-scripts`) installs the same components under **`/usr`** instead of `/usr/local` — see [`packaging/README.md`](packaging/README.md). Prefer one layout; do not mix emerge with `configure.py` install on the same machine without cleaning the other prefix.
+
 **Init system detection:** if `systemctl` is available → `systemd` unit `zenbook-kb-hotkeys.service`; otherwise → OpenRC `/etc/init.d/zenbook-kb-hotkeys` + `rc-update add`.
 
 ```bash
