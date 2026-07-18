@@ -9,7 +9,25 @@ kb-platform-profile set balanced
 kb-platform-profile cycle         # quiet → balanced → performance → …
 ```
 
-Custom fan PWM curves remain unavailable on UX5400EA / UX8406 (`fan_curve_get_factory_default` → ENODEV).
+## `kb-fan` — implemented (status + limited control)
+
+Probed on UX8406MA and UX5400EA (`asus-nb-wmi` hwmon):
+
+| Control | Result |
+|---------|--------|
+| Custom `pwm*_auto_point_*` curves | **Unavailable** (`fan_curve_get_factory_default` → ENODEV) |
+| `platform_profile` / `throttle_thermal_policy` | **Works** — quiet↔balanced↔performance (ttp 2/0/1) |
+| `pwm1_enable` | **0** = full-on (~max RPM), **2** = firmware auto; **1** (manual curve) → EINVAL |
+| `fan1_input` | RPM readout |
+
+```bash
+kb-fan status
+kb-fan rpm
+kb-fan auto                 # pwm1_enable=2
+kb-fan full                 # pwm1_enable=0 (loud; needs root/sudoers)
+kb-fan quiet|balanced|performance
+kb-fan profile cycle
+```
 
 ---
 

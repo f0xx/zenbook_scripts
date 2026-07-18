@@ -145,7 +145,7 @@ src_install() {
 	fi
 
 	# User-facing CLIs
-	dobin configure.py configure.sh bin/kb-brightness bin/kb-platform-profile
+	dobin configure.py configure.sh bin/kb-brightness bin/kb-platform-profile bin/kb-fan
 	if use screenpad || use hotkeys; then
 		dobin bin/screenpad bin/screenpad-boot bin/screenpad-sync
 	fi

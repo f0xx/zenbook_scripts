@@ -19,6 +19,7 @@ INSTALL_BIN_SCREENPAD = Path("/usr/local/bin/screenpad")
 INSTALL_BIN_SCREENPAD_SYNC = Path("/usr/local/bin/screenpad-sync")
 INSTALL_BIN_SCREENPAD_BOOT = Path("/usr/local/bin/screenpad-boot")
 INSTALL_BIN_PLATFORM_PROFILE = Path("/usr/local/bin/kb-platform-profile")
+INSTALL_BIN_FAN = Path("/usr/local/bin/kb-fan")
 UDEV_RULES = Path("/etc/udev/rules.d/99-zenbook-kb-hotkeys.rules")
 UDEV_SCREENPAD_RULES = Path("/etc/udev/rules.d/99-zenbook-screenpad.rules")
 UDEV_HELPER = Path("/usr/local/libexec/zenbook-kb-hotkeys-udev")
@@ -97,6 +98,7 @@ def install_kb_brightness_tree(script_dir: Path) -> None:
         "transport_bluetooth.sh",
         "screenpad.sh",
         "platform_profile.sh",
+        "fan.sh",
     ):
         src = script_dir / "lib" / name
         if src.is_file():
@@ -129,6 +131,7 @@ def install_kb_brightness_tree(script_dir: Path) -> None:
         (script_dir / "bin" / "screenpad-sync", INSTALL_BIN_SCREENPAD_SYNC),
         (script_dir / "bin" / "screenpad-boot", INSTALL_BIN_SCREENPAD_BOOT),
         (script_dir / "bin" / "kb-platform-profile", INSTALL_BIN_PLATFORM_PROFILE),
+        (script_dir / "bin" / "kb-fan", INSTALL_BIN_FAN),
     ):
         if src.is_file():
             _sudo(["cp", str(src), str(dest)])
@@ -163,13 +166,14 @@ def install_sudoers_kb_brightness() -> None:
 
 
 def install_sudoers_ux5400() -> None:
-    """Passwordless screenpad + platform-profile for the install user."""
+    """Passwordless screenpad + platform-profile + fan for the install user."""
     user = resolve_run_user()
     if not user:
         return
     for path in (
         INSTALL_BIN_SCREENPAD,
         INSTALL_BIN_PLATFORM_PROFILE,
+        INSTALL_BIN_FAN,
         INSTALL_BIN_SCREENPAD_BOOT,
     ):
         line = f"{user} ALL=NOPASSWD:{path} *"

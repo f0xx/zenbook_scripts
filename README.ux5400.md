@@ -360,6 +360,7 @@ brightness.sh                 bash wrapper → kb-brightness
 bin/kb-brightness             brightness CLI
 bin/kb-brightness-hotkeys     Fn+ / special-key listener
 bin/kb-platform-profile       ACPI platform_profile (quiet/balanced/performance)
+bin/kb-fan                    Fan RPM + auto/full-on + profile helpers
 bin/screenpad                 ScreenPad Plus on/off/brightness (UX5400)
 bin/screenpad-boot            boot restore oneshot
 bin/screenpad-sync            mirror main panel brightness %
@@ -392,6 +393,7 @@ Branch `zenbook_ux5400e`. Fixed keyboard (WMI white backlight) + secondary Scree
 | `/sys/class/leds/asus::kbd_backlight/` | Keyboard backlight 0–3 (WMI; works out of the box) |
 | `/sys/class/backlight/asus_screenpad/` | ScreenPad brightness 0–255 + power |
 | `/sys/firmware/acpi/platform_profile` | `quiet` / `balanced` / `performance` (no custom fan curves) |
+| `asus-nb-wmi` hwmon `fan1_input` / `pwm1_enable` | RPM; `0`=full-on, `2`=auto (`kb-fan`) |
 
 ### CLI
 
@@ -405,6 +407,7 @@ screenpad sync            # one-shot match main panel %
 screenpad-sync [--once]   # daemon (or one-shot)
 
 kb-platform-profile get|list|set <name>|cycle
+kb-fan status|rpm|auto|full|quiet|balanced|performance
 ```
 
 **Kernel quirk (mainline before screenpad power fixes):** writing brightness with
@@ -453,9 +456,10 @@ kscreen-doctor -o | grep -A2 HDMI
 ls -l /sys/class/backlight/asus_screenpad/brightness
 groups | grep video
 
-# Fans: only profiles, not PWM curves
+# Fans: profiles + full-on/auto only (no PWM curves)
 dmesg | grep fan_curve_get_factory_default   # ENODEV is normal
 kb-platform-profile list
+kb-fan status
 ```
 
 See also [`PLANNED.md`](PLANNED.md) (implemented feature notes) and [`DEPLOY.md`](DEPLOY.md).

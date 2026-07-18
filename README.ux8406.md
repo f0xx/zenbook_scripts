@@ -360,6 +360,27 @@ readlink /sys/bus/hid/devices/*1B2C*/driver
 
 ---
 
+## Fan / thermal profile (UX8406)
+
+Custom ASUS fan curves are **not** exposed (`fan_curve_get_factory_default` → ENODEV). What works:
+
+```bash
+kb-fan status                 # RPM, pwm mode, platform profile
+kb-fan auto                   # firmware auto (default)
+sudo kb-fan full              # force max fans (pwm1_enable=0)
+kb-fan quiet|balanced|performance
+kb-platform-profile cycle     # same profiles via ACPI platform_profile
+```
+
+| Sysfs | Role |
+|-------|------|
+| `/sys/firmware/acpi/platform_profile` | quiet / balanced / performance |
+| `…/asus-nb-wmi/throttle_thermal_policy` | 2 / 0 / 1 (same modes) |
+| `…/hwmon/*/fan1_input` | RPM |
+| `…/hwmon/*/pwm1_enable` | `0` full-on, `2` auto (`1` unsupported) |
+
+---
+
 ## Project layout
 
 ```
@@ -368,6 +389,8 @@ backlight.py                  backward-compatible alias
 brightness.sh                 bash wrapper → kb-brightness
 bin/kb-brightness             brightness CLI
 bin/kb-brightness-hotkeys     Fn+ / special-key listener
+bin/kb-fan                    fan RPM + auto/full-on + profile helpers
+bin/kb-platform-profile       ACPI platform_profile CLI
 configure.py                  console configurator + installer
 configure.sh                  whiptail configurator
 configure_gui.py              PySide6 GUI configurator
