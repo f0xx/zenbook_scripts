@@ -25,7 +25,8 @@ Model-specific READMEs live on `main` after merge; feature work continues on the
 
 ### Pre-release tarball checksums (`v0.0.2_pre1`)
 
-Testing build (fan-control / probe / tray / power / touchpad). Announced **0.0.2** can follow once this branch is packaged.
+Testing build (fan-control / probe / tray / power / touchpad). UX5400 field-validated
+fan+tray on `feature/epp-rapl-touchpad`. Announced **0.0.2** is next after merge/package.
 
 Source: https://github.com/f0xx/zenbook_scripts/archive/refs/tags/v0.0.2_pre1.tar.gz
 

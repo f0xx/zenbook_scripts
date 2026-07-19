@@ -136,20 +136,18 @@ sudo cp touchpad.json.example /etc/zenbook-scripts/touchpad.json
 sudo platform-touchpad run                      # grab + uinput live filter
 ```
 
-Defaults: `exec_delay` **25 ms**, `outlier_reject` **max_delta 1200** (was
-40 / 400 — too aggressive on Primax/ELAN; also fixed outlier lockout after a
-jump).
+Defaults: `exec_delay` **25 ms**, `outlier_reject` **max_delta 1200**.
 
 **Per-device profiles** (`touchpad.json` version 2): keys are stable
 `name|phys` (not `eventN`). GUI combo switches knobs per device; Save updates
 that device only. ELAN screen pads can stay `"enabled": false`.
 
+**Next:** typing-inhibit + soft-accel (live filter currently bypasses DE AccelSpeed).
+
 ```bash
 platform-touchpad list                 # shows stable key=
 platform-touchpad status
-platform-touchpad-gui                  # USE=qt6 / PySide6
-# or from checkout:
-bin/platform-touchpad-gui
+platform-touchpad-gui                  # USE=qt6 / PySide6; also from platform-tray
 ```
 
 ---

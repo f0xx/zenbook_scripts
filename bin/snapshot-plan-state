@@ -26,16 +26,28 @@ DEST="${BACKUP_ROOT}/${LABEL}"
 mkdir -p "${DEST}"
 
 CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/zenbook-scripts"
-for f in zenbook-duo.conf zenbook-hotkeys.conf keyboard-brightness zenbook_duo.save; do
+for f in zenbook-duo.conf zenbook-hotkeys.conf keyboard-brightness zenbook_duo.save \
+	touchpad.json fan-control.json; do
     [[ -f "${CONFIG_DIR}/${f}" ]] && cp -a "${CONFIG_DIR}/${f}" "${DEST}/"
 done
 [[ -d "${CONFIG_DIR}/calibration" ]] && cp -a "${CONFIG_DIR}/calibration" "${DEST}/"
 
+for f in /etc/zenbook-scripts/fan-control.json /etc/zenbook-scripts/touchpad.json; do
+    if [[ -f "${f}" ]]; then
+        sudo cp -a "${f}" "${DEST}/$(basename "${f}").etc" 2>/dev/null || true
+    fi
+done
 if [[ -f /etc/conf.d/zenbook-kb-hotkeys ]]; then
     sudo cp -a /etc/conf.d/zenbook-kb-hotkeys "${DEST}/zenbook-kb-hotkeys.conf.d" 2>/dev/null || true
 fi
 if [[ -f /etc/init.d/zenbook-kb-hotkeys ]]; then
     sudo cp -a /etc/init.d/zenbook-kb-hotkeys "${DEST}/zenbook-kb-hotkeys.initd" 2>/dev/null || true
+fi
+if [[ -f /etc/init.d/zenbook-platform-fan-control ]]; then
+    sudo cp -a /etc/init.d/zenbook-platform-fan-control "${DEST}/zenbook-platform-fan-control.initd" 2>/dev/null || true
+fi
+if [[ -f /etc/init.d/zenbook-screenpad ]]; then
+    sudo cp -a /etc/init.d/zenbook-screenpad "${DEST}/zenbook-screenpad.initd" 2>/dev/null || true
 fi
 
 if [[ -x "${SCRIPT_DIR}/kernel/scripts/switch-hid-asus.sh" ]]; then
