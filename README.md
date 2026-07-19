@@ -65,6 +65,8 @@ Live git: `zenbook-scripts-9999.ebuild` (needs `**` keywords).
 ## Quick links
 
 - [DEPLOY.md](DEPLOY.md) — when to rebuild / reinstall / reload `hid-asus`
+- [ROADMAP.md](ROADMAP.md) — where we are / next (probe, tray, touchpad)
+- [PLANNED.md](PLANNED.md) — feature cheatsheets
 - [kernel/README.md](kernel/README.md) — out-of-tree `hid-asus` build & install
 - [packaging/README.md](packaging/README.md) — Gentoo ebuild / overlay notes
 - [packaging/debian/README.md](packaging/debian/README.md) — Debian/Ubuntu from source

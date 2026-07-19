@@ -171,6 +171,7 @@ See [`kernel/README.md`](../kernel/README.md). Re-emerge after **each kernel upg
 | Flag | Default | Meaning |
 |------|---------|---------|
 | `hotkeys` | on | udev + OpenRC hotkeys / lid / sleep hooks |
+| `fan_control` | on | `kb-fan-control` + OpenRC unit + `/etc/zenbook-scripts` example |
 | `screenpad` | off | ScreenPad CLI + udev + services (UX5400) |
 | `kernel` | on | Build/install oot `hid-asus.ko` + boot sideload |
 | `qt6` | off | `configure_gui.py` (PySide6) |

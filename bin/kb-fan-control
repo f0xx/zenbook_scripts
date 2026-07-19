@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# Deprecated alias — use platform-fan-control.
+echo "note: kb-fan-control is deprecated; use platform-fan-control" >&2
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [[ -x "${here}/platform-fan-control" ]]; then
+	exec "${here}/platform-fan-control" "$@"
+fi
+for c in /usr/bin/platform-fan-control /usr/local/bin/platform-fan-control; do
+	[[ -x "$c" ]] && exec "$c" "$@"
+done
+echo "platform-fan-control not found" >&2
+exit 127

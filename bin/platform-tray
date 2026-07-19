@@ -1,0 +1,198 @@
+#!/usr/bin/env python3
+"""System-tray control for platform profile + fans (PySide6 / Qt6).
+
+Works on Plasma and other DEs that implement StatusNotifierItem / tray icons.
+Buttons disable when platform-probe reports the feature unsupported.
+"""
+
+from __future__ import annotations
+
+import os
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+_ROOT = Path(__file__).resolve().parent.parent
+_SHARE_CANDIDATES = (
+    _ROOT,
+    Path("/usr/local/share/zenbook-scripts"),
+    Path("/usr/share/zenbook-scripts"),
+)
+for _share in _SHARE_CANDIDATES:
+    if (_share / "zenbook_kb").is_dir() and str(_share) not in sys.path:
+        sys.path.insert(0, str(_share))
+        break
+
+try:
+    from PySide6.QtCore import QTimer
+    from PySide6.QtGui import QAction, QIcon
+    from PySide6.QtWidgets import (
+        QApplication,
+        QMenu,
+        QStyle,
+        QSystemTrayIcon,
+        QWidget,
+    )
+except ImportError:
+    print(
+        "PySide6 required (Gentoo: USE=qt6 / emerge dev-python/pyside:6).",
+        file=sys.stderr,
+    )
+    raise SystemExit(1)
+
+from zenbook_kb.platform.capabilities import build_report  # noqa: E402
+
+
+def _which(*names: str) -> str | None:
+    for n in names:
+        p = shutil.which(n)
+        if p:
+            return p
+        for root in (_ROOT / "bin", Path("/usr/bin"), Path("/usr/local/bin")):
+            cand = root / n
+            if cand.is_file() and os.access(cand, os.X_OK):
+                return str(cand)
+    return None
+
+
+def _run(argv: list[str]) -> str:
+    try:
+        r = subprocess.run(
+            argv,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=8,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        return str(exc)
+    out = (r.stdout or r.stderr or "").strip()
+    return out.splitlines()[0] if out else f"exit {r.returncode}"
+
+
+class PlatformTray(QWidget):
+    def __init__(self) -> None:
+        super().__init__()
+        self.report = build_report()
+        self.fan = _which("platform-fan", "kb-fan")
+        self.profile = _which("kb-platform-profile")
+        self.probe = _which("platform-probe")
+
+        self.tray = QSystemTrayIcon(self)
+        icon = QIcon.fromTheme("weather-windy")
+        if icon.isNull():
+            icon = QIcon.fromTheme("preferences-system")
+        if icon.isNull():
+            icon = QApplication.style().standardIcon(QStyle.StandardPixmap.SP_ComputerIcon)
+        self.tray.setIcon(icon)
+        self.tray.setToolTip("Platform thermal / fan")
+
+        self.menu = QMenu()
+        self.status_action = QAction("…", self)
+        self.status_action.setEnabled(False)
+        self.menu.addAction(self.status_action)
+        self.menu.addSeparator()
+
+        pp = self.report.by_id("platform_profile")
+        fan_feat = self.report.by_id("fan_pwm")
+        pp_ok = bool(pp and pp.supported)
+        fan_ok = bool(fan_feat and fan_feat.supported)
+
+        for name in ("quiet", "balanced", "performance"):
+            act = QAction(f"Profile: {name}", self)
+            act.setEnabled(pp_ok and bool(self.profile))
+            act.triggered.connect(lambda _checked=False, n=name: self._set_profile(n))
+            self.menu.addAction(act)
+
+        self.menu.addSeparator()
+        auto = QAction("Fans: auto", self)
+        auto.setEnabled(fan_ok and bool(self.fan))
+        auto.triggered.connect(lambda: self._fan_cmd("auto"))
+        self.menu.addAction(auto)
+        full = QAction("Fans: full (loud)", self)
+        full.setEnabled(fan_ok and bool(self.fan))
+        full.triggered.connect(lambda: self._fan_cmd("full"))
+        self.menu.addAction(full)
+
+        self.menu.addSeparator()
+        probe_act = QAction("Run platform-probe…", self)
+        probe_act.setEnabled(bool(self.probe))
+        probe_act.triggered.connect(self._show_probe)
+        self.menu.addAction(probe_act)
+
+        quit_act = QAction("Quit", self)
+        quit_act.triggered.connect(QApplication.instance().quit)
+        self.menu.addAction(quit_act)
+
+        self.tray.setContextMenu(self.menu)
+        self.tray.show()
+
+        self.timer = QTimer(self)
+        self.timer.timeout.connect(self.refresh_status)
+        self.timer.start(5000)
+        self.refresh_status()
+
+    def _set_profile(self, name: str) -> None:
+        if self.profile:
+            _run([self.profile, "set", name])
+        self.refresh_status()
+
+    def _fan_cmd(self, cmd: str) -> None:
+        if not self.fan:
+            return
+        r = subprocess.run(
+            ["sudo", "-n", self.fan, cmd],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=8,
+        )
+        if r.returncode != 0:
+            _run([self.fan, cmd])
+        self.refresh_status()
+
+    def _show_probe(self) -> None:
+        if not self.probe:
+            return
+        out = subprocess.run(
+            [self.probe, "-q"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=10,
+        )
+        msg = (out.stdout or out.stderr or "")[:400]
+        self.tray.showMessage(
+            "platform-probe",
+            msg or "(empty)",
+            QSystemTrayIcon.MessageIcon.Information,
+            6000,
+        )
+
+    def refresh_status(self) -> None:
+        bits: list[str] = []
+        if self.profile:
+            bits.append(_run([self.profile, "get"]) or "?")
+        if self.fan:
+            rpm = _run([self.fan, "rpm"])
+            if rpm.isdigit():
+                bits.append(f"{rpm} rpm")
+        text = " · ".join(bits) if bits else "platform tray"
+        self.status_action.setText(text)
+        self.tray.setToolTip(text)
+
+
+def main() -> int:
+    app = QApplication(sys.argv)
+    app.setQuitOnLastWindowClosed(False)
+    if not QSystemTrayIcon.isSystemTrayAvailable():
+        print("No system tray available in this session.", file=sys.stderr)
+        return 1
+    # Keep tray alive for the event loop (Qt does not take ownership via show()).
+    app._platform_tray = PlatformTray()  # type: ignore[attr-defined]
+    return app.exec()
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

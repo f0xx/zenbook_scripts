@@ -103,21 +103,40 @@ _save() {
     logger -t zenbook-kb-brightness "saved snapshot ${SNAPSHOT} (brightness=$(zenbook_kb_state_read 0), fn_lock_mode=${mode})"
 }
 
+_fan_hook() {
+    local verb="$1"
+    local hook=""
+    for c in /usr/bin/zenbook-fan-control-hook /usr/local/bin/zenbook-fan-control-hook; do
+        if [[ -x "${c}" ]]; then
+            hook="${c}"
+            break
+        fi
+    done
+    if [[ -z "${hook}" ]]; then
+        return 0
+    fi
+    "${hook}" "${verb}" >/dev/null 2>&1 || true
+}
+
 case "${1:-}" in
     pre|suspend|sleep)
         _pre
+        _fan_hook pre
         ;;
     post|resume|restore)
         _post
+        _fan_hook post
         ;;
     save)
         _save
         ;;
     lid-close|lid_close)
         _lid_close
+        _fan_hook lid-close
         ;;
     lid-open|lid_open)
         _lid_open
+        _fan_hook lid-open
         ;;
     -h|--help)
         sed -n '2,9p' "$0"

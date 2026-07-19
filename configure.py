@@ -5,9 +5,9 @@ from __future__ import annotations
 
 import argparse
 import configparser
-import os
 import subprocess
 import sys
+import traceback
 from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -17,11 +17,12 @@ if str(SCRIPT_DIR) not in sys.path:
 from zenbook_kb.install import (
     detect_init_system,
     install_all,
+    install_fan_control_support,
     install_kb_brightness_tree,
-    install_screenpad_support,
     install_sudoers_kb_brightness,
+    print_install_summary,
 )
-from zenbook_kb.dmi import has_screenpad_sysfs, is_ux5400, product_name
+from zenbook_kb.dmi import has_platform_profile, has_screenpad_sysfs, is_ux5400, product_name
 from zenbook_kb.users import default_duo_config, default_hotkeys_config, resolve_config_dir
 
 EXAMPLE_CONFIG = Path(__file__).resolve().parent / "zenbook-duo.conf.example"
@@ -35,6 +36,7 @@ def prompt(label: str, default: str) -> str:
 
 def yes_no(question: str, default_no: bool = True, *, assume_yes: bool = False) -> bool:
     if assume_yes:
+        print(f"{question} → yes (--all-yes)", flush=True)
         return True
     suffix = "[y/N]" if default_no else "[Y/n]"
     return input(f"{question} {suffix}: ").strip().lower().startswith("y")
@@ -58,7 +60,7 @@ def write_config(cfg: configparser.ConfigParser, path: Path) -> None:
 
 def test_brightness(script_dir: Path, level: int) -> None:
     cmd = [sys.executable, str(script_dir / "brightness.py"), str(level), "--show-mode"]
-    print(f"Running: {' '.join(cmd)}")
+    print(f"Running: {' '.join(cmd)}", flush=True)
     subprocess.run(cmd, check=False)
 
 
@@ -69,7 +71,18 @@ def ensure_hotkeys_config() -> None:
         return
     config_dir.mkdir(parents=True, exist_ok=True)
     default_hotkeys.write_text(EXAMPLE_HOTKEYS.read_text())
-    print(f"Created {default_hotkeys} (edit to bind unmapped Fn+ keys)")
+    print(f"Created {default_hotkeys} (edit to bind unmapped Fn+ keys)", flush=True)
+
+
+def resolve_fan_control_flag(args: argparse.Namespace) -> bool | None:
+    """Return True/False when CLI forced; None = decide later (prompt / auto)."""
+    if args.include_fan_control and args.no_include_fan_control:
+        raise SystemExit("use only one of --include-fan-control / --no-include-fan-control")
+    if args.include_fan_control:
+        return True
+    if args.no_include_fan_control:
+        return False
+    return None
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -83,6 +96,16 @@ def main(argv: list[str] | None = None) -> int:
         "--all-yes",
         action="store_true",
         help="Assume yes for all yes/no prompts (use with --defaults for semi-auto)",
+    )
+    parser.add_argument(
+        "--include-fan-control",
+        action="store_true",
+        help="Install adaptive platform-fan-control (config + OpenRC)",
+    )
+    parser.add_argument(
+        "--no-include-fan-control",
+        action="store_true",
+        help="Skip adaptive fan-control install (overrides auto / --all-yes)",
     )
     args = parser.parse_args(argv)
 
@@ -114,12 +137,19 @@ def main(argv: list[str] | None = None) -> int:
     init_system = detect_init_system()
     dmi_name = product_name() or "unknown"
     screenpad = has_screenpad_sysfs() or is_ux5400()
-    print("Zenbook Duo keyboard configurator")
-    print(f"Detected DMI product: {dmi_name}")
-    print(f"Detected connection: {detect_keyboard()}")
-    print(f"Detected ScreenPad sysfs: {'yes' if has_screenpad_sysfs() else 'no'}")
-    print(f"Detected init system: {init_system} ({'systemctl found' if init_system == 'systemd' else 'OpenRC-like'})")
-    print()
+    platform_profile = has_platform_profile()
+    fan_flag = resolve_fan_control_flag(args)
+    print("Zenbook Duo keyboard configurator", flush=True)
+    print(f"Detected DMI product: {dmi_name}", flush=True)
+    print(f"Detected connection: {detect_keyboard()}", flush=True)
+    print(f"Detected ScreenPad sysfs: {'yes' if has_screenpad_sysfs() else 'no'}", flush=True)
+    print(f"Detected platform_profile: {'yes' if platform_profile else 'no'}", flush=True)
+    print(
+        f"Detected init system: {init_system} "
+        f"({'systemctl found' if init_system == 'systemd' else 'OpenRC-like'})",
+        flush=True,
+    )
+    print(flush=True)
 
     if not args.defaults:
         kb["usb_vendor_id"] = prompt("USB vendor ID (pogo pins)", kb.get("usb_vendor_id", "0b05"))
@@ -135,56 +165,100 @@ def main(argv: list[str] | None = None) -> int:
 
     write_config(cfg, default_config)
     ensure_hotkeys_config()
-    print(f"\nSaved {default_config}")
+    print(f"\nSaved {default_config}", flush=True)
 
     if yes_no("Test brightness now?", default_no=True, assume_yes=args.all_yes):
         test_brightness(script_dir, int(kb["default_brightness"]))
 
-    if screenpad and yes_no(
-        "Install ScreenPad + platform-profile tools (UX5400 / asus_screenpad)?",
-        default_no=False,
-        assume_yes=args.all_yes,
-    ):
-        with_sync = yes_no(
-            "Also install ScreenPad brightness-sync service?",
+    # --- collect install choices first (no side effects yet) ---
+    want_screenpad = False
+    want_screenpad_sync = False
+    if screenpad:
+        want_screenpad = yes_no(
+            "Install ScreenPad + platform-profile tools (UX5400 / asus_screenpad)?",
             default_no=False,
             assume_yes=args.all_yes,
         )
-        install_screenpad_support(script_dir, with_sync=with_sync)
-        print("Try: screenpad status && screenpad on 180")
-        print("Try: kb-platform-profile list && kb-platform-profile cycle")
+        if want_screenpad:
+            want_screenpad_sync = yes_no(
+                "Also install ScreenPad brightness-sync service?",
+                default_no=False,
+                assume_yes=args.all_yes,
+            )
 
-    if yes_no(
-        "Install kb-brightness + Fn+ hotkey service to /usr/local?",
+    with_fan: bool | None = fan_flag
+    if with_fan is None:
+        if not platform_profile:
+            with_fan = False
+        elif args.all_yes:
+            with_fan = True
+        else:
+            with_fan = yes_no(
+                "Install adaptive fan-control daemon (/etc/zenbook-scripts/fan-control.json)?",
+                default_no=False,
+                assume_yes=False,
+            )
+
+    want_full = yes_no(
+        "Install kb-brightness + tools to /usr/local?",
         default_no=True,
         assume_yes=args.all_yes,
-    ):
+    )
+    with_hotkeys = False
+    if want_full:
         with_hotkeys = yes_no(
-            f"Install udev rules + {init_system} hotkey listener service?",
+            f"Also install udev rules + {init_system} hotkey listener service?",
             default_no=False,
             assume_yes=args.all_yes,
         )
-        install_all(
-            script_dir,
-            with_hotkey_service=with_hotkeys,
-            with_screenpad=screenpad,
-            with_screenpad_sync=True,
-        )
-        if with_hotkeys:
-            print()
-            print("Try: kb-brightness-hotkeys --dry-run   (press Fn+ keys)")
-            print("Map unmapped keys in ~/.config/zenbook-scripts/zenbook-hotkeys.conf")
-            if init_system == "openrc":
-                print("Service: rc-service zenbook-kb-hotkeys status")
-            else:
-                print("Service: systemctl status zenbook-kb-hotkeys.service")
-    elif yes_no("Install scripts only (no udev/service)?", default_no=True, assume_yes=args.all_yes):
-        install_kb_brightness_tree(script_dir)
-        install_sudoers_kb_brightness()
-        if screenpad:
-            from zenbook_kb.install import install_sudoers_ux5400
+    elif not with_fan and not want_screenpad:
+        if yes_no("Install scripts only (no udev/service)?", default_no=True, assume_yes=args.all_yes):
+            want_full = True
+            with_hotkeys = False
 
-            install_sudoers_ux5400()
+    print("\n--- starting install (progress below) ---\n", flush=True)
+
+    try:
+        if want_full or want_screenpad or with_fan:
+            # One path: tree + optional pieces (avoids silent mid-prompt hangs).
+            if want_full or want_screenpad:
+                install_all(
+                    script_dir,
+                    with_hotkey_service=with_hotkeys if want_full else False,
+                    with_screenpad=want_screenpad,
+                    with_screenpad_sync=want_screenpad_sync,
+                    with_fan_control=bool(with_fan),
+                    fan_control_enable=bool(with_fan),
+                )
+            elif with_fan:
+                install_kb_brightness_tree(script_dir)
+                install_sudoers_kb_brightness()
+                install_fan_control_support(script_dir, enable_service=True, seed_config=True)
+        else:
+            print("Nothing selected to install.", flush=True)
+    except subprocess.TimeoutExpired as exc:
+        print(f"\nERROR: command timed out: {exc.cmd}", file=sys.stderr, flush=True)
+        print("Partial install possible — see summary.", file=sys.stderr, flush=True)
+        print_install_summary()
+        return 1
+    except Exception:
+        print("\nERROR during install:", file=sys.stderr, flush=True)
+        traceback.print_exc()
+        print_install_summary()
+        return 1
+
+    print_install_summary()
+
+    if with_hotkeys:
+        print("\nTry: kb-brightness-hotkeys --dry-run", flush=True)
+        if init_system == "openrc":
+            print("Service: rc-service zenbook-kb-hotkeys status", flush=True)
+    if with_fan:
+        print("Fan: platform-probe && platform-fan-control check", flush=True)
+        if init_system == "openrc":
+            print("Service: rc-service zenbook-platform-fan-control status", flush=True)
+    if want_screenpad:
+        print("Try: screenpad status && kb-platform-profile list", flush=True)
 
     return 0
 

@@ -19,7 +19,7 @@ LICENSE="GPL-2+"
 SLOT="0"
 KEYWORDS="~amd64"
 
-IUSE="+hotkeys +kernel qt6 screenpad +zenbook_ux8406"
+IUSE="+fan_control +hotkeys +kernel qt6 screenpad +zenbook_ux8406"
 REQUIRED_USE="kernel? ( zenbook_ux8406 )"
 
 RDEPEND="
@@ -134,6 +134,11 @@ src_install() {
 	insinto "${ZENBOOK_SHARE}"
 	doins -r zenbook_kb brightness.py lib
 	doins zenbook-hotkeys.conf.example zenbook-duo.conf.example
+	if use fan_control; then
+		doins fan-control.json.example
+		insinto /etc/zenbook-scripts
+		newins fan-control.json.example fan-control.json.example
+	fi
 
 	if use zenbook_ux8406; then
 		insinto "${ZENBOOK_SHARE}/conf.d"
@@ -145,7 +150,11 @@ src_install() {
 	fi
 
 	# User-facing CLIs
-	dobin configure.py configure.sh bin/kb-brightness bin/kb-platform-profile bin/kb-fan
+	dobin configure.py configure.sh bin/kb-brightness bin/kb-platform-profile bin/platform-fan bin/platform-probe
+	dobin bin/kb-fan
+	if use fan_control; then
+		dobin bin/platform-fan-control bin/kb-fan-control
+	fi
 	if use screenpad || use hotkeys; then
 		dobin bin/screenpad bin/screenpad-boot bin/screenpad-sync
 	fi
@@ -157,7 +166,13 @@ src_install() {
 			bin/kb-calibrate-hotkeys \
 			bin/snapshot-plan-state
 	fi
-	use qt6 && dobin configure_gui.py
+	if use fan_control; then
+		newbin contrib/openrc/zenbook-fan-control-hook.sh zenbook-fan-control-hook
+	fi
+	if use qt6; then
+		dobin configure_gui.py
+		dobin bin/platform-tray
+	fi
 
 	if use hotkeys; then
 		insinto "${ZENBOOK_LIBEXEC}"
@@ -182,6 +197,12 @@ src_install() {
 
 		insinto /etc/modprobe.d
 		doins contrib/modprobe/zenbook-hid-asus.conf
+	fi
+
+	if use fan_control; then
+		newinitd contrib/openrc/zenbook-platform-fan-control zenbook-platform-fan-control
+		newconfd contrib/openrc/conf.d/zenbook-platform-fan-control zenbook-platform-fan-control
+		dosym zenbook-platform-fan-control /etc/init.d/zenbook-kb-fan-control
 	fi
 
 	if use screenpad; then
@@ -221,7 +242,7 @@ src_install() {
 
 	local doc
 	for doc in LICENSE DEPLOY.md README.ux8406.md README.ux5400.md \
-		kernel/README.md packaging/README.md PLANNED.md README.md; do
+		kernel/README.md packaging/README.md PLANNED.md ROADMAP.md README.md; do
 		[[ -f "${S}/${doc}" ]] || continue
 		dodoc "${doc}"
 	done
@@ -235,6 +256,15 @@ pkg_postinst() {
 
 	elog "Gentoo layout: /usr/bin, /usr/libexec, /usr/share/zenbook-scripts"
 	elog "(configure.py from a git tree still uses /usr/local by design)."
+
+	if use fan_control; then
+		elog "Fan-control (USE=fan_control):"
+		elog "  sudo cp /etc/zenbook-scripts/fan-control.json.example \\"
+		elog "          /etc/zenbook-scripts/fan-control.json"
+		elog "  sudo rc-update add zenbook-platform-fan-control default"
+		elog "  sudo rc-service zenbook-platform-fan-control start"
+		elog "  platform-probe && platform-fan-control check"
+	fi
 
 	if use kernel && [[ "${MERGE_TYPE}" != "binpkg" ]]; then
 		ewarn "Re-emerge app-laptop/zenbook-scripts after each kernel upgrade"

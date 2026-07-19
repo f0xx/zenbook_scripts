@@ -361,6 +361,7 @@ bin/kb-brightness             brightness CLI
 bin/kb-brightness-hotkeys     Fn+ / special-key listener
 bin/kb-platform-profile       ACPI platform_profile (quiet/balanced/performance)
 bin/kb-fan                    Fan RPM + auto/full-on + profile helpers
+bin/kb-fan-control            Adaptive AC/battery/lid/sleep profile daemon (JSON)
 bin/screenpad                 ScreenPad Plus on/off/brightness (UX5400)
 bin/screenpad-boot            boot restore oneshot
 bin/screenpad-sync            mirror main panel brightness %
@@ -408,6 +409,7 @@ screenpad-sync [--once]   # daemon (or one-shot)
 
 kb-platform-profile get|list|set <name>|cycle
 kb-fan status|rpm|auto|full|quiet|balanced|performance
+kb-fan-control status|once|run|event …   # JSON /etc/zenbook-scripts/fan-control.json
 ```
 
 **Kernel quirk (mainline before screenpad power fixes):** writing brightness with

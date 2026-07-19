@@ -9,7 +9,10 @@ kb-platform-profile set balanced
 kb-platform-profile cycle         # quiet → balanced → performance → …
 ```
 
-## `kb-fan` — implemented (status + limited control)
+## `platform-fan` — implemented (was `kb-fan`)
+
+`kb-fan` remains as a deprecation wrapper. Prefer **`platform-fan`** — this is
+thermal/fan control, not a keyboard Fn key.
 
 Probed on UX8406MA and UX5400EA (`asus-nb-wmi` hwmon):
 
@@ -21,12 +24,51 @@ Probed on UX8406MA and UX5400EA (`asus-nb-wmi` hwmon):
 | `fan1_input` | RPM readout |
 
 ```bash
-kb-fan status
-kb-fan rpm
-kb-fan auto                 # pwm1_enable=2
-kb-fan full                 # pwm1_enable=0 (loud; needs root/sudoers)
-kb-fan quiet|balanced|performance
-kb-fan profile cycle
+platform-probe                 # dry-run: what this machine supports
+platform-fan status
+platform-fan rpm
+platform-fan auto              # pwm1_enable=2
+platform-fan full              # pwm1_enable=0 (loud; needs root/sudoers)
+platform-fan quiet|balanced|performance
+```
+
+## `platform-fan-control` — adaptive daemon (was `kb-fan-control`)
+
+Watches AC/battery, load, temp, and optional lid; applies named profiles via
+`kb-platform-profile` + `platform-fan`. Sleep/lid hooks fire one-shot events.
+
+```bash
+sudo mkdir -p /etc/zenbook-scripts
+sudo cp fan-control.json.example /etc/zenbook-scripts/fan-control.json
+# edit rules.ac / rules.battery / events.*
+platform-fan-control status
+platform-fan-control once                 # evaluate + apply once
+platform-fan-control event sleep_pre      # from sleep hooks
+platform-fan-control run                  # daemon (OpenRC: zenbook-platform-fan-control)
+```
+
+Config is plain JSON (no TOML / PyYAML), **machine-global** under
+`/etc/zenbook-scripts/fan-control.json` (override with `-c` or
+`FAN_CONTROL_CONFIG`). Fan / `platform_profile` cannot be per-user — only one
+policy applies on the laptop, so home-directory copies are ignored on purpose.
+
+OpenRC unit is installed but **not** auto-started by the ebuild (seed config first).
+`configure.py --include-fan-control` seeds `/etc/zenbook-scripts/fan-control.json`
+and enables the service.
+
+```bash
+# verify
+platform-probe
+platform-fan-control check
+platform-fan-control status
+rc-service zenbook-platform-fan-control status   # if enabled
+tail -f /var/log/zenbook-platform-fan-control.log
+
+# configure.py / configure.sh
+sudo ./configure.py --defaults --all-yes --include-fan-control
+sudo ./configure.py --defaults --all-yes --no-include-fan-control
+# Gentoo: USE="fan_control" / USE="-fan_control"
+# Tray (USE=qt6): platform-tray
 ```
 
 ---

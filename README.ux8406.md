@@ -369,6 +369,12 @@ kb-fan status                 # RPM, pwm mode, platform profile
 kb-fan auto                   # firmware auto (default)
 sudo kb-fan full              # force max fans (pwm1_enable=0)
 kb-fan quiet|balanced|performance
+
+# Adaptive (JSON config, AC + battery + lid/sleep events):
+sudo cp fan-control.json.example /etc/zenbook-scripts/fan-control.json
+kb-fan-control status
+kb-fan-control once
+# sudo rc-update add zenbook-kb-fan-control default   # optional daemon
 kb-platform-profile cycle     # same profiles via ACPI platform_profile
 ```
 
@@ -390,6 +396,7 @@ brightness.sh                 bash wrapper → kb-brightness
 bin/kb-brightness             brightness CLI
 bin/kb-brightness-hotkeys     Fn+ / special-key listener
 bin/kb-fan                    fan RPM + auto/full-on + profile helpers
+bin/kb-fan-control            adaptive AC/battery/lid/sleep profile daemon
 bin/kb-platform-profile       ACPI platform_profile CLI
 configure.py                  console configurator + installer
 configure.sh                  whiptail configurator

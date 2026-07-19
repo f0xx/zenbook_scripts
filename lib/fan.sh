@@ -101,7 +101,8 @@ zenbook_fan_pwm_enable_set() {
 		mode=2
 		;;
 	1 | manual | curve)
-		echo "Manual fan curves (pwm1_enable=1) are not supported on this model (ENODEV)." >&2
+		echo "Manual PWM curves are not exposed on this model (firmware owns the curve)." >&2
+		echo "Use: platform-fan auto|full  or  platform-fan quiet|balanced|performance" >&2
 		return 1
 		;;
 	*)
@@ -164,5 +165,9 @@ zenbook_fan_status() {
 		printf 'throttle:  %s (%s)\n' "${ttp}" "$(zenbook_fan_ttp_name "${ttp}")"
 	fi
 
-	printf 'curves:    unavailable (fan_curve_get_factory_default → ENODEV)\n'
+	if [[ -e "${hwmon}/pwm1_auto_point1_temp" ]]; then
+		printf 'curves:    sysfs points present (advanced)\n'
+	else
+		printf 'curves:    not on this model (normal — firmware auto curve only)\n'
+	fi
 }
