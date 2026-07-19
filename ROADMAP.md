@@ -18,8 +18,8 @@ Status legend: **done** · **now** · **next** · **later**
 | Source-only oot hid-asus | **done** | preflight + `USE=kernel` / `--with-kernel` (no prebuilt `.ko`) |
 | Non-interactive sudo | **done** | `sudo -n` via `zenbook_kb/priv.py` + lib helpers |
 | Vendor-agnostic install hints | **done** | probe → Gentoo USE recommendations |
-| EPP / RAPL in fan-control profiles | **next** | intel_pstate + powercap hooks (**blocks announced 0.0.2**) |
-| Touchpad palm / accidental-click filter | **next** | `platform-touchpad` pipeline (**blocks announced 0.0.2**) |
+| EPP / RAPL in fan-control profiles | **done** | `epp` / `rapl` / `intel_pstate` profile keys + `platform-power` |
+| Touchpad palm / accidental-click filter | **done** | MVP: `platform-touchpad` exec-delay + outlier-reject |
 | Generic non-ASUS fan backends | **later** | thinkpad/hp/dell hwmon profiles |
 | Full Plasma KCModule | **later** | optional; tray first |
 
@@ -48,11 +48,19 @@ first; multi-chain enable/disable can come later if needed):
                               compositor / DE
 ```
 
-MVP (good effect, small code): **event-sim + exec-delay + outlier-reject**.
-Defer multi-branch chains and Kalman until the MVP proves out on UX8406 typing.
+MVP: **event-sim + exec-delay + outlier-reject** via `platform-touchpad`
+(`monitor` dry-run / `run` grab+uinput). Smooth / multi-chain / typing-inhibit
+later if needed.
 
-Probe already sees Primax/ELAN devices; wiring is userspace (evdev grab or
-libinput plugin path — research item), not ASUS WMI.
+```bash
+platform-touchpad list
+platform-touchpad selftest
+platform-touchpad monitor --seconds 15
+sudo platform-touchpad run    # live: EVIOCGRAB + /dev/uinput
+```
+
+Config: `/etc/zenbook-scripts/touchpad.json` or `~/.config/zenbook-scripts/touchpad.json`
+(version 2 per-device profiles; see `touchpad.json.example`).
 
 ## Gentoo USE mapping
 
@@ -62,7 +70,7 @@ libinput plugin path — research item), not ASUS WMI.
 | `fan_control` | `platform-fan*`, OpenRC, probe hooks |
 | `screenpad` | UX5400 ScreenPad |
 | `kernel` | oot hid-asus (build from sources; fail-closed preflight) |
-| `qt6` | `configure_gui.py`, `platform-tray` |
+| `qt6` | `configure_gui.py`, `platform-tray`, `platform-touchpad-gui` |
 
 ```bash
 platform-probe                  # human dry-run
@@ -84,7 +92,8 @@ platform-probe ──────────────► install decisions (
                     │
               platform-tray (qt6) ─► same CLIs + SQLite metrics graph
                     │
-                    └─► (next) EPP/RAPL + platform-touchpad filter pipeline
+                    ├─► platform-power (EPP / RAPL / intel_pstate) ──► fan-control profiles
+                    └─► platform-touchpad (exec-delay + outlier-reject)
 ```
 
 See also [PLANNED.md](PLANNED.md) for command cheatsheets.

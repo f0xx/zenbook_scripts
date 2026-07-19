@@ -45,7 +45,7 @@ start_pre() {
 		ewarn "missing ${cfg}"
 		ewarn "copy fan-control.json.example → /etc/zenbook-scripts/fan-control.json"
 	fi
-	command_args="run -c ${cfg}"
+	command_args="-c ${cfg} run"
 	if [ -n "${output_log:-}" ]; then
 		checkpath -f -m 0644 -o root:root "${output_log}"
 	fi

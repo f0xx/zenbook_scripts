@@ -1,0 +1,297 @@
+#!/usr/bin/env python3
+"""Touchpad palm-filter pipeline (exec-delay + outlier-reject).
+
+Per-device profiles in touchpad.json (version 2), keyed by stable name|phys.
+
+Examples:
+  platform-touchpad list
+  platform-touchpad selftest
+  platform-touchpad monitor --seconds 10
+  sudo platform-touchpad run --device event10
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import signal
+import sys
+from pathlib import Path
+
+_ROOT = Path(__file__).resolve().parent.parent
+_SHARE_CANDIDATES = (
+    _ROOT,
+    Path("/usr/share/zenbook-scripts"),
+    Path("/usr/local/share/zenbook-scripts"),
+)
+for _share in _SHARE_CANDIDATES:
+    if (_share / "zenbook_kb" / "touchpad.py").is_file():
+        sys.path.insert(0, str(_share))
+        break
+else:
+    if (_ROOT / "zenbook_kb").is_dir():
+        sys.path.insert(0, str(_ROOT))
+
+from zenbook_kb.touchpad import (  # noqa: E402
+    DEFAULT_CONFIG,
+    DEFAULT_EXEC_DELAY_MS,
+    DEFAULT_MAX_DELTA,
+    Ev,
+    UInputProxy,
+    apply_pipeline_knobs,
+    build_pipeline,
+    device_profile_enabled,
+    discover_touchpads,
+    filters_for_device,
+    iter_device_events,
+    load_config,
+    make_sim_brush,
+    resolve_touchpad,
+    run_selftest,
+)
+
+
+def _cfg_path(args: argparse.Namespace) -> Path | None:
+    if getattr(args, "config", None):
+        return Path(args.config)
+    return None
+
+
+def _load(args: argparse.Namespace) -> dict:
+    path = _cfg_path(args)
+    return load_config(path if path and path.is_file() else None)
+
+
+def _pipe_for(args: argparse.Namespace, info) -> object:
+    cfg = _load(args)
+    filters = filters_for_device(cfg, info, path=info.path)
+    pipe = build_pipeline({"filters": filters})
+    if getattr(args, "delay_ms", None) is not None or getattr(args, "max_delta", None) is not None:
+        apply_pipeline_knobs(
+            pipe,
+            delay_ms=args.delay_ms,
+            max_delta=args.max_delta,
+        )
+    return pipe
+
+
+def cmd_list(_: argparse.Namespace) -> int:
+    pads = discover_touchpads()
+    if not pads:
+        print("no touchpads found")
+        return 1
+    try:
+        default = resolve_touchpad("auto")
+    except FileNotFoundError:
+        default = None
+    for info in pads:
+        mark = " *" if default and info.path == default.path else ""
+        print(f"{info.path}{mark}\t{info.name}")
+        print(f"  key: {info.key}")
+    return 0
+
+
+def cmd_selftest(_: argparse.Namespace) -> int:
+    result = run_selftest()
+    print(json.dumps(result, indent=2))
+    return 0 if result.get("ok") else 1
+
+
+def cmd_sim(args: argparse.Namespace) -> int:
+    pipe = build_pipeline(
+        {
+            "filters": [
+                {"plugin": "exec_delay", "ms": args.delay_ms},
+                {"plugin": "outlier_reject", "max_delta": args.max_delta},
+            ]
+        }
+    )
+    events = make_sim_brush(duration_ms=args.duration_ms, dx=args.dx, dy=args.dy)
+    out = pipe.process_events(events)
+    print(f"in={len(events)} out={len(out)}  {pipe.summary()}")
+    return 0
+
+
+def _pump(
+    path: Path,
+    pipe,
+    *,
+    grab: bool,
+    seconds: float | None,
+    sink: UInputProxy | None,
+    quiet: bool,
+) -> int:
+    stop = False
+
+    def _stop(*_a: object) -> None:
+        nonlocal stop
+        stop = True
+
+    signal.signal(signal.SIGINT, _stop)
+    signal.signal(signal.SIGTERM, _stop)
+
+    frame: list[Ev] = []
+    frames_in = frames_out = 0
+    try:
+        for ev in iter_device_events(
+            path,
+            grab=grab,
+            stop_after_s=seconds,
+            should_stop=lambda: stop,
+        ):
+            frame.append(ev)
+            if ev.type == 0 and ev.code == 0:  # SYN_REPORT
+                frames_in += 1
+                out = pipe.process_frame(frame)
+                frame = []
+                if out:
+                    frames_out += 1
+                    if sink is not None:
+                        sink.write_events(out)
+                    elif not quiet:
+                        print(f"pass {len(out)} events", flush=True)
+    finally:
+        pass
+    print(
+        f"done frames_in={frames_in} frames_out={frames_out}  {pipe.summary()}",
+        flush=True,
+    )
+    return 0
+
+
+def cmd_monitor(args: argparse.Namespace) -> int:
+    cfg = _load(args)
+    info = resolve_touchpad(args.device, cfg)
+    pipe = _pipe_for(args, info)
+    print(f"monitor {info.path}  key={info.key}  {pipe.summary()}", flush=True)
+    return _pump(
+        info.path,
+        pipe,
+        grab=False,
+        seconds=args.seconds,
+        sink=None,
+        quiet=args.quiet,
+    )
+
+
+def cmd_run(args: argparse.Namespace) -> int:
+    cfg = _load(args)
+    info = resolve_touchpad(args.device, cfg)
+    if not device_profile_enabled(cfg, info, path=info.path):
+        print(f"profile disabled for {info.key}; pass-through not started", file=sys.stderr)
+        return 2
+    pipe = _pipe_for(args, info)
+    print(f"run {info.path} → uinput  key={info.key}  {pipe.summary()}", flush=True)
+    with UInputProxy(info.path) as sink:
+        return _pump(
+            info.path,
+            pipe,
+            grab=True,
+            seconds=args.seconds,
+            sink=sink,
+            quiet=True,
+        )
+
+
+def cmd_status(args: argparse.Namespace) -> int:
+    cfg_path = Path(args.config) if args.config else DEFAULT_CONFIG
+    cfg = load_config(cfg_path if cfg_path.is_file() else None)
+    pads = discover_touchpads()
+    print(f"config:   {cfg_path} {'(present)' if cfg_path.is_file() else '(defaults)'}")
+    print(f"version:  {cfg.get('version')}  default_device={cfg.get('default_device')}")
+    print(f"pads:     {len(pads)}")
+    for info in pads:
+        filters = filters_for_device(cfg, info)
+        en = device_profile_enabled(cfg, info)
+        pipe = build_pipeline({"filters": filters})
+        print(f"  {info.path}  [{('on' if en else 'off')}]  {info.name}")
+        print(f"    key: {info.key}")
+        print(f"    {pipe.summary()}")
+    stored = cfg.get("devices") or {}
+    orphan = [k for k in stored if not any(i.key == k or i.name == k for i in pads)]
+    if orphan:
+        print("stored (not currently attached):")
+        for k in orphan:
+            print(f"  {k}")
+    return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--config",
+        default=None,
+        help=f"JSON config (default {DEFAULT_CONFIG})",
+    )
+    sub = parser.add_subparsers(dest="cmd", required=True)
+
+    sub.add_parser("list", help="list touchpad evdev nodes + stable keys")
+    sub.add_parser("selftest", help="synthetic short/long/spike checks")
+
+    p_sim = sub.add_parser("sim", help="run pipeline on a synthetic brush")
+    p_sim.add_argument("--duration-ms", type=float, default=20.0)
+    p_sim.add_argument("--delay-ms", type=float, default=DEFAULT_EXEC_DELAY_MS)
+    p_sim.add_argument("--max-delta", type=int, default=DEFAULT_MAX_DELTA)
+    p_sim.add_argument("--dx", type=int, default=5)
+    p_sim.add_argument("--dy", type=int, default=0)
+
+    p_mon = sub.add_parser("monitor", help="dry-run filter on a real device")
+    p_mon.add_argument(
+        "--config",
+        default=None,
+        help=f"JSON config (default {DEFAULT_CONFIG})",
+    )
+    p_mon.add_argument(
+        "--device",
+        default=None,
+        help="auto | /dev/input/eventN | stable key | name substring",
+    )
+    p_mon.add_argument("--seconds", type=float, default=None)
+    p_mon.add_argument("--delay-ms", type=float, default=None)
+    p_mon.add_argument("--max-delta", type=int, default=None)
+    p_mon.add_argument("-q", "--quiet", action="store_true")
+
+    p_run = sub.add_parser("run", help="live filter via EVIOCGRAB + uinput")
+    p_run.add_argument(
+        "--config",
+        default=None,
+        help=f"JSON config (default {DEFAULT_CONFIG})",
+    )
+    p_run.add_argument(
+        "--device",
+        default=None,
+        help="auto | /dev/input/eventN | stable key | name substring",
+    )
+    p_run.add_argument("--seconds", type=float, default=None)
+    p_run.add_argument("--delay-ms", type=float, default=None)
+    p_run.add_argument("--max-delta", type=int, default=None)
+
+    p_status = sub.add_parser("status", help="show devices + per-device filter config")
+    p_status.add_argument(
+        "--config",
+        default=None,
+        help=f"JSON config (default {DEFAULT_CONFIG})",
+    )
+
+    args = parser.parse_args(argv)
+    try:
+        if args.cmd == "list":
+            return cmd_list(args)
+        if args.cmd == "status":
+            return cmd_status(args)
+        if args.cmd == "selftest":
+            return cmd_selftest(args)
+        if args.cmd == "sim":
+            return cmd_sim(args)
+        if args.cmd == "monitor":
+            return cmd_monitor(args)
+        if args.cmd == "run":
+            return cmd_run(args)
+    except (OSError, PermissionError, ValueError, FileNotFoundError) as exc:
+        print(exc, file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

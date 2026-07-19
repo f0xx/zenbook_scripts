@@ -20,7 +20,7 @@ Copy recipes into your own overlay or install from a release tarball / git check
 
 ### Pre-release `v0.0.2_pre1` (testing; not the announced 0.0.2)
 
-Announced **0.0.2** waits on EPP/RAPL + `platform-touchpad`. Meanwhile:
+Announced **0.0.2** can follow once EPP/RAPL + `platform-touchpad` land in a release tag. Meanwhile:
 
 https://github.com/f0xx/zenbook_scripts/archive/refs/tags/v0.0.2_pre1.tar.gz
 

@@ -176,10 +176,15 @@ src_install() {
 	insinto "${ZENBOOK_SHARE}"
 	doins -r zenbook_kb brightness.py lib
 	doins zenbook-hotkeys.conf.example zenbook-duo.conf.example
+	doins touchpad.json.example
 	if use fan_control; then
 		doins fan-control.json.example
 		insinto /etc/zenbook-scripts
 		newins fan-control.json.example fan-control.json.example
+		newins touchpad.json.example touchpad.json.example
+	else
+		insinto /etc/zenbook-scripts
+		newins touchpad.json.example touchpad.json.example
 	fi
 
 	if use zenbook_ux8406; then
@@ -192,7 +197,7 @@ src_install() {
 	fi
 
 	# User-facing CLIs
-	dobin configure.py configure.sh bin/kb-brightness bin/kb-platform-profile bin/platform-fan bin/platform-probe bin/platform-metrics
+	dobin configure.py configure.sh bin/kb-brightness bin/kb-platform-profile bin/platform-fan bin/platform-probe bin/platform-power bin/platform-touchpad bin/platform-metrics
 	dobin bin/kb-fan
 	if use fan_control; then
 		dobin bin/platform-fan-control bin/kb-fan-control
@@ -214,6 +219,7 @@ src_install() {
 	if use qt6; then
 		dobin configure_gui.py
 		dobin bin/platform-tray
+		dobin bin/platform-touchpad-gui
 	fi
 
 	if use hotkeys; then

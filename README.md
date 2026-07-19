@@ -25,7 +25,7 @@ Model-specific READMEs live on `main` after merge; feature work continues on the
 
 ### Pre-release tarball checksums (`v0.0.2_pre1`)
 
-Testing build (fan-control / probe / tray). **Announced 0.0.2** waits on EPP/RAPL + touchpad filters.
+Testing build (fan-control / probe / tray / power / touchpad). Announced **0.0.2** can follow once this branch is packaged.
 
 Source: https://github.com/f0xx/zenbook_scripts/archive/refs/tags/v0.0.2_pre1.tar.gz
 
@@ -88,7 +88,7 @@ platform-tray                  # USE=qt6 — metrics graph + profile/fan menu
 ## Quick links
 
 - [DEPLOY.md](DEPLOY.md) — when to rebuild / reinstall / reload `hid-asus`
-- [ROADMAP.md](ROADMAP.md) — where we are / next (EPP/RAPL, touchpad)
+- [ROADMAP.md](ROADMAP.md) — where we are / next
 - [PLANNED.md](PLANNED.md) — feature cheatsheets (`platform-fan*`, probe, tray)
 - [kernel/README.md](kernel/README.md) — out-of-tree `hid-asus` build & install
 - [packaging/README.md](packaging/README.md) — Gentoo ebuild / overlay notes

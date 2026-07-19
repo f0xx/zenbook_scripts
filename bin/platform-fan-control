@@ -85,20 +85,30 @@ def main(argv: list[str] | None = None) -> int:
     )
     sub = parser.add_subparsers(dest="cmd", required=True)
 
-    sub.add_parser("status", help="show sensors + current/wanted profile")
+    cfg_parent = argparse.ArgumentParser(add_help=False)
+    cfg_parent.add_argument(
+        "-c",
+        "--config",
+        type=Path,
+        default=None,
+        help="JSON config (also accepted after the subcommand)",
+    )
+
+    sub.add_parser("status", parents=[cfg_parent], help="show sensors + current/wanted profile")
     sub.add_parser(
         "check",
+        parents=[cfg_parent],
         help="exit 0 if config+sensors+rules look healthy (for post-install verify)",
     )
-    sub.add_parser("once", help="evaluate AC/battery rules once and apply")
-    p_run = sub.add_parser("run", help="daemon loop")
+    sub.add_parser("once", parents=[cfg_parent], help="evaluate AC/battery rules once and apply")
+    p_run = sub.add_parser("run", parents=[cfg_parent], help="daemon loop")
     p_run.add_argument(
         "--foreground",
         action="store_true",
         help="kept for symmetry with other services (always foreground)",
     )
 
-    p_ev = sub.add_parser("event", help="fire a named event from hooks")
+    p_ev = sub.add_parser("event", parents=[cfg_parent], help="fire a named event from hooks")
     p_ev.add_argument(
         "name",
         choices=(
@@ -112,7 +122,7 @@ def main(argv: list[str] | None = None) -> int:
         ),
     )
 
-    p_apply = sub.add_parser("apply", help="force-apply a named profile")
+    p_apply = sub.add_parser("apply", parents=[cfg_parent], help="force-apply a named profile")
     p_apply.add_argument("profile")
 
     args = parser.parse_args(argv)

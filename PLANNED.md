@@ -96,13 +96,61 @@ tray use `sudo -n` only (never hang on a password prompt).
 
 ---
 
-## `platform-touchpad` — planned (blocks announced 0.0.2)
+## `platform-power` / EPP+RAPL — implemented
 
-Not AccelSpeed-only. Goal: palm / accidental pointer motion while typing on the
-large UX8406 pad (similar annoyance on UX5400).
+Wired into `platform-fan-control` profiles (see `fan-control.json.example`):
 
-MVP filter pipeline: **event-sim → exec-delay (N ms) → outlier-reject**
-(optional smooth later). See [ROADMAP.md](ROADMAP.md).
+```json
+"epp": "balance_power",
+"intel_pstate": { "max_perf_pct": 100, "no_turbo": false },
+"rapl": { "pl1_w": 28, "pl2_w": 45 }
+```
+
+Notes:
+- Non-`performance` EPP switches `scaling_governor` to `powersave` first (otherwise EPP writes return EBUSY under the `performance` governor).
+- `epp: performance` sets `scaling_governor=performance` (EPP node stays locked).
+- RAPL values accept watts (`pl1_w`) or microwatts (`pl1_uw`).
+
+```bash
+platform-power status
+platform-power epp balance_power
+platform-power rapl --pl1 28 --pl2 45
+platform-fan-control apply powersave   # applies epp+rapl from JSON profile
+```
+
+---
+
+## `platform-touchpad` — MVP implemented
+
+Not AccelSpeed-only. Palm / accidental pointer motion while typing on the large
+UX8406 pad (similar annoyance on UX5400 — tune later).
+
+Pipeline: **event-sim → exec-delay (N ms) → outlier-reject**
+
+```bash
+platform-touchpad list
+platform-touchpad selftest
+platform-touchpad sim --duration-ms 20          # short brush → drop
+platform-touchpad monitor --seconds 15          # dry-run on real pad
+sudo cp touchpad.json.example /etc/zenbook-scripts/touchpad.json
+sudo platform-touchpad run                      # grab + uinput live filter
+```
+
+Defaults: `exec_delay` **25 ms**, `outlier_reject` **max_delta 1200** (was
+40 / 400 — too aggressive on Primax/ELAN; also fixed outlier lockout after a
+jump).
+
+**Per-device profiles** (`touchpad.json` version 2): keys are stable
+`name|phys` (not `eventN`). GUI combo switches knobs per device; Save updates
+that device only. ELAN screen pads can stay `"enabled": false`.
+
+```bash
+platform-touchpad list                 # shows stable key=
+platform-touchpad status
+platform-touchpad-gui                  # USE=qt6 / PySide6
+# or from checkout:
+bin/platform-touchpad-gui
+```
 
 ---
 
