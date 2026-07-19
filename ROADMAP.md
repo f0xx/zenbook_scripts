@@ -9,13 +9,15 @@ Status legend: **done** · **now** · **next** · **later**
 | Docked UX8406 backlight + Fn chords | **done** | `kb-brightness`, oot `hid-asus`, hotkeys |
 | ScreenPad (UX5400) | **done** | `screenpad*` |
 | ACPI `platform_profile` CLI | **done** | `kb-platform-profile` |
-| Fan RPM + auto/full PWM | **done** | `platform-fan` (was `kb-fan`) |
+| Fan RPM + auto/full PWM | **done** | `platform-fan` (`kb-fan` wrapper) |
 | Adaptive AC/battery/lid/sleep daemon | **done** | `platform-fan-control` + JSON |
 | Machine-global config (not per-user) | **done** | `/etc/zenbook-scripts/fan-control.json` |
-| Capability probe / dry-run | **now** | `platform-probe` (+ `--json` / `--feature`) |
-| Rename away from `kb-fan` | **now** | `platform-fan*`; `kb-fan*` wrappers remain |
-| Qt6 tray control | **now** | `platform-tray` (USE=`qt6`) |
-| Vendor-agnostic install hints | **now** | probe → Gentoo USE recommendations |
+| Capability probe / dry-run | **done** | `platform-probe` (`--json` / `--feature` / `--recommend-use`) |
+| Rename away from `kb-fan` | **done** | `platform-fan*`; wrappers remain |
+| Qt6 tray + thermal metrics | **done** | `platform-tray` / `platform-metrics` (SQLite, X-zoom, sticky POI) |
+| Source-only oot hid-asus | **done** | preflight + `USE=kernel` / `--with-kernel` (no prebuilt `.ko`) |
+| Non-interactive sudo | **done** | `sudo -n` via `zenbook_kb/priv.py` + lib helpers |
+| Vendor-agnostic install hints | **done** | probe → Gentoo USE recommendations |
 | EPP / RAPL in fan-control profiles | **next** | intel_pstate + powercap hooks |
 | Touchpad sensitivity CLI | **next** | present on UX8406; Wayland needs KWin/DBus or quirks |
 | Generic non-ASUS fan backends | **later** | thinkpad/hp/dell hwmon profiles |
@@ -32,7 +34,7 @@ Hardware is visible (dock Primax + ELAN panels). **Sensitivity is not an ASUS WM
 | `hotkeys` | brightness hotkeys, lid/sleep |
 | `fan_control` | `platform-fan*`, OpenRC, probe hooks |
 | `screenpad` | UX5400 ScreenPad |
-| `kernel` | oot hid-asus |
+| `kernel` | oot hid-asus (build from sources; fail-closed preflight) |
 | `qt6` | `configure_gui.py`, `platform-tray` |
 
 ```bash
@@ -53,7 +55,7 @@ platform-probe ──────────────► install decisions (
        └─► platform-fan-control ─► platform_profile + platform-fan
                     ▲
                     │
-              platform-tray (qt6) ─► same CLIs (no direct sysfs)
+              platform-tray (qt6) ─► same CLIs + SQLite metrics graph
                     │
                     └─► (next) EPP/RAPL + touchpad helpers
 ```

@@ -26,9 +26,10 @@ Probed on UX8406MA and UX5400EA (`asus-nb-wmi` hwmon):
 ```bash
 platform-probe                 # dry-run: what this machine supports
 platform-fan status
+platform-fan modes              # PWM auto/full + ACPI profiles available here
 platform-fan rpm
 platform-fan auto              # pwm1_enable=2
-platform-fan full              # pwm1_enable=0 (loud; needs root/sudoers)
+platform-fan full              # pwm1_enable=0 (loud; needs root/sudo -n)
 platform-fan quiet|balanced|performance
 ```
 
@@ -65,11 +66,33 @@ rc-service zenbook-platform-fan-control status   # if enabled
 tail -f /var/log/zenbook-platform-fan-control.log
 
 # configure.py / configure.sh
-sudo ./configure.py --defaults --all-yes --include-fan-control
+sudo ./configure.py --defaults --all-yes --include-fan-control --prefix /usr
 sudo ./configure.py --defaults --all-yes --no-include-fan-control
 # Gentoo: USE="fan_control" / USE="-fan_control"
-# Tray (USE=qt6): platform-tray
 ```
+
+## `platform-probe` — implemented
+
+```bash
+platform-probe                     # human-readable capability report
+platform-probe --json
+platform-probe --feature fan_pwm
+platform-probe --recommend-use     # Gentoo USE suggestions
+```
+
+## `platform-tray` / `platform-metrics` — implemented
+
+SQLite time series under `~/.local/share/zenbook-scripts/metrics.sqlite3`
+(Python stdlib `sqlite3` — no extra dep).
+
+```bash
+platform-metrics -n 20 -i 5        # CLI sampler
+platform-tray                      # tray menu + Open metrics graph…
+# Graph: X zoom 75–200%, sample interval 1–20s, sticky POI hover details
+```
+
+Requires PySide6 (`USE=qt6` / `emerge dev-python/pyside:6`). Fan writes from the
+tray use `sudo -n` only (never hang on a password prompt).
 
 ---
 

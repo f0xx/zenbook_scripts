@@ -533,7 +533,7 @@ def install_fan_control_support(
     enable_service: bool = True,
     seed_config: bool = True,
 ) -> None:
-    """Install kb-fan-control CLI bits, config, and OpenRC unit when available."""
+    """Install platform-fan-control CLI bits, config, and OpenRC unit when available."""
     # Bins land via install_kb_brightness_tree; ensure sudoers for profile/fan writes.
     install_sudoers_ux5400()
     fan_hook = script_dir / "contrib" / "openrc" / "zenbook-fan-control-hook.sh"

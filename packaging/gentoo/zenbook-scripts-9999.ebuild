@@ -44,7 +44,7 @@ ZENBOOK_SHARE=/usr/share/zenbook-scripts
 ZENBOOK_LIBEXEC=/usr/libexec
 ZENBOOK_KO_ROOT=/usr/lib/modules/zenbook-hid-asus
 
-# Upstream trees default to /usr/local (configure.py). Distro packages use /usr.
+# Upstream trees and configure.py default to /usr (override with --prefix).
 zenbook_rewrite_usr_prefix() {
 	local dir f
 
@@ -297,7 +297,7 @@ pkg_postinst() {
 	# the Gentoo /usr layout.
 
 	elog "Gentoo layout: /usr/bin, /usr/libexec, /usr/share/zenbook-scripts"
-	elog "(configure.py from a git tree still uses /usr/local by design)."
+	elog "(configure.py defaults to the same /usr prefix; use --prefix to override)."
 
 	if use fan_control; then
 		elog "Fan-control (USE=fan_control):"

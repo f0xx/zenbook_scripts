@@ -352,7 +352,7 @@ def main(argv: list[str] | None = None) -> int:
             )
 
     want_full = yes_no(
-        "Install kb-brightness + tools to /usr/local?",
+        f"Install kb-brightness + tools to {get_prefix()}?",
         default_no=True,
         assume_yes=args.all_yes,
     )
