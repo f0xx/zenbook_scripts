@@ -10,18 +10,42 @@ Copy recipes into your own overlay or install from a release tarball / git check
 
 | Path | Purpose |
 |------|---------|
-| [`gentoo/zenbook-scripts-0.0.1_p1.ebuild`](gentoo/zenbook-scripts-0.0.1_p1.ebuild) | Release package → upstream tag **`v0.0.1_hf1`** |
+| [`gentoo/zenbook-scripts-0.0.2_pre1.ebuild`](gentoo/zenbook-scripts-0.0.2_pre1.ebuild) | **Pre-release** → tag **`v0.0.2_pre1`** (fan-control stack; try on UX5400) |
+| [`gentoo/zenbook-scripts-0.0.1_p1.ebuild`](gentoo/zenbook-scripts-0.0.1_p1.ebuild) | Stable-ish → tag **`v0.0.1_hf1`** |
 | [`gentoo/zenbook-scripts-9999.ebuild`](gentoo/zenbook-scripts-9999.ebuild) | Live git (`EGIT`) |
 | [`gentoo/files/`](gentoo/files/) | Conditional UX8406 patches + README (no prebuilt `.ko`) |
-| [`gentoo/Manifest`](gentoo/Manifest) | Distfile digests for `0.0.1_p1` |
+| [`gentoo/Manifest`](gentoo/Manifest) | Distfile digests for `0.0.1_hf1` + `0.0.2_pre1` |
 | [`gentoo/metadata.xml`](gentoo/metadata.xml) | USE flag / upstream metadata |
 | [`debian/README.md`](debian/README.md) | Debian/Ubuntu from-source install (no `.deb` yet) |
 
-Upstream source for the release ebuild:
+### Pre-release `v0.0.2_pre1` (testing; not the announced 0.0.2)
+
+Announced **0.0.2** waits on EPP/RAPL + `platform-touchpad`. Meanwhile:
+
+https://github.com/f0xx/zenbook_scripts/archive/refs/tags/v0.0.2_pre1.tar.gz
+
+| Algo | Digest |
+|------|--------|
+| Size | `187068` bytes |
+| SHA256 | `3cf2601c11e6af18bf7e245add0c750a5c7076086872dbf87e73bfd1fcc55c38` |
+| SHA512 | `ea455a5250bd15d03fd9b046b884d134510d481610a1e978fe74adfff78f67567b0214e4ddaaec5f1f27abac69236a34be5864a90690c82612b761168b77ee47` |
+| BLAKE2B | `8f2ef64bb33105b03b1d5609f94096f8b784e232f0e5acf7f2adaa6ffccc6a57b452f0e4cf175cd6690e67591b4376a40cded0c616143ef92a62434f2a8eca00` |
+
+Portage DIST name: `zenbook_scripts-0.0.2_pre1.tar.gz`.
+
+```bash
+# UX5400 example (ScreenPad + fans, no oot hid-asus):
+USE="screenpad fan_control -kernel -zenbook_ux8406" \
+  emerge -av =app-laptop/zenbook-scripts-0.0.2_pre1
+```
+
+### Release `v0.0.1_hf1`
+
+Upstream source:
 
 https://github.com/f0xx/zenbook_scripts/archive/refs/tags/v0.0.1_hf1.tar.gz
 
-Gentoo PV is **`0.0.1_p1`** because `_hf1` is not a legal PMS version suffix. `MY_PV` inside the ebuild still fetches **`v0.0.1_hf1`**.
+Gentoo PV **`0.0.1_p1`** maps to tag **`v0.0.1_hf1`** (`_hf` is not a legal PMS suffix).
 
 ### Distfile checksums (`v0.0.1_hf1` tarball)
 
@@ -61,6 +85,7 @@ From a git checkout of this repo (or copy from the release tarball’s `packagin
 ```bash
 PKG=/var/db/repos/foxx/app-laptop/zenbook-scripts
 sudo mkdir -p "${PKG}/files"
+sudo cp packaging/gentoo/zenbook-scripts-0.0.2_pre1.ebuild "${PKG}/"
 sudo cp packaging/gentoo/zenbook-scripts-0.0.1_p1.ebuild "${PKG}/"
 sudo cp packaging/gentoo/zenbook-scripts-9999.ebuild "${PKG}/"   # optional live
 sudo cp packaging/gentoo/metadata.xml "${PKG}/"
@@ -91,11 +116,13 @@ After copying or editing ebuilds:
 
 ```bash
 cd /var/db/repos/foxx/app-laptop/zenbook-scripts
-sudo ebuild zenbook-scripts-0.0.1_p1.ebuild manifest
+sudo ebuild zenbook-scripts-0.0.2_pre1.ebuild manifest
+# sudo ebuild zenbook-scripts-0.0.1_p1.ebuild manifest
 # sudo ebuild zenbook-scripts-9999.ebuild manifest   # live; often empty DIST
 ```
 
-Or keep the shipped `Manifest` for `0.0.1_p1` (hashes above). First fetch may come from GitHub if Gentoo mirrors lack the file.
+Or keep the shipped `Manifest` (hashes for `0.0.1_hf1` + `0.0.2_pre1` above).
+First fetch may come from GitHub if Gentoo mirrors lack the file.
 
 ### 4. Optional: `eix-update`
 
@@ -118,10 +145,13 @@ echo 'app-laptop/zenbook-scripts ~amd64' | sudo tee /etc/portage/package.accept_
 
 ```bash
 # UX8406 docked (default USE: hotkeys kernel zenbook_ux8406)
-emerge -av =app-laptop/zenbook-scripts-0.0.1_p1
+emerge -av =app-laptop/zenbook-scripts-0.0.2_pre1
 
-# UX5400 ScreenPad, no oot hid-asus:
-# USE="screenpad -kernel -zenbook_ux8406" emerge -av =app-laptop/zenbook-scripts-0.0.1_p1
+# UX5400 ScreenPad + fans, no oot hid-asus:
+# USE="screenpad fan_control -kernel -zenbook_ux8406" emerge -av =app-laptop/zenbook-scripts-0.0.2_pre1
+
+# Older tag still available:
+# emerge -av =app-laptop/zenbook-scripts-0.0.1_p1
 
 # Live git:
 # emerge -av =app-laptop/zenbook-scripts-9999
@@ -130,7 +160,7 @@ emerge -av =app-laptop/zenbook-scripts-0.0.1_p1
 Manual phase walk (same as emerge internals):
 
 ```bash
-EBUILD=/var/db/repos/foxx/app-laptop/zenbook-scripts/zenbook-scripts-0.0.1_p1.ebuild
+EBUILD=/var/db/repos/foxx/app-laptop/zenbook-scripts/zenbook-scripts-0.0.2_pre1.ebuild
 sudo ebuild "${EBUILD}" clean unpack prepare configure compile
 sudo ebuild "${EBUILD}" install
 sudo ebuild "${EBUILD}" qmerge   # or: preinst merge postinst

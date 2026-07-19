@@ -96,6 +96,16 @@ tray use `sudo -n` only (never hang on a password prompt).
 
 ---
 
+## `platform-touchpad` — planned (blocks announced 0.0.2)
+
+Not AccelSpeed-only. Goal: palm / accidental pointer motion while typing on the
+large UX8406 pad (similar annoyance on UX5400).
+
+MVP filter pipeline: **event-sim → exec-delay (N ms) → outlier-reject**
+(optional smooth later). See [ROADMAP.md](ROADMAP.md).
+
+---
+
 ## ScreenPad Plus (UX5400EA) — implemented
 
 ```bash
