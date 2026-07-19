@@ -18,14 +18,41 @@ Status legend: **done** · **now** · **next** · **later**
 | Source-only oot hid-asus | **done** | preflight + `USE=kernel` / `--with-kernel` (no prebuilt `.ko`) |
 | Non-interactive sudo | **done** | `sudo -n` via `zenbook_kb/priv.py` + lib helpers |
 | Vendor-agnostic install hints | **done** | probe → Gentoo USE recommendations |
-| EPP / RAPL in fan-control profiles | **next** | intel_pstate + powercap hooks |
-| Touchpad sensitivity CLI | **next** | present on UX8406; Wayland needs KWin/DBus or quirks |
+| EPP / RAPL in fan-control profiles | **next** | intel_pstate + powercap hooks (**blocks announced 0.0.2**) |
+| Touchpad palm / accidental-click filter | **next** | `platform-touchpad` pipeline (**blocks announced 0.0.2**) |
 | Generic non-ASUS fan backends | **later** | thinkpad/hp/dell hwmon profiles |
 | Full Plasma KCModule | **later** | optional; tray first |
 
-## Touchpad (UX8406)
+## Touchpad / palm rejection (UX8406, related UX5400)
 
-Hardware is visible (dock Primax + ELAN panels). **Sensitivity is not an ASUS WMI knob** — it is libinput `AccelSpeed` owned by the compositor (Plasma Wayland). We can detect devices today (`platform-probe`); configuring them portably is the next research item (`platform-touchpad`).
+**Problem (not “sensitivity” alone):** large pad near the keyboard; while typing,
+palm edges + light taps move the pointer and steal focus from the current field.
+AccelSpeed / compositor tweaks help a little; they do not model “ignore short
+palm brushes while keys are active.”
+
+**Approach — single ordered filter pipeline** (iptables-inspired, but one chain
+first; multi-chain enable/disable can come later if needed):
+
+```
+[libinput/evdev events]
+        │
+        ▼
+┌─ platform-touchpad interceptor ─────────────────────────┐
+│  enabled plugins in order (config JSON):                │
+│    1. event-sim      (optional; inject for tests)       │
+│    2. exec-delay     (hold ≤N ms — drop short brushes)  │
+│    3. outlier-reject (drop impossible jumps / spikes)   │
+│    4. smooth         (optional later: EMA / Kalman)     │
+└──────────────────────────────────────┬──────────────────┘
+                                       ▼
+                              compositor / DE
+```
+
+MVP (good effect, small code): **event-sim + exec-delay + outlier-reject**.
+Defer multi-branch chains and Kalman until the MVP proves out on UX8406 typing.
+
+Probe already sees Primax/ELAN devices; wiring is userspace (evdev grab or
+libinput plugin path — research item), not ASUS WMI.
 
 ## Gentoo USE mapping
 
@@ -57,7 +84,7 @@ platform-probe ──────────────► install decisions (
                     │
               platform-tray (qt6) ─► same CLIs + SQLite metrics graph
                     │
-                    └─► (next) EPP/RAPL + touchpad helpers
+                    └─► (next) EPP/RAPL + platform-touchpad filter pipeline
 ```
 
 See also [PLANNED.md](PLANNED.md) for command cheatsheets.

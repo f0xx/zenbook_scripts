@@ -19,9 +19,21 @@ Model-specific READMEs live on `main` after merge; feature work continues on the
 
 | Distro | How |
 |--------|-----|
-| **Gentoo** | Local overlay + ebuild — see [packaging/README.md](packaging/README.md) (release **`0.0.1_p1`** → tag [`v0.0.1_hf1`](https://github.com/f0xx/zenbook_scripts/releases/tag/v0.0.1_hf1)) |
+| **Gentoo** | Local overlay + ebuild — see [packaging/README.md](packaging/README.md) (try **`0.0.2_pre1`** → tag [`v0.0.2_pre1`](https://github.com/f0xx/zenbook_scripts/releases/tag/v0.0.2_pre1); stable-ish **`0.0.1_p1`** → [`v0.0.1_hf1`](https://github.com/f0xx/zenbook_scripts/releases/tag/v0.0.1_hf1)) |
 | **Debian / Ubuntu** | No `.deb` yet — from-source steps in [packaging/debian/README.md](packaging/debian/README.md) |
 | **Any (git / tarball)** | `sudo python3 configure.py` — [DEPLOY.md](DEPLOY.md); UX8406 module: [kernel/README.md](kernel/README.md) |
+
+### Pre-release tarball checksums (`v0.0.2_pre1`)
+
+Testing build (fan-control / probe / tray). **Announced 0.0.2** waits on EPP/RAPL + touchpad filters.
+
+Source: https://github.com/f0xx/zenbook_scripts/archive/refs/tags/v0.0.2_pre1.tar.gz
+
+| Algo | Digest |
+|------|--------|
+| SHA256 | `3cf2601c11e6af18bf7e245add0c750a5c7076086872dbf87e73bfd1fcc55c38` |
+| SHA512 | `ea455a5250bd15d03fd9b046b884d134510d481610a1e978fe74adfff78f67567b0214e4ddaaec5f1f27abac69236a34be5864a90690c82612b761168b77ee47` |
+| BLAKE2B | `8f2ef64bb33105b03b1d5609f94096f8b784e232f0e5acf7f2adaa6ffccc6a57b452f0e4cf175cd6690e67591b4376a40cded0c616143ef92a62434f2a8eca00` |
 
 ### Release tarball checksums (`v0.0.1_hf1`)
 
@@ -44,7 +56,8 @@ Ebuild installs under **`/usr`**. `configure.py` defaults to **`/usr`** as well
 # After copying packaging/gentoo/* into your overlay's
 # app-laptop/zenbook-scripts/ and unmasking ~amd64:
 # eselect kernel set <N>   # match uname -r for USE=kernel
-emerge -av =app-laptop/zenbook-scripts-0.0.1_p1
+emerge -av =app-laptop/zenbook-scripts-0.0.2_pre1
+# UX5400: USE="screenpad fan_control -kernel -zenbook_ux8406" emerge -av =app-laptop/zenbook-scripts-0.0.2_pre1
 sudo rc-update add zenbook-kb-hid-asus default   # UX8406 USE=kernel
 sudo rc-update add zenbook-kb-hotkeys default
 sudo rc-update add zenbook-platform-fan-control default   # USE=fan_control

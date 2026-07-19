@@ -18,6 +18,20 @@ sudo apt install -y python3 python3-usb python3-pip \
 # sudo apt install -y python3-pyside6.qtwidgets
 ```
 
+## Fetch `v0.0.2_pre1` (pre-release / testing)
+
+```bash
+cd /tmp
+curl -fsSL -o zenbook_scripts-0.0.2_pre1.tar.gz \
+  https://github.com/f0xx/zenbook_scripts/archive/refs/tags/v0.0.2_pre1.tar.gz
+
+echo '3cf2601c11e6af18bf7e245add0c750a5c7076086872dbf87e73bfd1fcc55c38  zenbook_scripts-0.0.2_pre1.tar.gz' | sha256sum -c
+echo 'ea455a5250bd15d03fd9b046b884d134510d481610a1e978fe74adfff78f67567b0214e4ddaaec5f1f27abac69236a34be5864a90690c82612b761168b77ee47  zenbook_scripts-0.0.2_pre1.tar.gz' | sha512sum -c
+
+tar -xzf zenbook_scripts-0.0.2_pre1.tar.gz
+cd zenbook_scripts-0.0.2_pre1
+```
+
 ## Fetch `v0.0.1_hf1`
 
 ```bash
