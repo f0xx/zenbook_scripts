@@ -11,6 +11,7 @@ PRs that add proper packaging are welcome; they must go through review.
 ```bash
 sudo apt update
 sudo apt install -y python3 python3-usb python3-pip \
+  dmidecode \
   build-essential flex bison libelf-dev libssl-dev \
   linux-headers-$(uname -r)
 # optional GUI:

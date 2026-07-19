@@ -19,6 +19,7 @@ REQUIRED_USE="kernel? ( zenbook_ux8406 )"
 RDEPEND="
 	>=dev-lang/python-3.10
 	dev-python/pyusb
+	sys-apps/dmidecode
 	hotkeys? (
 		virtual/udev
 		sys-power/acpid
@@ -101,12 +102,65 @@ pkg_setup() {
 	fi
 }
 
+# Fail-closed preflight (source build only — never ship a foreign .ko).
+# Override risk with ZENBOOK_KERNEL_FORCE=1 in the environment.
+zenbook_kernel_preflight() {
+	local kdir rc=0
+	local -a py_args
+
+	kdir=$(zenbook_kernel_kdir)
+	py_args=(
+		"${S}/zenbook_kb/kernel_preflight.py"
+		--repo-root "${S}"
+		--kdir "${kdir}"
+	)
+	if [[ ${ZENBOOK_KERNEL_FORCE:-} == 1 || ${ZENBOOK_KERNEL_FORCE:-} == yes ]]; then
+		py_args+=( --force )
+	fi
+
+	# Match FILESDIR patch (conditional); warn if missing for this KV.
+	if [[ -d ${FILESDIR}/patches/linux-${KV_FULL} ]]; then
+		einfo "Gentoo files/ patch dir present: linux-${KV_FULL}"
+	elif [[ -d ${S}/kernel/patches/linux-${KV_FULL} ]]; then
+		einfo "Upstream kernel/patches present: linux-${KV_FULL}"
+	else
+		ewarn "No maintained patch dir for KV_FULL=${KV_FULL}"
+		ewarn "Supported: 7.0.12-gentoo-r1, 7.1.3-gentoo — or set ZENBOOK_KERNEL_FORCE=1"
+	fi
+
+	einfo "Running hid-asus kernel preflight…"
+	python3 "${py_args[@]}" || rc=$?
+	case ${rc} in
+		0) return 0 ;;
+		1)
+			eerror "hid-asus cannot be replaced on this kernel (built-in / no modules)."
+			eerror "Disable USE=kernel or fix CONFIG_HID_ASUS=m + CONFIG_MODULES=y."
+			die "kernel preflight ineligible (exit 1)"
+			;;
+		2)
+			eerror "hid-asus build is risky (unsupported version and/or CONFIG_MODVERSIONS)."
+			eerror "Re-emerge with: ZENBOOK_KERNEL_FORCE=1 emerge …"
+			eerror "or disable USE=kernel (userspace only; UX8406 HID features not guaranteed)."
+			die "kernel preflight risky without ZENBOOK_KERNEL_FORCE (exit 2)"
+			;;
+		3)
+			eerror "Kernel sources/headers missing for oot hid-asus."
+			eerror "Install matching virtual/linux-sources and eselect kernel."
+			die "kernel preflight: no source tree (exit 3)"
+			;;
+		*)
+			die "kernel preflight failed (exit ${rc})"
+			;;
+	esac
+}
+
 src_compile() {
 	if use kernel; then
 		local kdir
 
+		zenbook_kernel_preflight
 		kdir=$(zenbook_kernel_kdir)
-		einfo "Building hid-asus against KDIR=${kdir}"
+		einfo "Building hid-asus against KDIR=${kdir} (from sources, not a prebuilt .ko)"
 		# Portage ARCH=amd64 breaks kbuild (expects ARCH=x86).
 		local -x ARCH
 		ARCH="$(tc-arch-kernel)"
@@ -138,7 +192,7 @@ src_install() {
 	fi
 
 	# User-facing CLIs
-	dobin configure.py configure.sh bin/kb-brightness bin/kb-platform-profile bin/platform-fan bin/platform-probe
+	dobin configure.py configure.sh bin/kb-brightness bin/kb-platform-profile bin/platform-fan bin/platform-probe bin/platform-metrics
 	dobin bin/kb-fan
 	if use fan_control; then
 		dobin bin/platform-fan-control bin/kb-fan-control
@@ -229,7 +283,8 @@ src_install() {
 
 	local doc
 	for doc in LICENSE DEPLOY.md README.ux8406.md README.ux5400.md \
-		kernel/README.md packaging/README.md PLANNED.md ROADMAP.md README.md; do
+		kernel/README.md packaging/README.md packaging/gentoo/files/README.md \
+		PLANNED.md ROADMAP.md README.md; do
 		[[ -f "${S}/${doc}" ]] || continue
 		dodoc "${doc}"
 	done
@@ -251,14 +306,19 @@ pkg_postinst() {
 		elog "  sudo rc-update add zenbook-platform-fan-control default"
 		elog "  sudo rc-service zenbook-platform-fan-control start"
 		elog "  platform-probe && platform-fan-control check"
+		elog "UX8406: configure/install sets fn_row_policy=7 via dmidecode/sysfs."
 	fi
 
 	if use kernel && [[ "${MERGE_TYPE}" != "binpkg" ]]; then
 		ewarn "Re-emerge app-laptop/zenbook-scripts after each kernel upgrade"
-		ewarn "(oot hid-asus.ko is per-KV_FULL)."
-		ewarn "Boot sideload: rc-update add zenbook-kb-hid-asus boot"
+		ewarn "(oot hid-asus is rebuilt from sources per KV_FULL — no prebuilt .ko)."
+		ewarn "Risky/unsupported KV: ZENBOOK_KERNEL_FORCE=1 emerge …"
+		ewarn "Boot sideload: rc-update add zenbook-kb-hid-asus default"
 		ewarn "               rc-service zenbook-kb-hid-asus start"
 		ewarn "Hotkeys:       rc-update add zenbook-kb-hotkeys default"
 		ewarn "Set fn_row_policy=7 in /etc/conf.d/zenbook-kb-hid-asus for docked UX8406."
+	elif ! use kernel; then
+		elog "USE=-kernel: oot hid-asus not built. Docked UX8406 HID/backlight/fn-row"
+		elog "features are not guaranteed with mainline hid-asus alone."
 	fi
 }

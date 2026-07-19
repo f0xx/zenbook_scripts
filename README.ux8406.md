@@ -65,7 +65,12 @@ When you answer **yes** to install:
 # … answer prompts …
 # Install kb-brightness + Fn+ hotkey service?  → y
 # Install udev rules + openrc/systemd service? → y
+# Build oot hid-asus from kernel sources?     → y   # UX8406; never uses a prebuilt .ko
 ```
+
+Non-interactive kernel flags: `--with-kernel` / `--no-kernel` / `--kernel-force`
+(`--all-yes` does **not** imply the kmod). Gentoo: `USE=kernel` (fail-closed;
+`ZENBOOK_KERNEL_FORCE=1` for risky kernels).
 
 Manual copy of config:
 

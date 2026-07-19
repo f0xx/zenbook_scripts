@@ -3,6 +3,7 @@
 #
 # Usage:
 #   platform-fan status              # RPM, pwm mode, platform profile
+#   platform-fan modes               # what this machine actually supports
 #   platform-fan rpm
 #   platform-fan auto                # firmware automatic PWM (pwm1_enable=2)
 #   platform-fan full|max            # force full-on fans (pwm1_enable=0)
@@ -45,7 +46,7 @@ source "${SCRIPT_DIR}/lib/fan.sh"
 source "${SCRIPT_DIR}/lib/platform_profile.sh"
 
 usage() {
-	sed -n '2,12p' "$0"
+	sed -n '2,13p' "$0"
 }
 
 if [[ $# -lt 1 ]]; then
@@ -68,6 +69,9 @@ case "${CMD}" in
 		;;
 	status | info)
 		zenbook_fan_status
+		;;
+	modes | available | capabilities)
+		zenbook_fan_modes
 		;;
 	rpm | speed)
 		zenbook_fan_rpm

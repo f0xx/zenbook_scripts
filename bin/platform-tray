@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
-"""System-tray control for platform profile + fans (PySide6 / Qt6).
+"""System-tray + lightweight metrics graph (PySide6 / Qt6).
 
-Works on Plasma and other DEs that implement StatusNotifierItem / tray icons.
-Buttons disable when platform-probe reports the feature unsupported.
+Stores samples in SQLite (~/.local/share/zenbook-scripts/metrics.sqlite3).
+Never blocks on interactive sudo — fan writes use sudo -n / root only.
+
+Graph: X-zoom 75–200% (25% steps), sample interval 1–20s, sticky POI popups.
 """
 
 from __future__ import annotations
@@ -11,27 +13,38 @@ import os
 import shutil
 import subprocess
 import sys
+import time
+from dataclasses import dataclass
 from pathlib import Path
 
 _ROOT = Path(__file__).resolve().parent.parent
 _SHARE_CANDIDATES = (
     _ROOT,
-    Path("/usr/local/share/zenbook-scripts"),
     Path("/usr/share/zenbook-scripts"),
+    Path("/usr/local/share/zenbook-scripts"),
 )
+_inserted = False
 for _share in _SHARE_CANDIDATES:
-    if (_share / "zenbook_kb").is_dir() and str(_share) not in sys.path:
+    if (_share / "zenbook_kb" / "metrics.py").is_file():
         sys.path.insert(0, str(_share))
+        _inserted = True
         break
+if not _inserted and (_ROOT / "zenbook_kb").is_dir():
+    sys.path.insert(0, str(_ROOT))
 
 try:
-    from PySide6.QtCore import QTimer
-    from PySide6.QtGui import QAction, QIcon
+    from PySide6.QtCore import QPoint, QPointF, Qt, QTimer
+    from PySide6.QtGui import QAction, QColor, QCursor, QIcon, QPainter, QPen
     from PySide6.QtWidgets import (
         QApplication,
+        QComboBox,
+        QHBoxLayout,
+        QLabel,
+        QMainWindow,
         QMenu,
         QStyle,
         QSystemTrayIcon,
+        QVBoxLayout,
         QWidget,
     )
 except ImportError:
@@ -41,7 +54,12 @@ except ImportError:
     )
     raise SystemExit(1)
 
+from zenbook_kb.metrics import Event, MetricsStore  # noqa: E402
 from zenbook_kb.platform.capabilities import build_report  # noqa: E402
+
+ZOOM_PERCENTS = (75, 100, 125, 150, 175, 200)
+SAMPLE_INTERVALS_S = tuple(range(1, 21))
+POI_HIT_RADIUS_PX = 10.0
 
 
 def _which(*names: str) -> str | None:
@@ -58,17 +76,295 @@ def _which(*names: str) -> str | None:
 
 def _run(argv: list[str]) -> str:
     try:
-        r = subprocess.run(
-            argv,
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=8,
-        )
+        r = subprocess.run(argv, capture_output=True, text=True, check=False, timeout=8)
     except (OSError, subprocess.SubprocessError) as exc:
         return str(exc)
     out = (r.stdout or r.stderr or "").strip()
     return out.splitlines()[0] if out else f"exit {r.returncode}"
+
+
+@dataclass
+class _PoiHit:
+    x: float
+    y: float
+    event: Event
+
+
+def _event_key(ev: Event) -> tuple:
+    return (ev.ts, ev.kind, ev.metric, ev.note, ev.value)
+
+
+class MetricsCanvas(QWidget):
+    """XY plot with sticky POI popup (survives sample refresh until mouse moves)."""
+
+    def __init__(self, store: MetricsStore, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.store = store
+        self.setMinimumSize(560, 300)
+        self.setMouseTracking(True)
+        self._base_hours = 1.0
+        self._zoom_pct = 100
+        self._hits: list[_PoiHit] = []
+        self._hover_key: tuple | None = None
+        self._popup_pos: QPoint | None = None
+        self._popup = QLabel(None, Qt.WindowType.ToolTip)
+        self._popup.setStyleSheet(
+            "QLabel {"
+            " background: #2a2a30; color: #e8e8ec;"
+            " border: 1px solid #6a6a78; border-radius: 4px;"
+            " padding: 8px; font-size: 11px;"
+            "}"
+        )
+        self._popup.setWordWrap(True)
+        self._popup.setTextFormat(Qt.TextFormat.RichText)
+        self._popup.hide()
+
+    def set_base_hours(self, hours: float) -> None:
+        self._base_hours = max(0.05, float(hours))
+        self.update()
+
+    def set_zoom_percent(self, pct: int) -> None:
+        self._zoom_pct = max(ZOOM_PERCENTS[0], min(ZOOM_PERCENTS[-1], int(pct)))
+        self.update()
+
+    def visible_hours(self) -> float:
+        z = max(self._zoom_pct, 1) / 100.0
+        return self._base_hours / z
+
+    def _hide_popup(self) -> None:
+        self._hover_key = None
+        self._popup_pos = None
+        self._popup.hide()
+
+    def _show_popup_for(self, hit: _PoiHit, *, screen_pos: QPoint | None = None) -> None:
+        detail = self.store.poi_detail(hit.event)
+        self._popup.setText(detail.rich_text())
+        self._popup.adjustSize()
+        pos = screen_pos or self._popup_pos or (QCursor.pos() + QPoint(14, 14))
+        self._popup_pos = QPoint(pos)
+        self._hover_key = _event_key(hit.event)
+        self._popup.move(self._popup_pos)
+        self._popup.show()
+        self._popup.raise_()
+
+    def _hit_matching_key(self, key: tuple | None) -> _PoiHit | None:
+        if key is None:
+            return None
+        for hit in self._hits:
+            if _event_key(hit.event) == key:
+                return hit
+        return None
+
+    def paintEvent(self, _event) -> None:  # noqa: N802
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        w, h = self.width(), self.height()
+        margin = 44
+        painter.fillRect(0, 0, w, h, QColor(32, 32, 36))
+
+        hours = self.visible_hours()
+        since = time.time() - hours * 3600
+        samples = self.store.history(since_ts=since, limit=4000)
+        events = self.store.events(since_ts=since, limit=400)
+        plot_w, plot_h = w - 2 * margin, h - 2 * margin
+        self._hits = []
+
+        pen_grid = QPen(QColor(70, 70, 78))
+        pen_grid.setWidth(1)
+        painter.setPen(pen_grid)
+        for i in range(5):
+            y = margin + plot_h * i / 4
+            painter.drawLine(margin, int(y), w - margin, int(y))
+            x = margin + plot_w * i / 4
+            painter.drawLine(int(x), margin, int(x), h - margin)
+
+        painter.setPen(QColor(180, 180, 190))
+        span_label = f"{hours * 60:.0f} min" if hours < 1.5 else f"{hours:.2f} h"
+        painter.drawText(
+            8,
+            18,
+            f"temp °C (amber) · fan rpm (cyan) · POI · "
+            f"X zoom {self._zoom_pct}% ({span_label})",
+        )
+
+        if len(samples) < 2:
+            painter.drawText(margin, h // 2, "Collecting samples…")
+            return
+
+        t0 = since
+        t1 = time.time()
+        span = max(t1 - t0, 1.0)
+
+        temps = [s.temp_c for s in samples if s.temp_c is not None]
+        rpms = [s.rpm for s in samples if s.rpm is not None]
+        tmin = (min(temps) - 2) if temps else 40.0
+        tmax = (max(temps) + 2) if temps else 90.0
+        if tmax <= tmin:
+            tmax = tmin + 10.0
+        rmin = 0.0
+        rmax = float(max(rpms)) if rpms else 5000.0
+        rmax = max(rmax * 1.05, 1000.0)
+
+        def x_at(ts: float) -> float:
+            return margin + plot_w * (ts - t0) / span
+
+        def y_temp(v: float) -> float:
+            return margin + plot_h * (1.0 - (v - tmin) / (tmax - tmin))
+
+        def y_rpm(v: float) -> float:
+            return margin + plot_h * (1.0 - (v - rmin) / (rmax - rmin))
+
+        painter.setPen(QColor(140, 140, 150))
+        painter.drawText(4, margin + 12, f"{tmax:.0f}°")
+        painter.drawText(4, h - margin, f"{tmin:.0f}°")
+        painter.drawText(w - margin + 4, margin + 12, f"{rmax:.0f}")
+        painter.drawText(w - margin + 4, h - margin, f"{rmin:.0f}")
+        painter.drawText(margin, h - 8, time.strftime("%H:%M", time.localtime(t0)))
+        painter.drawText(w - margin - 36, h - 8, time.strftime("%H:%M", time.localtime(t1)))
+
+        pen_t = QPen(QColor(240, 160, 60))
+        pen_t.setWidth(2)
+        painter.setPen(pen_t)
+        prev = None
+        for s in samples:
+            if s.temp_c is None:
+                continue
+            pt = QPointF(x_at(s.ts), y_temp(s.temp_c))
+            if prev is not None:
+                painter.drawLine(prev, pt)
+            prev = pt
+
+        pen_r = QPen(QColor(80, 200, 220))
+        pen_r.setWidth(2)
+        painter.setPen(pen_r)
+        prev = None
+        for s in samples:
+            if s.rpm is None:
+                continue
+            pt = QPointF(x_at(s.ts), y_rpm(float(s.rpm)))
+            if prev is not None:
+                painter.drawLine(prev, pt)
+            prev = pt
+
+        for ev in events:
+            x = x_at(ev.ts)
+            if not (margin - 5 <= x <= w - margin + 5):
+                continue
+            if ev.metric == "temp_c":
+                color = QColor(255, 80, 80) if ev.kind == "rise" else QColor(120, 220, 120)
+                y = y_temp(ev.value) if ev.value is not None else margin + plot_h / 2
+            elif ev.metric == "rpm":
+                color = QColor(80, 140, 255)
+                y = y_rpm(ev.value) if ev.value is not None else margin + 20
+            elif ev.metric == "pwm":
+                color = QColor(180, 120, 255)
+                y = margin + 18
+            elif ev.metric == "profile":
+                color = QColor(220, 200, 80)
+                y = margin + 32
+            else:
+                color = QColor(200, 200, 80)
+                y = margin + 20
+            y = max(margin, min(h - margin, y))
+            active = self._hover_key == _event_key(ev)
+            radius = 6 if active else 4
+            painter.setPen(QPen(color, 2))
+            painter.setBrush(color)
+            painter.drawEllipse(QPointF(x, y), radius, radius)
+            self._hits.append(_PoiHit(x=x, y=y, event=ev))
+
+        # Sample refresh must not dismiss a pinned popup — reassert it.
+        if self._hover_key is not None and self._popup_pos is not None:
+            pinned = self._hit_matching_key(self._hover_key)
+            if pinned is not None:
+                self._show_popup_for(pinned, screen_pos=self._popup_pos)
+            elif self._popup.isVisible():
+                self._popup.move(self._popup_pos)
+                self._popup.show()
+
+    def _hit_at(self, pos: QPoint) -> _PoiHit | None:
+        best: _PoiHit | None = None
+        best_d = POI_HIT_RADIUS_PX
+        for hit in self._hits:
+            d = ((hit.x - pos.x()) ** 2 + (hit.y - pos.y()) ** 2) ** 0.5
+            if d <= best_d:
+                best_d = d
+                best = hit
+        return best
+
+    def mouseMoveEvent(self, event) -> None:  # noqa: N802
+        hit = self._hit_at(event.position().toPoint())
+        if hit is None:
+            if self._hover_key is not None:
+                self._hide_popup()
+                self.update()
+            return
+        key = _event_key(hit.event)
+        if key != self._hover_key:
+            self._show_popup_for(hit, screen_pos=QCursor.pos() + QPoint(14, 14))
+            self.update()
+        # Same POI + mouse still there: leave popup fixed (no refresh flicker)
+
+    def leaveEvent(self, _event) -> None:  # noqa: N802
+        self._hide_popup()
+        self.update()
+
+    def hideEvent(self, event) -> None:  # noqa: N802
+        self._hide_popup()
+        super().hideEvent(event)
+
+
+class MetricsWindow(QMainWindow):
+    def __init__(self, store: MetricsStore) -> None:
+        super().__init__()
+        self.setWindowTitle("Platform thermal metrics")
+        self.store = store
+        root = QWidget()
+        self.setCentralWidget(root)
+        lay = QVBoxLayout(root)
+
+        bar = QHBoxLayout()
+        bar.addWidget(QLabel("X zoom"))
+        self.zoom = QComboBox()
+        for pct in ZOOM_PERCENTS:
+            self.zoom.addItem(f"{pct}%", pct)
+        self.zoom.setCurrentIndex(ZOOM_PERCENTS.index(100))
+        self.zoom.setToolTip(
+            "Time-axis zoom (100% ≈ last 1h; 200% ≈ last 30min; 75% ≈ ~80min)"
+        )
+        self.zoom.currentIndexChanged.connect(self._on_zoom)
+        bar.addWidget(self.zoom)
+
+        bar.addWidget(QLabel("Sample"))
+        self.interval = QComboBox()
+        for sec in SAMPLE_INTERVALS_S:
+            self.interval.addItem(f"{sec}s", sec)
+        self.interval.setCurrentIndex(SAMPLE_INTERVALS_S.index(5))
+        self.interval.currentIndexChanged.connect(self._on_interval)
+        bar.addWidget(self.interval)
+
+        bar.addStretch(1)
+        self.hint = QLabel("POI popup stays until you move the mouse away")
+        bar.addWidget(self.hint)
+        lay.addLayout(bar)
+
+        self.canvas = MetricsCanvas(store)
+        lay.addWidget(self.canvas)
+
+        self.timer = QTimer(self)
+        self.timer.timeout.connect(self._tick)
+        self.timer.start(5000)
+        self._tick()
+
+    def _on_zoom(self, _idx: int = 0) -> None:
+        self.canvas.set_zoom_percent(int(self.zoom.currentData()))
+
+    def _on_interval(self, _idx: int = 0) -> None:
+        self.timer.setInterval(int(self.interval.currentData()) * 1000)
+
+    def _tick(self) -> None:
+        self.store.sample_now()
+        self.canvas.update()
 
 
 class PlatformTray(QWidget):
@@ -78,6 +374,8 @@ class PlatformTray(QWidget):
         self.fan = _which("platform-fan", "kb-fan")
         self.profile = _which("kb-platform-profile")
         self.probe = _which("platform-probe")
+        self.store = MetricsStore()
+        self.metrics_win: MetricsWindow | None = None
 
         self.tray = QSystemTrayIcon(self)
         icon = QIcon.fromTheme("weather-windy")
@@ -86,7 +384,6 @@ class PlatformTray(QWidget):
         if icon.isNull():
             icon = QApplication.style().standardIcon(QStyle.StandardPixmap.SP_ComputerIcon)
         self.tray.setIcon(icon)
-        self.tray.setToolTip("Platform thermal / fan")
 
         self.menu = QMenu()
         self.status_action = QAction("…", self)
@@ -102,7 +399,7 @@ class PlatformTray(QWidget):
         for name in ("quiet", "balanced", "performance"):
             act = QAction(f"Profile: {name}", self)
             act.setEnabled(pp_ok and bool(self.profile))
-            act.triggered.connect(lambda _checked=False, n=name: self._set_profile(n))
+            act.triggered.connect(lambda _c=False, n=name: self._set_profile(n))
             self.menu.addAction(act)
 
         self.menu.addSeparator()
@@ -116,6 +413,10 @@ class PlatformTray(QWidget):
         self.menu.addAction(full)
 
         self.menu.addSeparator()
+        graph = QAction("Open metrics graph…", self)
+        graph.triggered.connect(self._open_graph)
+        self.menu.addAction(graph)
+
         probe_act = QAction("Run platform-probe…", self)
         probe_act.setEnabled(bool(self.probe))
         probe_act.triggered.connect(self._show_probe)
@@ -127,7 +428,6 @@ class PlatformTray(QWidget):
 
         self.tray.setContextMenu(self.menu)
         self.tray.show()
-
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.refresh_status)
         self.timer.start(5000)
@@ -136,6 +436,7 @@ class PlatformTray(QWidget):
     def _set_profile(self, name: str) -> None:
         if self.profile:
             _run([self.profile, "set", name])
+        self.store.sample_now()
         self.refresh_status()
 
     def _fan_cmd(self, cmd: str) -> None:
@@ -149,8 +450,30 @@ class PlatformTray(QWidget):
             timeout=8,
         )
         if r.returncode != 0:
-            _run([self.fan, cmd])
+            r2 = subprocess.run(
+                [self.fan, cmd],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=8,
+            )
+            if r2.returncode != 0:
+                self.tray.showMessage(
+                    "platform-tray",
+                    "Fan change needs root or NOPASSWD sudo -n",
+                    QSystemTrayIcon.MessageIcon.Warning,
+                    4000,
+                )
+        self.store.add_event("mode", "pwm", None, f"user:{cmd}")
+        self.store.sample_now()
         self.refresh_status()
+
+    def _open_graph(self) -> None:
+        if self.metrics_win is None:
+            self.metrics_win = MetricsWindow(self.store)
+        self.metrics_win.show()
+        self.metrics_win.raise_()
+        self.metrics_win.activateWindow()
 
     def _show_probe(self) -> None:
         if not self.probe:
@@ -171,6 +494,7 @@ class PlatformTray(QWidget):
         )
 
     def refresh_status(self) -> None:
+        self.store.sample_now()
         bits: list[str] = []
         if self.profile:
             bits.append(_run([self.profile, "get"]) or "?")
@@ -189,7 +513,6 @@ def main() -> int:
     if not QSystemTrayIcon.isSystemTrayAvailable():
         print("No system tray available in this session.", file=sys.stderr)
         return 1
-    # Keep tray alive for the event loop (Qt does not take ownership via show()).
     app._platform_tray = PlatformTray()  # type: ignore[attr-defined]
     return app.exec()
 

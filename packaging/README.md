@@ -12,6 +12,7 @@ Copy recipes into your own overlay or install from a release tarball / git check
 |------|---------|
 | [`gentoo/zenbook-scripts-0.0.1_p1.ebuild`](gentoo/zenbook-scripts-0.0.1_p1.ebuild) | Release package → upstream tag **`v0.0.1_hf1`** |
 | [`gentoo/zenbook-scripts-9999.ebuild`](gentoo/zenbook-scripts-9999.ebuild) | Live git (`EGIT`) |
+| [`gentoo/files/`](gentoo/files/) | Conditional UX8406 patches + README (no prebuilt `.ko`) |
 | [`gentoo/Manifest`](gentoo/Manifest) | Distfile digests for `0.0.1_p1` |
 | [`gentoo/metadata.xml`](gentoo/metadata.xml) | USE flag / upstream metadata |
 | [`debian/README.md`](debian/README.md) | Debian/Ubuntu from-source install (no `.deb` yet) |
@@ -59,16 +60,21 @@ From a git checkout of this repo (or copy from the release tarball’s `packagin
 
 ```bash
 PKG=/var/db/repos/foxx/app-laptop/zenbook-scripts
-sudo mkdir -p "${PKG}"   # add "${PKG}/files" only if you ship patches
+sudo mkdir -p "${PKG}/files"
 sudo cp packaging/gentoo/zenbook-scripts-0.0.1_p1.ebuild "${PKG}/"
 sudo cp packaging/gentoo/zenbook-scripts-9999.ebuild "${PKG}/"   # optional live
 sudo cp packaging/gentoo/metadata.xml "${PKG}/"
 sudo cp packaging/gentoo/Manifest "${PKG}/"
+sudo cp -a packaging/gentoo/files/. "${PKG}/files/"
 ```
 
-Patches (if ever needed) go in `app-laptop/zenbook-scripts/files/` and are referenced via `${FILESDIR}`. Stock ebuilds ship **no** patches.
+`${FILESDIR}/patches/` holds conditional UX8406 patch mirrors (see `files/README.md`).
+The ebuild still builds via `port-ux8406.py` against local sources — it does **not**
+install a prebuilt `.ko`.
 
 **`USE=kernel` build deps:** `virtual/linux-sources` + `dev-build/make` (works with **`sys-kernel/gentoo-sources`**). It does **not** pull `virtual/dist-kernel` / `gentoo-kernel`.
+
+The ebuild **builds `hid-asus` from sources** at emerge time (fail-closed preflight). It never ships a precompiled `.ko`. Unsupported KV / `CONFIG_MODVERSIONS=y` → emerge dies unless `ZENBOOK_KERNEL_FORCE=1`. Conditional patches live under [`gentoo/files/patches/`](gentoo/files/patches/) (see [`gentoo/files/README.md`](gentoo/files/README.md)).
 
 Point `/usr/src/linux` at the tree that matches your **running** kernel when you want a loadable module immediately. Dist-kernel users have `/lib/modules/$(uname -r)/build`; with gentoo-sources that symlink appears only after `make modules_install`. The ebuild falls back to `/usr/src/linux` when `…/build` is missing.
 
@@ -135,7 +141,7 @@ sudo ebuild "${EBUILD}" qmerge   # or: preinst merge postinst
 ```bash
 # UX8406 oot hid-asus boot sideload
 sudo sed -i 's/^fn_row_policy=.*/fn_row_policy=7/' /etc/conf.d/zenbook-kb-hid-asus
-sudo rc-update add zenbook-kb-hid-asus boot
+sudo rc-update add zenbook-kb-hid-asus default
 sudo rc-service zenbook-kb-hid-asus start
 
 # Hotkeys listener
@@ -164,18 +170,24 @@ See [`kernel/README.md`](../kernel/README.md). Re-emerge after **each kernel upg
 | Share tree | `/usr/share/zenbook-scripts/` |
 | oot `hid-asus.ko` | `/usr/lib/modules/zenbook-hid-asus/<kver>/` |
 
-`configure.py` from a git checkout still targets **`/usr/local`** (manual installs). The ebuild rewrites packaged unit/helper scripts to `/usr` and does **not** run `configure.py` in `pkg_postinst`.
+`configure.py` defaults to **`/usr`** (same as the ebuild). Override with
+`--prefix /usr/local` or `ZENBOOK_PREFIX=/usr/local`. After migrating, use
+`--cleanup-usr-local` to drop leftover `/usr/local` binaries/share. The ebuild
+rewrites packaged unit/helper scripts to `/usr` and does **not** run
+`configure.py` in `pkg_postinst`.
 
 ## USE flags
 
 | Flag | Default | Meaning |
 |------|---------|---------|
 | `hotkeys` | on | udev + OpenRC hotkeys / lid / sleep hooks |
-| `fan_control` | on | `kb-fan-control` + OpenRC unit + `/etc/zenbook-scripts` example |
+| `fan_control` | on | `platform-fan*` + OpenRC + `/etc/zenbook-scripts` example |
 | `screenpad` | off | ScreenPad CLI + udev + services (UX5400) |
-| `kernel` | on | Build/install oot `hid-asus.ko` + boot sideload |
-| `qt6` | off | `configure_gui.py` (PySide6) |
+| `kernel` | on | Build oot `hid-asus` from sources + OpenRC sideload (fail-closed; `ZENBOOK_KERNEL_FORCE=1` for risky KV) |
+| `qt6` | off | `configure_gui.py` + `platform-tray` (PySide6) |
 | `zenbook_ux8406` | on | Install `conf.d/UX8406*` profiles |
+
+**Always** (RDEPEND): `sys-apps/dmidecode` (UX8406 `fn_row_policy=7` auto-set). Metrics use Python **stdlib sqlite3** (no extra dep).
 
 ## Debian / Ubuntu
 

@@ -55,11 +55,13 @@ zenbook_fan_sysfs_write() {
 		printf '%s' "${value}" >"${path}"
 		return 0
 	fi
+	# Never block on a sudo password prompt (daemons / hooks / tray).
 	if command -v sudo >/dev/null 2>&1; then
-		printf '%s' "${value}" | sudo tee "${path}" >/dev/null
-		return 0
+		if printf '%s' "${value}" | sudo -n tee "${path}" >/dev/null 2>&1; then
+			return 0
+		fi
 	fi
-	echo "Cannot write ${path} (need root)" >&2
+	echo "Cannot write ${path} (need root or NOPASSWD sudo -n)" >&2
 	return 1
 }
 
@@ -170,4 +172,57 @@ zenbook_fan_status() {
 	else
 		printf 'curves:    not on this model (normal — firmware auto curve only)\n'
 	fi
+}
+
+# Probe which PWM enable values the kernel accepts (read-only where possible).
+zenbook_fan_pwm_modes_available() {
+	local hwmon enable cur
+	hwmon="$(zenbook_fan_find_hwmon)" || return 1
+	enable="${hwmon}/pwm1_enable"
+	[[ -e "${enable}" ]] || {
+		echo "pwm1_enable: absent (RPM-only)"
+		return 0
+	}
+	cur="$(tr -d '[:space:]' <"${enable}")"
+	# On ASUS Zenbooks we know 0/2 work; 1 returns EINVAL — report without writing.
+	printf 'pwm_enable path: %s (current=%s)\n' "${enable}" "${cur}"
+	printf 'pwm modes:\n'
+	printf '  full  (0)  — force max fans (loud)\n'
+	printf '  auto  (2)  — firmware thermal curve (default)\n'
+	printf '  manual(1)  — NOT available on this model\n'
+	if [[ -e "${hwmon}/pwm1_auto_point1_temp" ]]; then
+		printf 'custom curves: yes (pwm*_auto_point_*)\n'
+	else
+		printf 'custom curves: no\n'
+	fi
+}
+
+zenbook_fan_modes() {
+	local hwmon pwm_en profile
+	hwmon="$(zenbook_fan_find_hwmon)" || {
+		echo "No asus/pwm fan hwmon found" >&2
+		return 1
+	}
+	pwm_en="$(zenbook_fan_pwm_enable_get)"
+	printf '=== fan / thermal modes on this machine ===\n'
+	printf 'hwmon:     %s\n' "${hwmon}"
+	printf '\nPWM (platform-fan auto|full):\n'
+	printf '  * auto  — pwm1_enable=2  [current=%s]\n' "$(zenbook_fan_pwm_mode_name "${pwm_en}")"
+	printf '  * full  — pwm1_enable=0  (max RPM; loud)\n'
+	printf '  - manual curves — not supported\n'
+	printf '\nPlatform profiles (platform-fan quiet|balanced|performance):\n'
+	if zenbook_platform_profile_present 2>/dev/null; then
+		profile="$(zenbook_platform_profile_get)"
+		while IFS= read -r p; do
+			[[ -n "${p}" ]] || continue
+			if [[ "${p}" == "${profile}" ]]; then
+				printf '  * %s  [current]\n' "${p}"
+			else
+				printf '  * %s\n' "${p}"
+			fi
+		done < <(zenbook_platform_profile_list)
+	else
+		printf '  (no /sys/firmware/acpi/platform_profile)\n'
+	fi
+	printf '\nTip: after full → platform-fan auto   (or platform-fan balanced)\n'
 }

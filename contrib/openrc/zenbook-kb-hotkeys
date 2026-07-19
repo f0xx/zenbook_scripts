@@ -9,7 +9,7 @@
 name="zenbook-kb-hotkeys"
 description="Zenbook Duo Fn+ / special-key handler"
 
-: "${command:=/usr/local/bin/kb-brightness-hotkeys}"
+: "${command:=/usr/bin/kb-brightness-hotkeys}"
 : "${command_background:=yes}"
 : "${command_args:=}"
 : "${pidfile:=/run/${RC_SVCNAME}.pid}"
@@ -30,8 +30,8 @@ start_pre() {
 	# Avoid flock races when zenbook-kb-hid-asus stops/restarts us during sideload.
 	# Do not poll rc-service on *this* service — start_pre already runs in "starting".
 	for _wait_lib in \
-		/usr/local/share/zenbook-scripts/lib/openrc-wait.sh \
-		/usr/share/zenbook-scripts/lib/openrc-wait.sh; do
+		/usr/share/zenbook-scripts/lib/openrc-wait.sh \
+		/usr/local/share/zenbook-scripts/lib/openrc-wait.sh; do
 		if [ -f "${_wait_lib}" ]; then
 			# shellcheck source=lib/openrc-wait.sh
 			. "${_wait_lib}"
@@ -59,13 +59,19 @@ start_pre() {
 }
 
 start_post() {
-	if [ -x /usr/local/bin/kb-brightness-sleep ]; then
-		/usr/local/bin/kb-brightness-sleep restore 2>/dev/null || true
-	fi
+	for _sleep in /usr/bin/kb-brightness-sleep /usr/local/bin/kb-brightness-sleep; do
+		if [ -x "${_sleep}" ]; then
+			"${_sleep}" restore 2>/dev/null || true
+			break
+		fi
+	done
 }
 
 stop_pre() {
-	if [ -x /usr/local/bin/kb-brightness-sleep ]; then
-		/usr/local/bin/kb-brightness-sleep save 2>/dev/null || true
-	fi
+	for _sleep in /usr/bin/kb-brightness-sleep /usr/local/bin/kb-brightness-sleep; do
+		if [ -x "${_sleep}" ]; then
+			"${_sleep}" save 2>/dev/null || true
+			break
+		fi
+	done
 }

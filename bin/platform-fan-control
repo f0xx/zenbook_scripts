@@ -8,17 +8,21 @@ import logging
 import sys
 from pathlib import Path
 
-# Allow running from a git checkout or after install under /usr{/local}/share.
+# Prefer checkout/share that matches this revision (avoid stale /usr/local share).
 _ROOT = Path(__file__).resolve().parent.parent
 _SHARE_CANDIDATES = (
     _ROOT,
-    Path("/usr/local/share/zenbook-scripts"),
     Path("/usr/share/zenbook-scripts"),
+    Path("/usr/local/share/zenbook-scripts"),
 )
+_inserted = False
 for _share in _SHARE_CANDIDATES:
-    if (_share / "zenbook_kb").is_dir() and str(_share) not in sys.path:
+    if (_share / "zenbook_kb" / "fan_control.py").is_file():
         sys.path.insert(0, str(_share))
+        _inserted = True
         break
+if not _inserted and (_ROOT / "zenbook_kb").is_dir():
+    sys.path.insert(0, str(_ROOT))
 
 from zenbook_kb.fan_control import (  # noqa: E402
     ControllerState,
@@ -121,7 +125,17 @@ def main(argv: list[str] | None = None) -> int:
     try:
         cfg = load_config(cfg_path)
     except FileNotFoundError as exc:
-        example = _ROOT / "fan-control.json.example"
+        example = next(
+            (
+                p / "fan-control.json.example"
+                for p in (
+                    Path("/etc/zenbook-scripts"),
+                    *_SHARE_CANDIDATES,
+                )
+                if (p / "fan-control.json.example").is_file()
+            ),
+            Path("/usr/share/zenbook-scripts/fan-control.json.example"),
+        )
         print(exc, file=sys.stderr)
         print(
             f"Example: sudo mkdir -p /etc/zenbook-scripts && "

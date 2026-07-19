@@ -18,12 +18,25 @@ for arg in "$@"; do
         --all-yes) ALL_YES=1; PY_EXTRA+=("$arg") ;;
         --include-fan-control) INCLUDE_FAN=1; PY_EXTRA+=("$arg") ;;
         --no-include-fan-control) INCLUDE_FAN=0; PY_EXTRA+=("$arg") ;;
+        --cleanup-usr-local|--cleanup-dry-run) PY_EXTRA+=("$arg") ;;
+        --prefix)
+            # consumed with next arg below — handled in second pass
+            ;;
+        --prefix=*)
+            PY_EXTRA+=("$arg")
+            ;;
         *)
+            if [[ "${PREV:-}" == "--prefix" ]]; then
+                PY_EXTRA+=(--prefix "$arg")
+                PREV=""
+                continue
+            fi
             echo "Unknown option: $arg" >&2
-            echo "Usage: $0 [--defaults] [--all-yes] [--include-fan-control|--no-include-fan-control]" >&2
+            echo "Usage: $0 [--defaults] [--all-yes] [--prefix DIR] [--include-fan-control|--no-include-fan-control] [--cleanup-usr-local]" >&2
             exit 2
             ;;
     esac
+    PREV="$arg"
 done
 
 mkdir -p "${CONFIG_DIR}"

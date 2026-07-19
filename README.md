@@ -37,8 +37,8 @@ Source: https://github.com/f0xx/zenbook_scripts/archive/refs/tags/v0.0.1_hf1.tar
 
 Full steps (overlay, Manifest, unmask, emerge, `eselect kernel`, services): **[packaging/README.md](packaging/README.md)**.
 
-Ebuild installs under **`/usr`** (`/usr/bin`, `/usr/libexec`, `/usr/share/zenbook-scripts`).  
-`configure.py` from git still uses **`/usr/local`**.
+Ebuild installs under **`/usr`**. `configure.py` now defaults to **`/usr`** as well
+(`--prefix /usr/local` or `ZENBOOK_PREFIX=/usr/local` for the old layout).
 
 ```bash
 # After copying packaging/gentoo/* into your overlay's

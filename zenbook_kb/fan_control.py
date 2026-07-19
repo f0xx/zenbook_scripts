@@ -54,17 +54,9 @@ def _read_text(path: Path) -> str | None:
 
 
 def _write_sysfs(path: Path, value: str) -> None:
-    try:
-        path.write_text(value, encoding="utf-8")
-        return
-    except OSError:
-        pass
-    subprocess.run(
-        ["sudo", "tee", str(path)],
-        input=value.encode(),
-        check=True,
-        stdout=subprocess.DEVNULL,
-    )
+    from zenbook_kb.priv import write_sysfs
+
+    write_sysfs(path, value, allow_ask=False)
 
 
 def cpu_count() -> int:
@@ -265,10 +257,16 @@ def _bin_candidates(*names: str) -> list[Path]:
 
 
 def _run_cli(argv: list[str]) -> None:
-    """Run helper CLI; prepend sudo when not root (sudoers covers kb-fan / profile)."""
-    if os.geteuid() != 0:
-        argv = ["sudo", *argv]
-    subprocess.run(argv, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+    """Run helper CLI; use sudo -n when not root (never hang on password)."""
+    from zenbook_kb.priv import run_root
+
+    if os.geteuid() == 0:
+        subprocess.run(argv, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+        return
+    r = run_root(argv, check=False, allow_ask=False, capture=True, timeout=30)
+    if r.returncode != 0:
+        err = (r.stderr or b"").decode(errors="replace").strip()
+        raise PermissionError(f"need root or NOPASSWD for {argv[0]}: {err}")
 
 
 def apply_profile(cfg: dict[str, Any], name: str) -> None:
