@@ -29,10 +29,11 @@ zenbook_platform_profile_write() {
 		return 0
 	fi
 	if command -v sudo >/dev/null 2>&1; then
-		printf '%s\n' "${value}" | sudo tee "${ZENBOOK_PLATFORM_PROFILE}" >/dev/null
-		return 0
+		if printf '%s\n' "${value}" | sudo -n tee "${ZENBOOK_PLATFORM_PROFILE}" >/dev/null 2>&1; then
+			return 0
+		fi
 	fi
-	echo "Cannot write ${ZENBOOK_PLATFORM_PROFILE} (need root)" >&2
+	echo "Cannot write ${ZENBOOK_PLATFORM_PROFILE} (need root or NOPASSWD sudo -n)" >&2
 	return 1
 }
 

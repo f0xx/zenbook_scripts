@@ -48,15 +48,17 @@ All write `~/.config/zenbook-scripts/zenbook-duo.conf`. On first install, `zenbo
 
 When you answer **yes** to install:
 
-| Component | Path |
+| Component | Path (default prefix **`/usr`**) |
 |-----------|------|
-| CLI | `/usr/local/bin/kb-brightness`, `/usr/local/bin/kb-brightness-hotkeys` |
-| Support tree | `/usr/local/share/zenbook-scripts/` (`lib/`, `zenbook_kb/`, `brightness.py`, examples) |
-| sudoers | Passwordless `kb-brightness` for your user |
-| udev | `/etc/udev/rules.d/99-zenbook-kb-hotkeys.rules` + `/usr/local/libexec/zenbook-kb-hotkeys-udev` |
+| CLI | `/usr/bin/kb-brightness`, `/usr/bin/kb-brightness-hotkeys`, `/usr/bin/platform-fan*` |
+| Support tree | `/usr/share/zenbook-scripts/` (`lib/`, `zenbook_kb/`, `brightness.py`, examples) |
+| sudoers | Passwordless `kb-brightness` for your user (optional) |
+| udev | `/etc/udev/rules.d/99-zenbook-kb-hotkeys.rules` + `/usr/libexec/zenbook-kb-hotkeys-udev` |
 | `input` group | Your user added (re-login required) |
 
-**Gentoo overlay package** (`app-laptop/zenbook-scripts`) installs the same components under **`/usr`** instead of `/usr/local` — see [`packaging/README.md`](packaging/README.md). Prefer one layout; do not mix emerge with `configure.py` install on the same machine without cleaning the other prefix.
+Override with `--prefix /usr/local` or `ZENBOOK_PREFIX`. **Gentoo overlay**
+(`app-laptop/zenbook-scripts`) also uses **`/usr`** — see [`packaging/README.md`](packaging/README.md).
+Prefer one layout; use `--cleanup-usr-local` after migrating.
 
 **Init system detection:** if `systemctl` is available → `systemd` unit `zenbook-kb-hotkeys.service`; otherwise → OpenRC `/etc/init.d/zenbook-kb-hotkeys` + `rc-update add`.
 
@@ -65,7 +67,12 @@ When you answer **yes** to install:
 # … answer prompts …
 # Install kb-brightness + Fn+ hotkey service?  → y
 # Install udev rules + openrc/systemd service? → y
+# Build oot hid-asus from kernel sources?     → y   # UX8406; never uses a prebuilt .ko
 ```
+
+Non-interactive kernel flags: `--with-kernel` / `--no-kernel` / `--kernel-force`
+(`--all-yes` does **not** imply the kmod). Gentoo: `USE=kernel` (fail-closed;
+`ZENBOOK_KERNEL_FORCE=1` for risky kernels).
 
 Manual copy of config:
 
@@ -360,6 +367,46 @@ readlink /sys/bus/hid/devices/*1B2C*/driver
 
 ---
 
+## Fan / thermal profile (UX8406)
+
+Custom ASUS fan curves are **not** exposed (`fan_curve_get_factory_default` → ENODEV). What works:
+
+```bash
+platform-probe                # capability dry-run (JSON: --json)
+platform-fan status           # RPM, pwm mode, platform profile
+platform-fan modes            # what this machine actually supports
+platform-fan auto             # firmware auto (default)
+sudo platform-fan full        # force max fans (pwm1_enable=0; needs root / sudo -n)
+platform-fan quiet|balanced|performance
+
+# Adaptive (JSON config, AC + battery + lid/sleep events):
+sudo mkdir -p /etc/zenbook-scripts
+sudo cp /usr/share/zenbook-scripts/fan-control.json.example \
+  /etc/zenbook-scripts/fan-control.json
+# or: sudo cp fan-control.json.example /etc/zenbook-scripts/fan-control.json
+platform-fan-control status
+platform-fan-control once
+# sudo rc-update add zenbook-platform-fan-control default
+kb-platform-profile cycle     # same profiles via ACPI platform_profile
+
+# Tray metrics graph (PySide6 / USE=qt6):
+platform-tray                 # Open metrics graph… — X-zoom, sample 1–20s, sticky POI
+```
+
+`kb-fan` / `kb-fan-control` remain as deprecation wrappers.
+
+| Sysfs | Role |
+|-------|------|
+| `/sys/firmware/acpi/platform_profile` | quiet / balanced / performance |
+| `…/asus-nb-wmi/throttle_thermal_policy` | 2 / 0 / 1 (same modes) |
+| `…/hwmon/*/fan1_input` | RPM |
+| `…/hwmon/*/pwm1_enable` | `0` full-on, `2` auto (`1` unsupported) |
+
+Writes use **`sudo -n`** (fail fast) unless configure runs interactively with
+`ZENBOOK_SUDO_ASK=1`.
+
+---
+
 ## Project layout
 
 ```
@@ -368,6 +415,14 @@ backlight.py                  backward-compatible alias
 brightness.sh                 bash wrapper → kb-brightness
 bin/kb-brightness             brightness CLI
 bin/kb-brightness-hotkeys     Fn+ / special-key listener
+bin/platform-fan              fan RPM + auto/full-on + profile helpers
+bin/platform-fan-control      adaptive AC/battery/lid/sleep profile daemon
+bin/platform-probe            capability dry-run / USE hints
+bin/platform-metrics          sample fan/temp into SQLite
+bin/platform-tray             Qt6 tray + thermal metrics graph (USE=qt6)
+bin/kb-fan                    deprecated wrapper → platform-fan
+bin/kb-fan-control            deprecated wrapper → platform-fan-control
+bin/kb-platform-profile       ACPI platform_profile CLI
 configure.py                  console configurator + installer
 configure.sh                  whiptail configurator
 configure_gui.py              PySide6 GUI configurator

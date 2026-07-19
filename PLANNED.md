@@ -9,7 +9,90 @@ kb-platform-profile set balanced
 kb-platform-profile cycle         # quiet → balanced → performance → …
 ```
 
-Custom fan PWM curves remain unavailable on UX5400EA / UX8406 (`fan_curve_get_factory_default` → ENODEV).
+## `platform-fan` — implemented (was `kb-fan`)
+
+`kb-fan` remains as a deprecation wrapper. Prefer **`platform-fan`** — this is
+thermal/fan control, not a keyboard Fn key.
+
+Probed on UX8406MA and UX5400EA (`asus-nb-wmi` hwmon):
+
+| Control | Result |
+|---------|--------|
+| Custom `pwm*_auto_point_*` curves | **Unavailable** (`fan_curve_get_factory_default` → ENODEV) |
+| `platform_profile` / `throttle_thermal_policy` | **Works** — quiet↔balanced↔performance (ttp 2/0/1) |
+| `pwm1_enable` | **0** = full-on (~max RPM), **2** = firmware auto; **1** (manual curve) → EINVAL |
+| `fan1_input` | RPM readout |
+
+```bash
+platform-probe                 # dry-run: what this machine supports
+platform-fan status
+platform-fan modes              # PWM auto/full + ACPI profiles available here
+platform-fan rpm
+platform-fan auto              # pwm1_enable=2
+platform-fan full              # pwm1_enable=0 (loud; needs root/sudo -n)
+platform-fan quiet|balanced|performance
+```
+
+## `platform-fan-control` — adaptive daemon (was `kb-fan-control`)
+
+Watches AC/battery, load, temp, and optional lid; applies named profiles via
+`kb-platform-profile` + `platform-fan`. Sleep/lid hooks fire one-shot events.
+
+```bash
+sudo mkdir -p /etc/zenbook-scripts
+sudo cp fan-control.json.example /etc/zenbook-scripts/fan-control.json
+# edit rules.ac / rules.battery / events.*
+platform-fan-control status
+platform-fan-control once                 # evaluate + apply once
+platform-fan-control event sleep_pre      # from sleep hooks
+platform-fan-control run                  # daemon (OpenRC: zenbook-platform-fan-control)
+```
+
+Config is plain JSON (no TOML / PyYAML), **machine-global** under
+`/etc/zenbook-scripts/fan-control.json` (override with `-c` or
+`FAN_CONTROL_CONFIG`). Fan / `platform_profile` cannot be per-user — only one
+policy applies on the laptop, so home-directory copies are ignored on purpose.
+
+OpenRC unit is installed but **not** auto-started by the ebuild (seed config first).
+`configure.py --include-fan-control` seeds `/etc/zenbook-scripts/fan-control.json`
+and enables the service.
+
+```bash
+# verify
+platform-probe
+platform-fan-control check
+platform-fan-control status
+rc-service zenbook-platform-fan-control status   # if enabled
+tail -f /var/log/zenbook-platform-fan-control.log
+
+# configure.py / configure.sh
+sudo ./configure.py --defaults --all-yes --include-fan-control --prefix /usr
+sudo ./configure.py --defaults --all-yes --no-include-fan-control
+# Gentoo: USE="fan_control" / USE="-fan_control"
+```
+
+## `platform-probe` — implemented
+
+```bash
+platform-probe                     # human-readable capability report
+platform-probe --json
+platform-probe --feature fan_pwm
+platform-probe --recommend-use     # Gentoo USE suggestions
+```
+
+## `platform-tray` / `platform-metrics` — implemented
+
+SQLite time series under `~/.local/share/zenbook-scripts/metrics.sqlite3`
+(Python stdlib `sqlite3` — no extra dep).
+
+```bash
+platform-metrics -n 20 -i 5        # CLI sampler
+platform-tray                      # tray menu + Open metrics graph…
+# Graph: X zoom 75–200%, sample interval 1–20s, sticky POI hover details
+```
+
+Requires PySide6 (`USE=qt6` / `emerge dev-python/pyside:6`). Fan writes from the
+tray use `sudo -n` only (never hang on a password prompt).
 
 ---
 

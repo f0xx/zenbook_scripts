@@ -21,12 +21,12 @@ zenbook_kb_find_root() {
 		return 0
 	fi
 
-	if [[ -f /usr/local/share/zenbook-scripts/lib/platform_profile.sh ]]; then
-		echo /usr/local/share/zenbook-scripts
-		return 0
-	fi
-
-	for candidate in "${here}/.." "${here}"; do
+	for candidate in \
+		/usr/share/zenbook-scripts \
+		/usr/local/share/zenbook-scripts \
+		"${here}/.." \
+		"${here}"; do
+		[[ -d "${candidate}" ]] || continue
 		candidate="$(cd "${candidate}" && pwd)"
 		if [[ -f "${candidate}/lib/platform_profile.sh" ]]; then
 			echo "${candidate}"

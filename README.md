@@ -37,20 +37,30 @@ Source: https://github.com/f0xx/zenbook_scripts/archive/refs/tags/v0.0.1_hf1.tar
 
 Full steps (overlay, Manifest, unmask, emerge, `eselect kernel`, services): **[packaging/README.md](packaging/README.md)**.
 
-Ebuild installs under **`/usr`** (`/usr/bin`, `/usr/libexec`, `/usr/share/zenbook-scripts`).  
-`configure.py` from git still uses **`/usr/local`**.
+Ebuild installs under **`/usr`**. `configure.py` defaults to **`/usr`** as well
+(`--prefix /usr/local` or `ZENBOOK_PREFIX=/usr/local` for the old layout).
 
 ```bash
 # After copying packaging/gentoo/* into your overlay's
 # app-laptop/zenbook-scripts/ and unmasking ~amd64:
 # eselect kernel set <N>   # match uname -r for USE=kernel
 emerge -av =app-laptop/zenbook-scripts-0.0.1_p1
-sudo rc-update add zenbook-kb-hid-asus boot    # UX8406 USE=kernel
+sudo rc-update add zenbook-kb-hid-asus default   # UX8406 USE=kernel
 sudo rc-update add zenbook-kb-hotkeys default
-# fn_row_policy=7 in /etc/conf.d/zenbook-kb-hid-asus
+sudo rc-update add zenbook-platform-fan-control default   # USE=fan_control
+# fn_row_policy=7 in /etc/conf.d/zenbook-kb-hid-asus (auto on UX8406 install)
 ```
 
 Live git: `zenbook-scripts-9999.ebuild` (needs `**` keywords).
+
+Platform thermal tools (all models with `asus-nb-wmi`):
+
+```bash
+platform-probe                 # what this machine supports
+platform-fan status|modes|auto|full
+platform-fan-control status|once|run
+platform-tray                  # USE=qt6 — metrics graph + profile/fan menu
+```
 
 ## Contributing
 
@@ -65,6 +75,8 @@ Live git: `zenbook-scripts-9999.ebuild` (needs `**` keywords).
 ## Quick links
 
 - [DEPLOY.md](DEPLOY.md) — when to rebuild / reinstall / reload `hid-asus`
+- [ROADMAP.md](ROADMAP.md) — where we are / next (EPP/RAPL, touchpad)
+- [PLANNED.md](PLANNED.md) — feature cheatsheets (`platform-fan*`, probe, tray)
 - [kernel/README.md](kernel/README.md) — out-of-tree `hid-asus` build & install
 - [packaging/README.md](packaging/README.md) — Gentoo ebuild / overlay notes
 - [packaging/debian/README.md](packaging/debian/README.md) — Debian/Ubuntu from source

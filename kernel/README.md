@@ -13,7 +13,20 @@ ported to 7.0.12-gentoo-r1 and 7.1.3-gentoo.
   - `/usr/src/linux-7.0.12-gentoo-r1` (symlinked from `/lib/modules/$(uname -r)/build`)
   - `/usr/src/linux-7.1.3-gentoo`
 - `CONFIG_HID_ASUS=m` (module, not built-in) so you can `rmmod` / `insmod`
+- `CONFIG_MODULES=y`
 - `CONFIG_ASUS_WMI` enabled (for `asus::kbd_backlight` listener integration)
+
+**No prebuilt `.ko` is shipped.** Always build against the local tree.
+
+```bash
+# Preflight (exit 0=ok, 1=ineligible, 2=risky→need --force, 3=no sources)
+python3 -m zenbook_kb.kernel_preflight
+# or: ./kernel/scripts/preflight-hid-asus.sh
+```
+
+`configure.py` prompts on UX8406 (or use `--with-kernel` / `--no-kernel` /
+`--kernel-force`). Gentoo `USE=kernel` is fail-closed; override risk with
+`ZENBOOK_KERNEL_FORCE=1`.
 
 ## Build
 

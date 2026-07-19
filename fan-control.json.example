@@ -1,0 +1,62 @@
+{
+  "daemon": {
+    "interval_sec": 5,
+    "hysteresis_sec": 30,
+    "watch_lid": true,
+    "watch_power": true,
+    "rules_while_lid_closed": false
+  },
+  "profiles": {
+    "powersave": {
+      "platform_profile": "quiet",
+      "pwm": "auto"
+    },
+    "balanced": {
+      "platform_profile": "balanced",
+      "pwm": "auto"
+    },
+    "performance": {
+      "platform_profile": "performance",
+      "pwm": "auto"
+    },
+    "full": {
+      "platform_profile": "performance",
+      "pwm": "full"
+    }
+  },
+  "rules": {
+    "ac": [
+      { "when": { "load_lt": 15 }, "profile": "powersave" },
+      { "when": { "load_gte": 15, "load_lt": 85 }, "profile": "balanced" },
+      { "when": { "load_gte": 85 }, "profile": "performance" }
+    ],
+    "battery": [
+      { "when": { "temp_lt": 65, "load_lt": 40 }, "profile": "powersave" },
+      { "when": { "temp_lt": 80 }, "profile": "balanced" },
+      { "when": { "temp_gte": 80 }, "profile": "performance" }
+    ]
+  },
+  "events": {
+    "lid_close": {
+      "profile": "powersave"
+    },
+    "lid_open": {
+      "profile": null
+    },
+    "sleep_pre": {
+      "profile": "powersave"
+    },
+    "sleep_post": {
+      "profile": null
+    },
+    "ac_online": {
+      "profile": null
+    },
+    "ac_offline": {
+      "profile": "powersave"
+    },
+    "ac_change": {
+      "profile": null
+    }
+  }
+}

@@ -3,6 +3,9 @@
 
 from __future__ import annotations
 
+import re
+import shutil
+import subprocess
 from pathlib import Path
 
 
@@ -15,11 +18,33 @@ def read_dmi(name: str) -> str:
 
 
 def product_name() -> str:
-    return read_dmi("product_name")
+    value = read_dmi("product_name")
+    if value:
+        return value
+    return _dmidecode_string("system-product-name")
 
 
 def board_name() -> str:
-    return read_dmi("board_name")
+    value = read_dmi("board_name")
+    if value:
+        return value
+    return _dmidecode_string("baseboard-product-name")
+
+
+def _dmidecode_string(key: str) -> str:
+    """Fallback when /sys/class/dmi/id is missing (needs sys-apps/dmidecode)."""
+    if not shutil.which("dmidecode"):
+        return ""
+    try:
+        out = subprocess.check_output(
+            ["dmidecode", "-s", key],
+            text=True,
+            stderr=subprocess.DEVNULL,
+            timeout=5,
+        )
+    except (subprocess.SubprocessError, OSError):
+        return ""
+    return out.strip()
 
 
 def is_ux5400() -> bool:
@@ -38,3 +63,14 @@ def has_screenpad_sysfs() -> bool:
 
 def has_platform_profile() -> bool:
     return Path("/sys/firmware/acpi/platform_profile").is_file()
+
+
+def ensure_conf_assignment(text: str, key: str, value: str) -> tuple[str, bool]:
+    """Return (new_text, changed) for OpenRC-style ``key=value``."""
+    line = f"{key}={value}"
+    pattern = re.compile(rf"^{re.escape(key)}=.*$", re.M)
+    if pattern.search(text):
+        new = pattern.sub(line, text)
+    else:
+        new = text.rstrip() + ("" if not text else "\n") + line + "\n"
+    return new, new != text

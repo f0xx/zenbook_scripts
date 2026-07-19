@@ -1,0 +1,132 @@
+#!/usr/bin/env bash
+# Fan status and limited control via asus-nb-wmi (UX8406 / UX5400).
+#
+# Usage:
+#   platform-fan status              # RPM, pwm mode, platform profile
+#   platform-fan modes               # what this machine actually supports
+#   platform-fan rpm
+#   platform-fan auto                # firmware automatic PWM (pwm1_enable=2)
+#   platform-fan full|max            # force full-on fans (pwm1_enable=0)
+#   platform-fan profile …           # alias → kb-platform-profile / platform_profile
+#
+# Custom temp→PWM curves are not exposed on these models.
+
+set -euo pipefail
+
+zenbook_kb_find_root() {
+	local here candidate
+
+	here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+	if [[ -f "${here}/../lib/fan.sh" ]]; then
+		echo "$(cd "${here}/.." && pwd)"
+		return 0
+	fi
+
+	for candidate in \
+		/usr/share/zenbook-scripts \
+		/usr/local/share/zenbook-scripts \
+		"${here}/.." \
+		"${here}"; do
+		[[ -d "${candidate}" ]] || continue
+		candidate="$(cd "${candidate}" && pwd)"
+		if [[ -f "${candidate}/lib/fan.sh" ]]; then
+			echo "${candidate}"
+			return 0
+		fi
+	done
+
+	echo "zenbook-scripts lib/fan.sh not found" >&2
+	return 1
+}
+
+SCRIPT_DIR="$(zenbook_kb_find_root)"
+# shellcheck source=lib/fan.sh
+source "${SCRIPT_DIR}/lib/fan.sh"
+# shellcheck source=lib/platform_profile.sh
+source "${SCRIPT_DIR}/lib/platform_profile.sh"
+
+usage() {
+	sed -n '2,13p' "$0"
+}
+
+if [[ $# -lt 1 ]]; then
+	usage >&2
+	exit 2
+fi
+
+if ! zenbook_fan_present; then
+	echo "asus fan hwmon not found under ${ZENBOOK_ASUS_WMI_PLATFORM}" >&2
+	exit 1
+fi
+
+CMD="$1"
+shift || true
+
+case "${CMD}" in
+	-h | --help)
+		usage
+		exit 0
+		;;
+	status | info)
+		zenbook_fan_status
+		;;
+	modes | available | capabilities)
+		zenbook_fan_modes
+		;;
+	rpm | speed)
+		zenbook_fan_rpm
+		;;
+	auto)
+		zenbook_fan_pwm_enable_set auto
+		zenbook_fan_status
+		;;
+	full | max | boost)
+		zenbook_fan_pwm_enable_set full
+		zenbook_fan_status
+		;;
+	profile)
+		if [[ $# -lt 1 ]]; then
+			echo "Usage: platform-fan profile get|list|set <name>|cycle" >&2
+			exit 2
+		fi
+		# Re-use platform_profile helpers (same as kb-platform-profile).
+		sub="$1"
+		shift || true
+		case "${sub}" in
+		get)
+			zenbook_platform_profile_get
+			;;
+		list | choices)
+			zenbook_platform_profile_list
+			;;
+		set)
+			[[ $# -ge 1 ]] || {
+				echo "Usage: platform-fan profile set <name>" >&2
+				exit 2
+			}
+			zenbook_platform_profile_set "$1"
+			;;
+		cycle | next)
+			zenbook_platform_profile_cycle
+			;;
+		*)
+			if zenbook_platform_profile_list | grep -qx "${sub}"; then
+				zenbook_platform_profile_set "${sub}"
+			else
+				echo "Unknown profile subcommand: ${sub}" >&2
+				exit 2
+			fi
+			;;
+		esac
+		;;
+	quiet | balanced | performance)
+		# Convenience: platform-fan quiet
+		zenbook_platform_profile_set "${CMD}"
+		zenbook_fan_status
+		;;
+	*)
+		echo "Unknown command: ${CMD}" >&2
+		usage >&2
+		exit 2
+		;;
+esac

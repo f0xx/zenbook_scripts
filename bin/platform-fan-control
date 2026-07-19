@@ -1,0 +1,224 @@
+#!/usr/bin/env python3
+"""Adaptive fan-profile daemon / event helper (JSON config, stdlib only)."""
+
+from __future__ import annotations
+
+import argparse
+import logging
+import sys
+from pathlib import Path
+
+# Prefer checkout/share that matches this revision (avoid stale /usr/local share).
+_ROOT = Path(__file__).resolve().parent.parent
+_SHARE_CANDIDATES = (
+    _ROOT,
+    Path("/usr/share/zenbook-scripts"),
+    Path("/usr/local/share/zenbook-scripts"),
+)
+_inserted = False
+for _share in _SHARE_CANDIDATES:
+    if (_share / "zenbook_kb" / "fan_control.py").is_file():
+        sys.path.insert(0, str(_share))
+        _inserted = True
+        break
+if not _inserted and (_ROOT / "zenbook_kb").is_dir():
+    sys.path.insert(0, str(_ROOT))
+
+from zenbook_kb.fan_control import (  # noqa: E402
+    ControllerState,
+    apply_profile,
+    daemon_loop,
+    format_status,
+    load_config,
+    maybe_apply_continuous,
+    pick_rule_profile,
+    run_event,
+    sample_system,
+)
+from zenbook_kb.users import default_fan_control_config  # noqa: E402
+
+
+def _service_running() -> str:
+    """Return OpenRC/systemd fan-control service state snippet."""
+    import shutil
+    import subprocess
+
+    if shutil.which("rc-service"):
+        for svc in ("zenbook-platform-fan-control", "zenbook-kb-fan-control"):
+            r = subprocess.run(
+                ["rc-service", svc, "status"],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            out = (r.stdout or r.stderr or "").strip()
+            if "does not exist" in out:
+                continue
+            line = out.splitlines()[0] if out else f"exit={r.returncode}"
+            return f"{svc}: {line}"
+        return "no fan-control OpenRC service installed"
+    if shutil.which("systemctl"):
+        r = subprocess.run(
+            ["systemctl", "is-active", "zenbook-platform-fan-control.service"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        return (r.stdout or r.stderr or "n/a").strip()
+    return "no init helper"
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "-c",
+        "--config",
+        type=Path,
+        default=None,
+        help="JSON config (default: /etc/zenbook-scripts/fan-control.json)",
+    )
+    parser.add_argument(
+        "-v",
+        "--verbose",
+        action="store_true",
+        help="debug logging",
+    )
+    sub = parser.add_subparsers(dest="cmd", required=True)
+
+    sub.add_parser("status", help="show sensors + current/wanted profile")
+    sub.add_parser(
+        "check",
+        help="exit 0 if config+sensors+rules look healthy (for post-install verify)",
+    )
+    sub.add_parser("once", help="evaluate AC/battery rules once and apply")
+    p_run = sub.add_parser("run", help="daemon loop")
+    p_run.add_argument(
+        "--foreground",
+        action="store_true",
+        help="kept for symmetry with other services (always foreground)",
+    )
+
+    p_ev = sub.add_parser("event", help="fire a named event from hooks")
+    p_ev.add_argument(
+        "name",
+        choices=(
+            "lid_close",
+            "lid_open",
+            "sleep_pre",
+            "sleep_post",
+            "ac_online",
+            "ac_offline",
+            "ac_change",
+        ),
+    )
+
+    p_apply = sub.add_parser("apply", help="force-apply a named profile")
+    p_apply.add_argument("profile")
+
+    args = parser.parse_args(argv)
+    logging.basicConfig(
+        level=logging.DEBUG if args.verbose else logging.INFO,
+        format="%(levelname)s %(message)s",
+    )
+
+    cfg_path = args.config or default_fan_control_config()
+    try:
+        cfg = load_config(cfg_path)
+    except FileNotFoundError as exc:
+        example = next(
+            (
+                p / "fan-control.json.example"
+                for p in (
+                    Path("/etc/zenbook-scripts"),
+                    *_SHARE_CANDIDATES,
+                )
+                if (p / "fan-control.json.example").is_file()
+            ),
+            Path("/usr/share/zenbook-scripts/fan-control.json.example"),
+        )
+        print(exc, file=sys.stderr)
+        print(
+            f"Example: sudo mkdir -p /etc/zenbook-scripts && "
+            f"sudo cp {example} {cfg_path}",
+            file=sys.stderr,
+        )
+        return 1
+
+    state = ControllerState()
+    sample = sample_system()
+
+    if args.cmd == "status":
+        print(f"config:   {cfg_path}")
+        print(format_status(cfg, sample, state))
+        return 0
+
+    if args.cmd == "check":
+        ok = True
+        print(f"config:   {cfg_path}")
+        if not cfg_path.is_file():
+            print("FAIL: config missing")
+            return 1
+        print("OK: config readable")
+        if not (cfg.get("profiles") or {}):
+            print("FAIL: no profiles defined")
+            ok = False
+        else:
+            print(f"OK: {len(cfg['profiles'])} profiles")
+        rules = cfg.get("rules") or {}
+        if not (rules.get("ac") or rules.get("battery")):
+            print("FAIL: rules.ac / rules.battery empty")
+            ok = False
+        else:
+            print(
+                f"OK: rules ac={len(rules.get('ac') or [])} "
+                f"battery={len(rules.get('battery') or [])}"
+            )
+        print(
+            f"OK: sensors power={'ac' if sample.on_ac else 'battery'} "
+            f"load={sample.load_pct:.1f}% temp={sample.temp_c} "
+            f"lid={sample.lid_open} rpm={sample.rpm}"
+        )
+        wanted = pick_rule_profile(cfg, sample)
+        if wanted:
+            print(f"OK: rule_want={wanted}")
+        else:
+            print("WARN: no rule matched current sensors")
+        svc = _service_running()
+        print(f"service:  {svc}")
+        if "started" in svc.lower() or svc.strip() == "active":
+            print("OK: daemon appears running")
+        else:
+            print("WARN: daemon not running (optional: rc-service zenbook-platform-fan-control start)")
+        return 0 if ok else 1
+
+    if args.cmd == "once":
+        maybe_apply_continuous(cfg, sample, state, force=True)
+        print(format_status(cfg, sample_system(), state))
+        return 0
+
+    if args.cmd == "apply":
+        apply_profile(cfg, args.profile)
+        state.last_profile = args.profile
+        print(format_status(cfg, sample_system(), state))
+        return 0
+
+    if args.cmd == "event":
+        run_event(cfg, args.name, state)
+        if args.name in ("sleep_post", "lid_open", "ac_change", "ac_online"):
+            maybe_apply_continuous(cfg, sample_system(), state, force=True)
+        print(format_status(cfg, sample_system(), state))
+        return 0
+
+    if args.cmd == "run":
+        logging.info("platform-fan-control starting config=%s", cfg_path)
+        try:
+            daemon_loop(cfg, state)
+        except KeyboardInterrupt:
+            logging.info("stopped")
+            return 0
+
+    return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

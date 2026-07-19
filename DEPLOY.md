@@ -1,6 +1,7 @@
 # When to redeploy (install / restart)
 
-Quick rule: **only redeploy userspace when installed files under `/usr/` (Gentoo ebuild) or `/usr/local/` (`configure.py`) must change.**
+Quick rule: **only redeploy userspace when installed files under `/usr/`
+(default `configure.py` / Gentoo ebuild) or a custom `--prefix` must change.**
 Kernel module tests and config-only edits often need **no** reinstall.
 
 ## Decision table
@@ -8,33 +9,38 @@ Kernel module tests and config-only edits often need **no** reinstall.
 | You changed or are doing… | Re-run `configure.py` install? | Restart `zenbook-kb-hotkeys`? | Rebuild kernel module? | Reload `hid-asus.ko`? |
 |---------------------------|-------------------------------|-------------------------------|------------------------|------------------------|
 | **Try patched `hid-asus.ko`** (`insmod` test) | No | **Stop** before `insmod`; start after if you want the listener | Only if `kernel/` sources changed | **Yes** (`rmmod` + `insmod` + rebind) |
-| **Edited `conf.d/*.conf`** in the git repo | **Yes** (copies to `/usr/local/share/zenbook-scripts/conf.d/`) | **Yes** | No | No |
+| **Edited `conf.d/*.conf`** in the git repo | **Yes** (copies to `$prefix/share/zenbook-scripts/conf.d/`) | **Yes** | No | No |
 | **Edited `~/.config/zenbook-scripts/zenbook-hotkeys.conf`** | No | **Yes** | No | No |
 | **Edited `zenbook_kb/*.py`** in the git repo | **Yes** | **Yes** | No | No |
 | **Edited `brightness.py`, `bin/kb-brightness*`** | **Yes** | Only if hotkey wrapper changed | No | No |
+| **Edited `bin/platform-fan*`, `bin/platform-probe`, `bin/platform-tray`, `lib/fan.sh`** | **Yes** | Restart `zenbook-platform-fan-control` if the daemon changed | No | No |
 | **Edited `bin/screenpad*`, `bin/kb-platform-profile`, `lib/screenpad.sh`** | **Yes** | No — restart `zenbook-screenpad-sync` if that daemon changed | No | No |
 | **Edited `contrib/openrc/` or udev rules** | **Yes** (install step) | **Yes** (or `rc-update` / `udevadm trigger`) | No | No |
 | **Edited `kernel/` patches or port script** | No | No | **Yes** (`make -f kernel/Makefile build-current`) | **Yes** after rebuild |
-| **Only use `kb-brightness` / `screenpad` CLI** | No | No | No | No |
+| **Only use `kb-brightness` / `screenpad` / `platform-fan` CLI** | No | No | No | No |
 | **Kernel upgrade** (new `uname -r`) | No | No | **Yes** for new KDIR | **Yes** (rebuild + load on new kernel) |
-| **Testing from git tree without installing** | No | No | No | No — run `./bin/screenpad` or `PYTHONPATH=. python3 …` |
+| **Testing from git tree without installing** | No | No | No | No — run `./bin/platform-fan` or `PYTHONPATH=. python3 …` |
 
 ## What “install” does
 
-`configure.py` (install step) copies into system paths:
+`configure.py` (install step) copies into system paths (default prefix **`/usr`**;
+override with `--prefix` / `ZENBOOK_PREFIX`):
 
 | Source | Destination |
 |--------|-------------|
-| `bin/kb-brightness`, `bin/kb-brightness-hotkeys` | `/usr/local/bin/` |
-| `bin/screenpad`, `screenpad-boot`, `screenpad-sync`, `kb-platform-profile` | `/usr/local/bin/` (when ScreenPad / UX5400 path runs) |
-| `zenbook_kb/`, `brightness.py`, `lib/` | `/usr/local/share/zenbook-scripts/` |
-| `conf.d/` | `/usr/local/share/zenbook-scripts/conf.d/` |
-| `contrib/udev/99-zenbook-kb-hotkeys.rules` | `/etc/udev/rules.d/`, `/usr/local/libexec/` |
+| `bin/kb-brightness`, `bin/kb-brightness-hotkeys` | `$prefix/bin/` |
+| `bin/platform-fan`, `platform-fan-control`, `platform-probe`, `platform-metrics` | `$prefix/bin/` |
+| `bin/platform-tray` | `$prefix/bin/` (when Qt6 path enabled) |
+| `bin/screenpad`, `screenpad-boot`, `screenpad-sync`, `kb-platform-profile` | `$prefix/bin/` (when ScreenPad / UX5400 path runs) |
+| `zenbook_kb/`, `brightness.py`, `lib/`, `fan-control.json.example` | `$prefix/share/zenbook-scripts/` |
+| `conf.d/` | `$prefix/share/zenbook-scripts/conf.d/` |
+| `contrib/udev/99-zenbook-kb-hotkeys.rules` | `/etc/udev/rules.d/`, `$prefix/libexec/` |
 | `contrib/udev/99-zenbook-screenpad.rules` | `/etc/udev/rules.d/` |
 | `contrib/openrc/zenbook-kb-*` | `/etc/init.d/`, `/etc/conf.d/` |
+| `contrib/openrc/zenbook-platform-fan-control` | `/etc/init.d/`, `/etc/conf.d/` |
 | `contrib/openrc/zenbook-screenpad*` | `/etc/init.d/zenbook-screenpad`, `zenbook-screenpad-sync` |
 
-**OpenRC service** runs `/usr/local/bin/kb-brightness-hotkeys` as the installing user
+**OpenRC service** runs `$prefix/bin/kb-brightness-hotkeys` as the installing user
 (`command_user` in `/etc/conf.d/zenbook-kb-hotkeys`). Do not copy `contrib/openrc/` by hand —
 always run `configure.py` so the conf.d file is written.
 

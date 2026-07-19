@@ -11,6 +11,7 @@ PRs that add proper packaging are welcome; they must go through review.
 ```bash
 sudo apt update
 sudo apt install -y python3 python3-usb python3-pip \
+  dmidecode \
   build-essential flex bison libelf-dev libssl-dev \
   linux-headers-$(uname -r)
 # optional GUI:
@@ -35,12 +36,14 @@ cd zenbook_scripts-0.0.1_hf1
 ## Userspace install
 
 ```bash
-sudo python3 configure.py --defaults --all-yes
+sudo python3 configure.py --defaults --all-yes --prefix /usr
 # or interactive: sudo python3 configure.py
+# fan-control: add --include-fan-control
+# UX8406 oot module: add --with-kernel (builds from sources; see kernel/README.md)
 ```
 
-That installs CLIs under `/usr/local/bin`, the share tree under
-`/usr/local/share/zenbook-scripts/`, udev rules, and systemd units when detected.
+That installs CLIs under `/usr/bin` (or `$prefix/bin`), the share tree under
+`/usr/share/zenbook-scripts/`, udev rules, and systemd/OpenRC units when detected.
 
 ### Enable systemd units (if installed)
 

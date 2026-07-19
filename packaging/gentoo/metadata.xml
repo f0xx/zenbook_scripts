@@ -17,10 +17,15 @@
 			Install udev rules, ACPI/sleep hooks, and OpenRC hotkey / lid services
 		</flag>
 		<flag name="kernel">
-			Build and install out-of-tree hid-asus.ko plus OpenRC boot sideload
-			(UX8406 docked keyboard)
+			Build oot hid-asus.ko from local kernel sources at emerge time
+			(fail-closed preflight; never ships a prebuilt .ko). Override risky
+			kernels with ZENBOOK_KERNEL_FORCE=1. UX8406 docked keyboard.
 		</flag>
-		<flag name="qt6">Install configure_gui.py (PySide6)</flag>
+		<flag name="qt6">Install configure_gui.py and platform-tray (PySide6)</flag>
+		<flag name="fan_control">
+			Install platform-fan / platform-fan-control, OpenRC unit, and
+			/etc/zenbook-scripts fan-control example
+		</flag>
 		<flag name="screenpad">
 			UX5400 ScreenPad CLI, udev rules, and OpenRC/systemd units
 		</flag>

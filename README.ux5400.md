@@ -52,15 +52,17 @@ All write `~/.config/zenbook-scripts/zenbook-duo.conf`. On first install, `zenbo
 
 When you answer **yes** to install:
 
-| Component | Path |
+| Component | Path (default prefix **`/usr`**) |
 |-----------|------|
-| CLI | `/usr/local/bin/kb-brightness`, `/usr/local/bin/kb-brightness-hotkeys` |
-| Support tree | `/usr/local/share/zenbook-scripts/` (`lib/`, `zenbook_kb/`, `brightness.py`, examples) |
-| sudoers | Passwordless `kb-brightness` for your user |
-| udev | `/etc/udev/rules.d/99-zenbook-kb-hotkeys.rules` + `/usr/local/libexec/zenbook-kb-hotkeys-udev` |
+| CLI | `/usr/bin/kb-brightness`, `/usr/bin/kb-brightness-hotkeys`, `/usr/bin/platform-fan*` |
+| Support tree | `/usr/share/zenbook-scripts/` (`lib/`, `zenbook_kb/`, `brightness.py`, examples) |
+| sudoers | Passwordless `kb-brightness` for your user (optional) |
+| udev | `/etc/udev/rules.d/99-zenbook-kb-hotkeys.rules` + `/usr/libexec/zenbook-kb-hotkeys-udev` |
 | `input` group | Your user added (re-login required) |
 
-**Gentoo overlay package** (`app-laptop/zenbook-scripts`) installs under **`/usr`** instead of `/usr/local` — see [`packaging/README.md`](packaging/README.md). Prefer one layout; do not mix emerge with `configure.py` install without cleaning the other prefix.
+Override with `--prefix /usr/local` or `ZENBOOK_PREFIX`. **Gentoo overlay**
+uses **`/usr`** — see [`packaging/README.md`](packaging/README.md). Prefer one
+layout; use `--cleanup-usr-local` after migrating.
 
 **Init system detection:** if `systemctl` is available → `systemd` unit `zenbook-kb-hotkeys.service`; otherwise → OpenRC `/etc/init.d/zenbook-kb-hotkeys` + `rc-update add`.
 
@@ -360,6 +362,12 @@ brightness.sh                 bash wrapper → kb-brightness
 bin/kb-brightness             brightness CLI
 bin/kb-brightness-hotkeys     Fn+ / special-key listener
 bin/kb-platform-profile       ACPI platform_profile (quiet/balanced/performance)
+bin/platform-fan              Fan RPM + auto/full-on + profile helpers
+bin/platform-fan-control      Adaptive AC/battery/lid/sleep profile daemon (JSON)
+bin/platform-probe            Capability dry-run / USE hints
+bin/platform-tray             Qt6 tray + thermal metrics (USE=qt6)
+bin/kb-fan                    Deprecated wrapper → platform-fan
+bin/kb-fan-control            Deprecated wrapper → platform-fan-control
 bin/screenpad                 ScreenPad Plus on/off/brightness (UX5400)
 bin/screenpad-boot            boot restore oneshot
 bin/screenpad-sync            mirror main panel brightness %
@@ -392,6 +400,7 @@ Branch `zenbook_ux5400e`. Fixed keyboard (WMI white backlight) + secondary Scree
 | `/sys/class/leds/asus::kbd_backlight/` | Keyboard backlight 0–3 (WMI; works out of the box) |
 | `/sys/class/backlight/asus_screenpad/` | ScreenPad brightness 0–255 + power |
 | `/sys/firmware/acpi/platform_profile` | `quiet` / `balanced` / `performance` (no custom fan curves) |
+| `asus-nb-wmi` hwmon `fan1_input` / `pwm1_enable` | RPM; `0`=full-on, `2`=auto (`platform-fan`) |
 
 ### CLI
 
@@ -405,6 +414,10 @@ screenpad sync            # one-shot match main panel %
 screenpad-sync [--once]   # daemon (or one-shot)
 
 kb-platform-profile get|list|set <name>|cycle
+platform-probe
+platform-fan status|modes|rpm|auto|full|quiet|balanced|performance
+platform-fan-control status|once|run|event …   # JSON /etc/zenbook-scripts/fan-control.json
+platform-tray                                  # USE=qt6 metrics graph
 ```
 
 **Kernel quirk (mainline before screenpad power fixes):** writing brightness with
@@ -425,7 +438,7 @@ python3 -c "from pathlib import Path; from zenbook_kb.install import install_scr
 
 | Piece | Path |
 |-------|------|
-| CLIs | `/usr/local/bin/screenpad`, `screenpad-boot`, `screenpad-sync`, `kb-platform-profile` |
+| CLIs | `/usr/bin/screenpad`, `screenpad-boot`, `screenpad-sync`, `kb-platform-profile`, `platform-fan*` |
 | udev | `/etc/udev/rules.d/99-zenbook-screenpad.rules` (group `video` write) |
 | OpenRC | `zenbook-screenpad`, `zenbook-screenpad-sync` |
 | systemd | `zenbook-screenpad.service`, `zenbook-screenpad-sync.service` |
@@ -453,9 +466,10 @@ kscreen-doctor -o | grep -A2 HDMI
 ls -l /sys/class/backlight/asus_screenpad/brightness
 groups | grep video
 
-# Fans: only profiles, not PWM curves
+# Fans: profiles + full-on/auto only (no PWM curves)
 dmesg | grep fan_curve_get_factory_default   # ENODEV is normal
 kb-platform-profile list
+platform-fan status
 ```
 
 See also [`PLANNED.md`](PLANNED.md) (implemented feature notes) and [`DEPLOY.md`](DEPLOY.md).

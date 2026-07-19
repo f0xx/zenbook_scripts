@@ -1,0 +1,2 @@
+# Machine-global fan / thermal policy (one config for the laptop, not per-user).
+# FAN_CONTROL_CONFIG=/etc/zenbook-scripts/fan-control.json
