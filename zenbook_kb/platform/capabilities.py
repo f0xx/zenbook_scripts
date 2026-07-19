@@ -203,7 +203,7 @@ def probe_intel_pstate() -> Feature:
         True,
         f"status={status}; epp={epp}",
         backend="intel_pstate",
-        install_hint="not wired into platform-fan-control yet (roadmap)",
+        install_hint="platform-fan-control profile key: epp",
     )
 
 
@@ -219,7 +219,7 @@ def probe_rapl() -> Feature:
         True,
         f"name={name}; constraint_0_uw={pl}",
         backend="powercap",
-        install_hint="roadmap: optional profile hook",
+        install_hint="platform-fan-control profile key: rapl.pl1_w / pl2_w",
     )
 
 
@@ -327,8 +327,8 @@ def probe_touchpad() -> Feature:
             "; ".join(uniq),
             backend="libinput/evdev",
             install_hint=(
-                "sensitivity: Plasma/Wayland via libinput AccelSpeed "
-                "(roadmap: platform-touchpad); not asus-wmi"
+                "palm filter: platform-touchpad monitor|run; "
+                "AccelSpeed still via Plasma/libinput"
             ),
         )
     return Feature(
@@ -353,7 +353,7 @@ def probe_touchpad_sensitivity() -> Feature:
             "Wayland session: use Plasma System Settings → Mouse & Touchpad "
             "(libinput AccelSpeed). Our CLI cannot set it portably yet.",
             backend="compositor",
-            install_hint="roadmap: platform-touchpad via KWin/DBus or libinput quirks",
+            install_hint="platform-touchpad for palm/exec-delay; AccelSpeed via Plasma",
         )
     if shutil.which("xinput"):
         return Feature(
@@ -362,14 +362,14 @@ def probe_touchpad_sensitivity() -> Feature:
             True,
             "X11: xinput/libinput AccelSpeed possible (experimental)",
             backend="xinput",
-            install_hint="roadmap: platform-touchpad",
+            install_hint="platform-touchpad for palm filters; AccelSpeed via xinput",
         )
     return Feature(
         "touchpad_sensitivity",
         "Touchpad sensitivity control",
         False,
-        "no portable control path detected",
-        install_hint="roadmap",
+        "no portable AccelSpeed path; use platform-touchpad palm filters",
+        install_hint="platform-touchpad monitor|run",
     )
 
 

@@ -418,7 +418,13 @@ platform-probe
 platform-fan status|modes|rpm|auto|full|quiet|balanced|performance
 platform-fan-control status|once|run|event …   # JSON /etc/zenbook-scripts/fan-control.json
 platform-tray                                  # USE=qt6 metrics graph
+platform-power status|epp|rapl                 # optional profile keys (this branch)
 ```
+
+**Field check (`feature/epp-rapl-touchpad`):** probe, fan RPM/PWM modes, adaptive
+`zenbook-platform-fan-control`, and tray metrics graph look good on UX5400EA.
+`zenbook-screenpad` is a boot oneshot (restart should not complain about missing
+processes). Long-running brightness mirror is `zenbook-screenpad-sync`.
 
 **Kernel quirk (mainline before screenpad power fixes):** writing brightness with
 `bl_power=0` keeps the panel off. `screenpad on` always sets `bl_power=1` then

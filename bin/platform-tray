@@ -5,6 +5,7 @@ Stores samples in SQLite (~/.local/share/zenbook-scripts/metrics.sqlite3).
 Never blocks on interactive sudo — fan writes use sudo -n / root only.
 
 Graph: X-zoom 75–200% (25% steps), sample interval 1–20s, sticky POI popups.
+Tray menu launches platform-touchpad-gui when that binary is on PATH.
 """
 
 from __future__ import annotations
@@ -374,8 +375,10 @@ class PlatformTray(QWidget):
         self.fan = _which("platform-fan", "kb-fan")
         self.profile = _which("kb-platform-profile")
         self.probe = _which("platform-probe")
+        self.touchpad_gui = _which("platform-touchpad-gui")
         self.store = MetricsStore()
         self.metrics_win: MetricsWindow | None = None
+        self._touchpad_gui_proc: subprocess.Popen | None = None
 
         self.tray = QSystemTrayIcon(self)
         icon = QIcon.fromTheme("weather-windy")
@@ -416,6 +419,16 @@ class PlatformTray(QWidget):
         graph = QAction("Open metrics graph…", self)
         graph.triggered.connect(self._open_graph)
         self.menu.addAction(graph)
+
+        tp_act = QAction("Touchpad filter tuner…", self)
+        tp_act.setEnabled(bool(self.touchpad_gui))
+        tp_act.setToolTip(
+            "platform-touchpad-gui"
+            if self.touchpad_gui
+            else "platform-touchpad-gui not found in PATH"
+        )
+        tp_act.triggered.connect(self._open_touchpad_gui)
+        self.menu.addAction(tp_act)
 
         probe_act = QAction("Run platform-probe…", self)
         probe_act.setEnabled(bool(self.probe))
@@ -474,6 +487,31 @@ class PlatformTray(QWidget):
         self.metrics_win.show()
         self.metrics_win.raise_()
         self.metrics_win.activateWindow()
+
+    def _open_touchpad_gui(self) -> None:
+        if not self.touchpad_gui:
+            self.tray.showMessage(
+                "platform-tray",
+                "platform-touchpad-gui not found in PATH",
+                QSystemTrayIcon.MessageIcon.Warning,
+                4000,
+            )
+            return
+        proc = self._touchpad_gui_proc
+        if proc is not None and proc.poll() is None:
+            return  # already running
+        try:
+            self._touchpad_gui_proc = subprocess.Popen(
+                [self.touchpad_gui],
+                start_new_session=True,
+            )
+        except OSError as exc:
+            self.tray.showMessage(
+                "platform-tray",
+                f"Failed to start touchpad tuner: {exc}",
+                QSystemTrayIcon.MessageIcon.Warning,
+                4000,
+            )
 
     def _show_probe(self) -> None:
         if not self.probe:

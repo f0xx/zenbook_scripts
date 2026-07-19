@@ -27,6 +27,8 @@ INSTALL_BIN_FAN_LEGACY: Path
 INSTALL_BIN_FAN_CONTROL: Path
 INSTALL_BIN_FAN_CONTROL_LEGACY: Path
 INSTALL_BIN_PLATFORM_PROBE: Path
+INSTALL_BIN_PLATFORM_POWER: Path
+INSTALL_BIN_PLATFORM_TOUCHPAD: Path
 INSTALL_BIN_PLATFORM_TRAY: Path
 INSTALL_BIN_FAN_HOOK: Path
 INSTALL_BIN_SNAPSHOT: Path
@@ -63,7 +65,8 @@ def refresh_install_paths(prefix: str | Path | None = None) -> Path:
     global INSTALL_BIN_SCREENPAD, INSTALL_BIN_SCREENPAD_SYNC, INSTALL_BIN_SCREENPAD_BOOT
     global INSTALL_BIN_PLATFORM_PROFILE, INSTALL_BIN_FAN, INSTALL_BIN_FAN_LEGACY
     global INSTALL_BIN_FAN_CONTROL, INSTALL_BIN_FAN_CONTROL_LEGACY
-    global INSTALL_BIN_PLATFORM_PROBE, INSTALL_BIN_PLATFORM_TRAY, INSTALL_BIN_FAN_HOOK
+    global INSTALL_BIN_PLATFORM_PROBE, INSTALL_BIN_PLATFORM_POWER
+    global INSTALL_BIN_PLATFORM_TOUCHPAD, INSTALL_BIN_PLATFORM_TRAY, INSTALL_BIN_FAN_HOOK
     global INSTALL_BIN_SNAPSHOT, UDEV_RULES, UDEV_SCREENPAD_RULES, UDEV_HELPER
     global OPENRC_INIT, OPENRC_LID_INIT, OPENRC_FAN_CONTROL_INIT, OPENRC_FAN_CONTROL_CONF
     global OPENRC_FAN_CONTROL_INIT_LEGACY, OPENRC_HID_ASUS_INIT, OPENRC_HID_ASUS_CONF
@@ -95,6 +98,8 @@ def refresh_install_paths(prefix: str | Path | None = None) -> Path:
     INSTALL_BIN_FAN_CONTROL = b / "platform-fan-control"
     INSTALL_BIN_FAN_CONTROL_LEGACY = b / "kb-fan-control"
     INSTALL_BIN_PLATFORM_PROBE = b / "platform-probe"
+    INSTALL_BIN_PLATFORM_POWER = b / "platform-power"
+    INSTALL_BIN_PLATFORM_TOUCHPAD = b / "platform-touchpad"
     INSTALL_BIN_PLATFORM_TRAY = b / "platform-tray"
     INSTALL_BIN_FAN_HOOK = b / "zenbook-fan-control-hook"
     INSTALL_BIN_SNAPSHOT = b / "snapshot-plan-state"
@@ -247,6 +252,8 @@ def install_kb_brightness_tree(script_dir: Path) -> None:
         (script_dir / "bin" / "platform-fan", INSTALL_BIN_FAN),
         (script_dir / "bin" / "platform-fan-control", INSTALL_BIN_FAN_CONTROL),
         (script_dir / "bin" / "platform-probe", INSTALL_BIN_PLATFORM_PROBE),
+        (script_dir / "bin" / "platform-power", INSTALL_BIN_PLATFORM_POWER),
+        (script_dir / "bin" / "platform-touchpad", INSTALL_BIN_PLATFORM_TOUCHPAD),
         (script_dir / "bin" / "platform-metrics", zb_paths.bin_dir() / "platform-metrics"),
         (script_dir / "bin" / "kb-fan", INSTALL_BIN_FAN_LEGACY),
         (script_dir / "bin" / "kb-fan-control", INSTALL_BIN_FAN_CONTROL_LEGACY),
@@ -258,6 +265,11 @@ def install_kb_brightness_tree(script_dir: Path) -> None:
     if tray.is_file():
         _sudo(["cp", str(tray), str(INSTALL_BIN_PLATFORM_TRAY)])
         _sudo(["chmod", "a+x", str(INSTALL_BIN_PLATFORM_TRAY)])
+    tp_gui = script_dir / "bin" / "platform-touchpad-gui"
+    if tp_gui.is_file():
+        dest = zb_paths.bin_dir() / "platform-touchpad-gui"
+        _sudo(["cp", str(tp_gui), str(dest)])
+        _sudo(["chmod", "a+x", str(dest)])
     fan_hook = script_dir / "contrib" / "openrc" / "zenbook-fan-control-hook.sh"
     if fan_hook.is_file():
         _sudo(["cp", str(fan_hook), str(INSTALL_BIN_FAN_HOOK)])
@@ -265,6 +277,9 @@ def install_kb_brightness_tree(script_dir: Path) -> None:
     example_fan = script_dir / "fan-control.json.example"
     if example_fan.is_file():
         _sudo(["cp", str(example_fan), str(INSTALL_SHARE / "fan-control.json.example")])
+    example_tp = script_dir / "touchpad.json.example"
+    if example_tp.is_file():
+        _sudo(["cp", str(example_tp), str(INSTALL_SHARE / "touchpad.json.example")])
     _sudo(["chmod", "a+x", str(INSTALL_BIN_BRIGHTNESS), str(INSTALL_BIN_HOTKEYS)])
     example_hotkeys = script_dir / "zenbook-hotkeys.conf.example"
     if example_hotkeys.is_file():
@@ -284,6 +299,8 @@ def print_install_summary() -> None:
         INSTALL_BIN_HOTKEYS,
         INSTALL_BIN_PLATFORM_PROFILE,
         INSTALL_BIN_PLATFORM_PROBE,
+        INSTALL_BIN_PLATFORM_POWER,
+        INSTALL_BIN_PLATFORM_TOUCHPAD,
         INSTALL_BIN_FAN,
         INSTALL_BIN_FAN_CONTROL,
         INSTALL_BIN_SCREENPAD,

@@ -9,19 +9,30 @@
   "profiles": {
     "powersave": {
       "platform_profile": "quiet",
-      "pwm": "auto"
+      "pwm": "auto",
+      "epp": "power",
+      "intel_pstate": { "max_perf_pct": 60, "no_turbo": false },
+      "rapl": { "pl1_w": 15, "pl2_w": 28 }
     },
     "balanced": {
       "platform_profile": "balanced",
-      "pwm": "auto"
+      "pwm": "auto",
+      "epp": "balance_performance",
+      "intel_pstate": { "max_perf_pct": 100, "no_turbo": false },
+      "rapl": { "pl1_w": 28, "pl2_w": 45 }
     },
     "performance": {
       "platform_profile": "performance",
-      "pwm": "auto"
+      "pwm": "auto",
+      "epp": "performance",
+      "intel_pstate": { "max_perf_pct": 100, "no_turbo": false },
+      "rapl": { "pl1_w": 45, "pl2_w": 64 }
     },
     "full": {
       "platform_profile": "performance",
-      "pwm": "full"
+      "pwm": "full",
+      "epp": "performance",
+      "intel_pstate": { "max_perf_pct": 100, "no_turbo": false }
     }
   },
   "rules": {

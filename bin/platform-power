@@ -1,0 +1,114 @@
+#!/usr/bin/env python3
+"""Inspect / set Intel EPP and RAPL package limits (stdlib + sudo -n)."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from pathlib import Path
+
+_ROOT = Path(__file__).resolve().parent.parent
+_SHARE_CANDIDATES = (
+    _ROOT,
+    Path("/usr/share/zenbook-scripts"),
+    Path("/usr/local/share/zenbook-scripts"),
+)
+for _share in _SHARE_CANDIDATES:
+    if (_share / "zenbook_kb" / "power.py").is_file():
+        sys.path.insert(0, str(_share))
+        break
+else:
+    if (_ROOT / "zenbook_kb").is_dir():
+        sys.path.insert(0, str(_ROOT))
+
+from zenbook_kb.power import (  # noqa: E402
+    apply_intel_pstate,
+    apply_rapl,
+    available_epp,
+    format_power_status,
+    read_epp,
+    read_intel_pstate,
+    read_rapl,
+    set_epp,
+)
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    sub = parser.add_subparsers(dest="cmd", required=True)
+
+    sub.add_parser("status", help="show EPP / intel_pstate / RAPL")
+    p_json = sub.add_parser("json", help="machine-readable status")
+    p_epp = sub.add_parser("epp", help="get or set energy_performance_preference")
+    p_epp.add_argument("value", nargs="?", help="omit to get; else set (all CPUs)")
+    p_rapl = sub.add_parser("rapl", help="set package PL1/PL2 (watts)")
+    p_rapl.add_argument("--pl1", type=float, default=None, help="long_term watts")
+    p_rapl.add_argument("--pl2", type=float, default=None, help="short_term watts")
+    p_ip = sub.add_parser("pstate", help="set intel_pstate knobs")
+    p_ip.add_argument("--no-turbo", choices=("0", "1"), default=None)
+    p_ip.add_argument("--min-perf-pct", type=int, default=None)
+    p_ip.add_argument("--max-perf-pct", type=int, default=None)
+
+    args = parser.parse_args(argv)
+    try:
+        if args.cmd == "status":
+            for line in format_power_status() or ["(no EPP/RAPL sysfs)"]:
+                print(line)
+            return 0
+        if args.cmd == "json":
+            print(
+                json.dumps(
+                    {
+                        "epp": read_epp(),
+                        "epp_available": available_epp(),
+                        "intel_pstate": read_intel_pstate(),
+                        "rapl": read_rapl(),
+                    },
+                    indent=2,
+                )
+            )
+            return 0
+        if args.cmd == "epp":
+            if args.value is None:
+                print(read_epp() or "n/a")
+                return 0
+            set_epp(args.value)
+            print(read_epp() or "")
+            return 0
+        if args.cmd == "rapl":
+            opts = {}
+            if args.pl1 is not None:
+                opts["pl1_w"] = args.pl1
+            if args.pl2 is not None:
+                opts["pl2_w"] = args.pl2
+            if not opts:
+                print("pass --pl1 and/or --pl2 (watts)", file=sys.stderr)
+                return 2
+            apply_rapl(opts)
+            for line in format_power_status():
+                if line.startswith("rapl:"):
+                    print(line)
+            return 0
+        if args.cmd == "pstate":
+            opts = {}
+            if args.no_turbo is not None:
+                opts["no_turbo"] = args.no_turbo
+            if args.min_perf_pct is not None:
+                opts["min_perf_pct"] = args.min_perf_pct
+            if args.max_perf_pct is not None:
+                opts["max_perf_pct"] = args.max_perf_pct
+            if not opts:
+                print(read_intel_pstate() or {})
+                return 0
+            apply_intel_pstate(opts)
+            print(read_intel_pstate())
+            return 0
+    except (OSError, PermissionError, ValueError, FileNotFoundError) as exc:
+        print(exc, file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

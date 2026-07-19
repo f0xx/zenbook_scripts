@@ -311,11 +311,21 @@ def apply_profile(cfg: dict[str, Any], name: str) -> None:
         else:
             raise ValueError(f"unknown pwm mode {pwm!r}")
 
+    from zenbook_kb.power import apply_power_knobs
+
+    apply_power_knobs(prof)
+
     run = prof.get("run")
     if run:
         subprocess.run(run, shell=True, check=False)
 
-    log.info("applied profile %s (platform_profile=%s pwm=%s)", name, pp, pwm)
+    log.info(
+        "applied profile %s (platform_profile=%s pwm=%s epp=%s)",
+        name,
+        pp,
+        pwm,
+        prof.get("epp"),
+    )
 
 
 def run_event(cfg: dict[str, Any], event: str, state: ControllerState) -> None:
@@ -396,6 +406,12 @@ def format_status(cfg: dict[str, Any], sample: Sample, state: ControllerState) -
         lines.append(f"ttp:      {_read_text(THROTTLE_TTP)}")
     wanted = pick_rule_profile(cfg, sample)
     lines.append(f"rule_want:{wanted or 'none'}")
+    try:
+        from zenbook_kb.power import format_power_status
+
+        lines.extend(format_power_status())
+    except Exception as exc:  # noqa: BLE001 — status must not crash
+        lines.append(f"power:    (error: {exc})")
     return "\n".join(lines)
 
 
