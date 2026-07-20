@@ -142,11 +142,32 @@ Defaults: `exec_delay` **25 ms**, `outlier_reject` **max_delta 1200**.
 `name|phys` (not `eventN`). GUI combo switches knobs per device; Save updates
 that device only. ELAN screen pads can stay `"enabled": false`.
 
-**Next:** typing-inhibit + soft-accel (live filter currently bypasses DE AccelSpeed).
+**Daemon pidfiles** (shared OpenRC / systemd / manual CLI):
+
+| Service | Pidfile |
+|---------|---------|
+| touchpad live filter | `/run/zenbook-platform-touchpad.pid` |
+| fan-control | `/run/zenbook-platform-fan-control.pid` |
+| kb-hotkeys | `/run/zenbook-kb-hotkeys.pid` |
+| screenpad-sync | `/run/zenbook-screenpad-sync.pid` |
+| kb-lid | `/run/zenbook-kb-lid.pid` |
+
+Helpers: `zenbook_kb/pidfile.py` + `lib/openrc-wait.sh` (`zenbook_rc_clear_stale_svc_pidfile`).
+Daemons self-write on start and clear on exit; stale files are removed on read /
+`start_pre`. Status CLIs report `live: running|stopped`.
+
+**typing_inhibit** (default on, ~350 ms): `exec_delay` / `outlier_reject` only
+while recent keyboard activity — idle pointing is pass-through.
+
+**soft_accel** (default gain 1.6, mode `linear`): scales ABS motion on the live
+uinput path so feel is closer to a +60% DE AccelSpeed (compositor accel does not
+apply to the virtual device). Mode `nonlinear` keeps slow moves near 1× and
+ramps toward `gain` on larger per-frame deltas (`pivot`, default 40).
 
 ```bash
 platform-touchpad list                 # shows stable key=
 platform-touchpad status
+platform-touchpad selftest
 platform-touchpad-gui                  # USE=qt6 / PySide6; also from platform-tray
 ```
 

@@ -327,7 +327,7 @@ ls /sys/class/leds/asus::kbd_backlight/
 echo 2 | sudo tee /sys/class/leds/asus::kbd_backlight/brightness
 ```
 
-Community kernel work: [hacker1024/linux `ux8406-hid`](https://github.com/hacker1024/linux/compare/v6.14.4...ux8406-hid). Docked Fn-row default after install: **`fn_row_policy=7`** (plain F4–F12 as F-keys; Fn+F specials — brightness, backlight, Win+P, ASUS key).
+Community kernel work: [hacker1024/linux `ux8406-hid`](https://github.com/hacker1024/linux/compare/v6.14.4...ux8406-hid). Docked Fn-row default after install: **`fn_row_policy=7`** (plain F4–F12 as F-keys; Fn+F specials — brightness, backlight, Win+P, ASUS key; F1–F3 keep Mode B media + EC volume on Fn).
 ### Experimental: asusctl / asusd
 
 Does **not** replace these scripts until `hid-asus` exposes `asus::kbd_backlight`. `asus_armoury` has no keyboard brightness attribute on UX8406.

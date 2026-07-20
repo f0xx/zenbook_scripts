@@ -1,0 +1,100 @@
+#!/usr/bin/env bash
+# Swap top/bottom (or left/right) positions of the two built-in Duo panels.
+# Used by Fn+F8 → KEY_F15 (hid-asus vendor 0x9c).
+#
+# Requires: kscreen-doctor (Plasma kscreen).
+
+set -euo pipefail
+
+if ! command -v kscreen-doctor >/dev/null 2>&1; then
+	echo "kscreen-doctor not found" >&2
+	exit 1
+fi
+
+# OpenRC hotkeys runs as the desktop user but often without a session bus.
+if [[ -z "${DBUS_SESSION_BUS_ADDRESS:-}" ]]; then
+	uid="$(id -u)"
+	if [[ -S "/run/user/${uid}/bus" ]]; then
+		export DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/${uid}/bus"
+	fi
+fi
+
+mapfile -t lines < <(kscreen-doctor -o 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g')
+
+declare -a names=()
+declare -a xs=()
+declare -a ys=()
+declare -a enabled=()
+
+cur=""
+cur_x=0
+cur_y=0
+cur_en=0
+
+flush() {
+	if [[ -n "${cur}" ]]; then
+		names+=("${cur}")
+		xs+=("${cur_x}")
+		ys+=("${cur_y}")
+		enabled+=("${cur_en}")
+	fi
+}
+
+for line in "${lines[@]}"; do
+	if [[ "${line}" =~ ^Output:[[:space:]]+[0-9]+[[:space:]]+(eDP-[0-9]+) ]]; then
+		flush
+		cur="${BASH_REMATCH[1]}"
+		cur_x=0
+		cur_y=0
+		cur_en=0
+		continue
+	fi
+	[[ -z "${cur}" ]] && continue
+	if [[ "${line}" =~ ^[[:space:]]*enabled[[:space:]]*$ ]]; then
+		cur_en=1
+	elif [[ "${line}" =~ ^[[:space:]]*disabled[[:space:]]*$ ]]; then
+		cur_en=0
+	elif [[ "${line}" =~ Geometry:[[:space:]]*(-?[0-9]+),(-?[0-9]+) ]]; then
+		cur_x="${BASH_REMATCH[1]}"
+		cur_y="${BASH_REMATCH[2]}"
+	fi
+done
+flush
+
+# Prefer two enabled panels; else enable both connected eDPs and place vertically.
+idx_a=-1
+idx_b=-1
+for i in "${!names[@]}"; do
+	[[ "${names[$i]}" == eDP-* ]] || continue
+	if (( idx_a < 0 )); then
+		idx_a=$i
+	elif (( idx_b < 0 )); then
+		idx_b=$i
+		break
+	fi
+done
+
+if (( idx_a < 0 || idx_b < 0 )); then
+	echo "need two eDP outputs (found: ${names[*]:-none})" >&2
+	exit 1
+fi
+
+a="${names[$idx_a]}"
+b="${names[$idx_b]}"
+ax="${xs[$idx_a]}"
+ay="${ys[$idx_a]}"
+bx="${xs[$idx_b]}"
+by="${ys[$idx_b]}"
+
+args=()
+if (( enabled[idx_a] == 0 )); then
+	args+=("output.${a}.enable")
+fi
+if (( enabled[idx_b] == 0 )); then
+	args+=("output.${b}.enable")
+fi
+
+# Swap positions (Windows Duo "screen flip" / up-down swap).
+args+=("output.${a}.position.${bx},${by}" "output.${b}.position.${ax},${ay}")
+
+exec kscreen-doctor "${args[@]}"

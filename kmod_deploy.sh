@@ -6,7 +6,8 @@ sudo ./kernel/scripts/unload-hid-asus.sh && sudo rmmod hid_asus
 sudo insmod "kernel/build/linux-${KVER}/hid-asus.ko" \
 	fn_row_policy="${ROW_POLICY}" fn_lock_default=0 fn_lock_allow_toggle=0 || exit
 sudo ./kernel/scripts/rebind-hid-asus.sh
-sudo rc-service zenbook-kb-hotkeys stop
+sudo rc-service -q zenbook-kb-hotkeys status >/dev/null 2>&1 && \
+	sudo rc-service zenbook-kb-hotkeys stop || true
 cat /sys/module/hid_asus/parameters/fn_row_policy   # must be ROW_POLICY value
 
 echo "run: cd repo && sudo PYTHONPATH=. python3 -m zenbook_kb.sniff 15"

@@ -1,0 +1,90 @@
+#!/sbin/openrc-run
+# Live touchpad palm-filter daemon (platform-touchpad run).
+#
+# Shares /run/zenbook-platform-touchpad.pid with the GUI launcher so either
+# path can detect / stop the same process. The daemon also writes this
+# pidfile; start-stop-daemon keeps OpenRC status in sync.
+#
+#   sudo cp contrib/openrc/zenbook-platform-touchpad /etc/init.d/
+#   sudo cp contrib/openrc/conf.d/zenbook-platform-touchpad /etc/conf.d/
+#   sudo rc-update add zenbook-platform-touchpad default
+#   sudo rc-service zenbook-platform-touchpad start
+#
+# Or start from platform-touchpad-gui (no OpenRC required).
+
+name="zenbook-platform-touchpad"
+description="Zenbook touchpad typing-inhibit / soft-accel live filter"
+
+: "${command:=/usr/bin/platform-touchpad}"
+: "${TOUCHPAD_CONFIG:=/etc/zenbook-scripts/touchpad.json}"
+: "${TOUCHPAD_DEVICE:=auto}"
+: "${command_args:=run --replace --config ${TOUCHPAD_CONFIG} --device ${TOUCHPAD_DEVICE}}"
+: "${command_background:=yes}"
+: "${pidfile:=/run/${RC_SVCNAME}.pid}"
+: "${output_log:=/var/log/${RC_SVCNAME}.log}"
+: "${error_log:=/var/log/${RC_SVCNAME}.log}"
+
+depend() {
+	need localmount
+	use logger
+	after udev modules
+}
+
+start_pre() {
+	for _wait_lib in \
+		/usr/share/zenbook-scripts/lib/openrc-wait.sh \
+		/usr/local/share/zenbook-scripts/lib/openrc-wait.sh; do
+		if [ -f "${_wait_lib}" ]; then
+			# shellcheck source=lib/openrc-wait.sh
+			. "${_wait_lib}"
+			zenbook_rc_clear_stale_svc_pidfile
+			break
+		fi
+	done
+	# Drop stale pidfile if process is gone (matches GUI / systemd helpers).
+	if [ -f "${pidfile}" ]; then
+		_pid="$(tr -d '[:space:]' < "${pidfile}" 2>/dev/null || true)"
+		if [ -n "${_pid}" ] && ! kill -0 "${_pid}" 2>/dev/null; then
+			rm -f "${pidfile}"
+		fi
+	fi
+	if [ ! -x "${command}" ]; then
+		for c in /usr/bin/platform-touchpad /usr/local/bin/platform-touchpad; do
+			if [ -x "${c}" ]; then
+				command="${c}"
+				break
+			fi
+		done
+	fi
+	if [ ! -x "${command}" ]; then
+		eerror "platform-touchpad not found"
+		return 1
+	fi
+	command_args="run --replace --config ${TOUCHPAD_CONFIG} --device ${TOUCHPAD_DEVICE}"
+	if [ -n "${output_log:-}" ]; then
+		checkpath -f -m 0644 -o root:root "${output_log}"
+	fi
+}
+
+stop() {
+	_pid=""
+	if [ -n "${pidfile:-}" ] && [ -f "${pidfile}" ]; then
+		_pid="$(tr -d '[:space:]' < "${pidfile}" 2>/dev/null || true)"
+	fi
+	if [ -n "${_pid}" ] && kill -0 "${_pid}" 2>/dev/null; then
+		default_stop
+		_rc=$?
+		rm -f "${pidfile}"
+		return ${_rc}
+	fi
+	rm -f "${pidfile:-}"
+	if command -v pgrep >/dev/null 2>&1; then
+		if pgrep -f "platform-touchpad.*run" >/dev/null 2>&1; then
+			default_stop
+			return $?
+		fi
+	fi
+	ebegin "Stopping ${RC_SVCNAME:-zenbook-platform-touchpad}"
+	eend 0
+	return 0
+}

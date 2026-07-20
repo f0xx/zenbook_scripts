@@ -32,6 +32,13 @@ CREATE INDEX IF NOT EXISTS idx_events_ts ON events(ts);
 # asus-nb-wmi pwm1_enable: 0=full-on, 2=auto (common on UX8406/5400)
 PWM_LABELS = {0: "full", 1: "manual", 2: "auto"}
 
+# Graph display: quiet ±1°C sensor chatter around a long-window baseline.
+TEMP_SMOOTH_WINDOW = 7  # odd; rolling median of raw samples
+TEMP_BASELINE_WINDOW = 61  # ~1 min at 1s sampling
+TEMP_DEADBAND_C = 3.0  # flatten when |smooth − baseline| < this
+TEMP_POI_DELTA_C = 3.0  # consecutive-sample POI; match deadband
+RPM_POI_DELTA = 800
+
 
 def pwm_label(mode: int | None) -> str:
     if mode is None:
@@ -56,6 +63,67 @@ class Sample:
     temp_c: float | None
     pwm_mode: int | None
     profile: str | None
+
+
+@dataclass
+class DisplayPoint:
+    """One plot point after temp smooth + deadband (rpm unchanged)."""
+
+    ts: float
+    temp_c: float | None
+    rpm: int | None
+    temp_raw: float | None = None
+    temp_baseline: float | None = None
+
+
+def _rolling_median(values: list[float | None], window: int) -> list[float | None]:
+    """Centered-ish rolling median; uses available neighbours at edges."""
+    n = len(values)
+    if n == 0:
+        return []
+    half = max(1, window // 2)
+    out: list[float | None] = []
+    for i in range(n):
+        chunk = [v for v in values[max(0, i - half) : i + half + 1] if v is not None]
+        if not chunk:
+            out.append(None)
+            continue
+        chunk.sort()
+        out.append(chunk[len(chunk) // 2])
+    return out
+
+
+def display_series(
+    samples: list[Sample],
+    *,
+    smooth_window: int = TEMP_SMOOTH_WINDOW,
+    baseline_window: int = TEMP_BASELINE_WINDOW,
+    deadband_c: float = TEMP_DEADBAND_C,
+) -> list[DisplayPoint]:
+    """Pre-smooth temps and flatten noise inside ``±deadband_c`` of baseline.
+
+    RPM is passed through unchanged. Raw samples in SQLite are not modified.
+    """
+    if not samples:
+        return []
+    raw = [s.temp_c for s in samples]
+    smooth = _rolling_median(raw, smooth_window)
+    baseline = _rolling_median(smooth, baseline_window)
+    points: list[DisplayPoint] = []
+    for s, sm, base in zip(samples, smooth, baseline, strict=True):
+        disp = sm
+        if sm is not None and base is not None and abs(sm - base) < deadband_c:
+            disp = base
+        points.append(
+            DisplayPoint(
+                ts=s.ts,
+                temp_c=disp,
+                rpm=s.rpm,
+                temp_raw=s.temp_c,
+                temp_baseline=base,
+            )
+        )
+    return points
 
 
 @dataclass
@@ -199,7 +267,7 @@ class MetricsStore:
             return
         if sample.temp_c is not None and prev.temp_c is not None:
             d = sample.temp_c - prev.temp_c
-            if d >= 2.0:
+            if d >= TEMP_POI_DELTA_C:
                 self.add_event(
                     "rise",
                     "temp_c",
@@ -207,7 +275,7 @@ class MetricsStore:
                     f"temp +{d:.1f}°C",
                     ts=sample.ts,
                 )
-            elif d <= -2.0:
+            elif d <= -TEMP_POI_DELTA_C:
                 self.add_event(
                     "fall",
                     "temp_c",
@@ -217,7 +285,7 @@ class MetricsStore:
                 )
         if sample.rpm is not None and prev.rpm is not None:
             d = sample.rpm - prev.rpm
-            if d >= 800:
+            if d >= RPM_POI_DELTA:
                 self.add_event(
                     "rise",
                     "rpm",
@@ -225,7 +293,7 @@ class MetricsStore:
                     f"rpm +{d}",
                     ts=sample.ts,
                 )
-            elif d <= -800:
+            elif d <= -RPM_POI_DELTA:
                 self.add_event(
                     "fall",
                     "rpm",

@@ -27,6 +27,16 @@ depend() {
 }
 
 start_pre() {
+	for _wait_lib in \
+		/usr/share/zenbook-scripts/lib/openrc-wait.sh \
+		/usr/local/share/zenbook-scripts/lib/openrc-wait.sh; do
+		if [ -f "${_wait_lib}" ]; then
+			# shellcheck source=lib/openrc-wait.sh
+			. "${_wait_lib}"
+			zenbook_rc_clear_stale_svc_pidfile
+			break
+		fi
+	done
 	if [ ! -x "${command}" ]; then
 		for c in /usr/bin/platform-fan-control /usr/local/bin/platform-fan-control \
 			/usr/bin/kb-fan-control /usr/local/bin/kb-fan-control; do
@@ -45,7 +55,7 @@ start_pre() {
 		ewarn "missing ${cfg}"
 		ewarn "copy fan-control.json.example → /etc/zenbook-scripts/fan-control.json"
 	fi
-	command_args="-c ${cfg} run"
+	command_args="-c ${cfg} run --replace"
 	if [ -n "${output_log:-}" ]; then
 		checkpath -f -m 0644 -o root:root "${output_log}"
 	fi

@@ -20,8 +20,8 @@ Status legend: **done** · **now** · **next** · **later**
 | Vendor-agnostic install hints | **done** | probe → Gentoo USE recommendations |
 | EPP / RAPL in fan-control profiles | **done** | `epp` / `rapl` / `intel_pstate` + `platform-power` |
 | Touchpad palm filter MVP | **done** | per-device profiles + Qt6 tuner; UX8406 primary |
-| Package / announce **0.0.2** | **now** | merge branch → tag/ebuild; retire “waits on EPP+touchpad” |
-| Touchpad typing-inhibit + soft-accel | **next** | arm filters while keys active; keep DE AccelSpeed feel |
+| Touchpad typing-inhibit + soft-accel | **now** | arm palm filters after keys; scale live uinput motion |
+| Package / announce **0.0.2** | **next** | merge typing-inhibit → tag/ebuild |
 | UX5400 palm / AccelSpeed polish | **later** | same pipeline; lower priority than UX8406 |
 | Generic non-ASUS fan backends | **later** | thinkpad/hp/dell hwmon profiles |
 | Full Plasma KCModule | **later** | optional; tray first |
@@ -40,8 +40,9 @@ palm edges + light taps move the pointer and steal focus from the current field.
 **MVP shipped:** ordered pipeline + per-device `touchpad.json` v2 +
 `platform-touchpad-gui` (also from tray when on PATH).
 
-**Next algo:** typing-inhibit (only filter shortly after keyboard activity) and/or
-soft-accel on the uinput device so live filter does not reset Plasma AccelSpeed.
+**Now:** `typing_inhibit` (palm filters only for ~350 ms after keyboard activity)
+and `soft_accel` (gain on live uinput motion — DE AccelSpeed does not apply to
+the virtual device).
 
 ```bash
 platform-touchpad list
@@ -85,12 +86,13 @@ platform-probe ──────────────► install decisions (
                     ├─► metrics SQLite graph  (validated UX5400)
                     ├─► platform-touchpad-gui ──► platform-touchpad
                     │         │                         │
+                    │         │                         ├─ typing-inhibit
                     │         │                         ├─ exec-delay
                     │         │                         ├─ outlier-reject
-                    │         │                         └─ (next) typing-inhibit
+                    │         │                         └─ soft-accel
                     │         └─ per-device touchpad.json v2
                     │
-                    └─► (now) package / announce 0.0.2
+                    └─► (next) package / announce 0.0.2
 
 screenpad* / zenbook-screenpad (oneshot)     UX5400 only
 screenpad-sync (daemon)                      optional brightness mirror

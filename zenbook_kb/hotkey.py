@@ -11,6 +11,7 @@ import os
 import pwd
 import select
 import shlex
+import shutil
 import struct
 import subprocess
 import sys
@@ -352,16 +353,56 @@ def _rfkill_toggle(which: str, dry_run: bool) -> None:
 
 
 def _audio_mic_mute(dry_run: bool) -> None:
-    for cmd in (
-        ["pactl", "set-source-mute", "@DEFAULT_SOURCE@", "toggle"],
-        ["amixer", "set", "Capture", "toggle"],
+    """Toggle default capture mute; prefer wpctl, then pactl, then amixer.
+
+    When bound from conf, also notify so there is OSD if the DE does not
+    own KEY_MICMUTE. Prefer leaving KEY_MICMUTE unbound so Plasma shows its
+    own mic-mute OSD.
+    """
+    muted: bool | None = None
+    for probe, toggle in (
+        (
+            ["wpctl", "get-volume", "@DEFAULT_SOURCE@"],
+            ["wpctl", "set-mute", "@DEFAULT_SOURCE@", "toggle"],
+        ),
+        (
+            ["pactl", "get-source-mute", "@DEFAULT_SOURCE@"],
+            ["pactl", "set-source-mute", "@DEFAULT_SOURCE@", "toggle"],
+        ),
     ):
+        if dry_run:
+            print("would try:", " ".join(toggle), flush=True)
+            return
+        if shutil.which(toggle[0]) is None:
+            continue
+        before = subprocess.run(probe, capture_output=True, text=True, check=False)
+        if subprocess.run(toggle, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode != 0:
+            continue
+        after = subprocess.run(probe, capture_output=True, text=True, check=False)
+        text = (after.stdout or before.stdout or "").lower()
+        if "muted: yes" in text or "[muted]" in text:
+            muted = True
+        elif "muted: no" in text or "volume:" in text:
+            muted = False
+        break
+    else:
+        cmd = ["amixer", "set", "Capture", "toggle"]
         if dry_run:
             print("would try:", " ".join(cmd), flush=True)
             return
-        if subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0:
-            return
+        subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
 
+    if muted is None or dry_run:
+        return
+    if shutil.which("notify-send") is None:
+        return
+    label = "Microphone muted" if muted else "Microphone on"
+    subprocess.run(
+        ["notify-send", "-a", "zenbook-kb-hotkeys", "-t", "1500", label],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        check=False,
+    )
 
 def dispatch_action(
     action: KeyAction,
@@ -787,6 +828,11 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Like --verbose, and log every evdev key plus unbound USB vendor codes",
     )
+    parser.add_argument(
+        "--replace",
+        action="store_true",
+        help="stop an existing hotkeys daemon (same pidfile) before listening",
+    )
     parser.add_argument("--no-usb", action="store_true", help="Disable USB vendor interface polling")
     parser.add_argument("--sniff-usb", type=float, metavar="SECS", help="Print raw USB vendor reports")
     parser.add_argument(
@@ -870,21 +916,38 @@ def main(argv: list[str] | None = None) -> int:
 
     _seed_fn_lock_state()
 
-    return listen(
-        devices,
-        args.kb_brightness,
-        config_path=args.config,
-        dry_run=args.dry_run,
-        log_unmapped=False if args.quiet_unmapped else None,
-        use_usb=None if not args.no_usb else False,
-        grab=args.grab,
-        watchdog_s=args.watchdog,
-        log_all_keys=args.log_all_keys,
-        verbose=args.verbose,
-        debug=args.debug,
-        device_name=device_name,
-        allow_rediscover=not args.device,
+    from zenbook_kb.pidfile import (
+        HOTKEYS_PIDFILE,
+        acquire_pidfile,
+        release_pidfile,
     )
+
+    conflict = acquire_pidfile(HOTKEYS_PIDFILE, replace=bool(args.replace))
+    if conflict is not None:
+        print(
+            f"hotkeys already running (pid {conflict}, {HOTKEYS_PIDFILE}); "
+            f"pass --replace to take over",
+            file=sys.stderr,
+        )
+        return 1
+    try:
+        return listen(
+            devices,
+            args.kb_brightness,
+            config_path=args.config,
+            dry_run=args.dry_run,
+            log_unmapped=False if args.quiet_unmapped else None,
+            use_usb=None if not args.no_usb else False,
+            grab=args.grab,
+            watchdog_s=args.watchdog,
+            log_all_keys=args.log_all_keys,
+            verbose=args.verbose,
+            debug=args.debug,
+            device_name=device_name,
+            allow_rediscover=not args.device,
+        )
+    finally:
+        release_pidfile(HOTKEYS_PIDFILE)
 
 
 if __name__ == "__main__":

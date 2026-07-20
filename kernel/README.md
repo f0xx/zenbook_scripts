@@ -219,25 +219,40 @@ That is fine — `CONFIG_HID_ASUS=m` loads on demand. The patched module replace
 
 | Bits | Keys | Bit **set** (1) | Bit **clear** (0) |
 |------|------|-----------------|-------------------|
-| 0–2 | F1–F3 | Re-emit plain if3 media on if0 (mixer-friendly) | Plain if3 media → `KEY_F1`–`F3` |
+| 0–2 | F1–F3 | unused | unused (plain if3 media always → `KEY_Fn` when policy ≠ 0) |
 | 3–11 | F4–F12 | Keep Mode B (plain = special, Fn = `KEY_Fn`) | **Swap:** plain = `KEY_Fn`, Fn+F = special |
-| 12 | Esc | reserved | reserved |
+| 12 | — | unused | unused |
 
-**Confirmed docked default:** `fn_row_policy=7` (0x07) — bits 0–2 set, bits 3–11 clear:
+**Confirmed docked default:** `fn_row_policy=7` (0x07) — F4–F12 swapped; plain F1–F3 → `KEY_Fn`:
 
 | Chord | Effect |
 |-------|--------|
-| Plain / Fn / Meta F1–F3 | Mode B + EC volume on Fn; Meta → workspace |
-| Plain F4–F6, F7, F12 | `KEY_F*` (desktop bindings) |
+| Plain F1–F3 | `KEY_F1`–`F3` (if3 media swallowed → if0). Terminal may show `^[OP` etc. |
+| Fn+F1–F3 | `KEY_MUTE` / `KEY_VOLUMEDOWN` / `KEY_VOLUMEUP` (if0 KEY_Fn remapped) |
+| Meta/Alt/Ctrl+F1–F3 | `KEY_Fn` for workspaces / launcher |
+| Plain F4–F12 | `KEY_F*` |
 | Fn+F4 | kbd backlight toggle |
 | Fn+F5/F6 | screen brightness |
 | Fn+F7 | Win+P (Plasma display switch) |
-| Fn+F12 | ASUS / MyASUS key (`KEY_PROG1`, vendor `0x86`) |
-| Meta+F4–F12 | workspace / desktop Meta+F |
+| Fn+F8 | `KEY_F15` (screen swap) |
+| Fn+F9 | `KEY_MICMUTE` |
+| Fn+F10 | `KEY_RFKILL` |
+| Fn+F11 | `KEY_EMOJI_PICKER` |
+| Fn+F12 | `KEY_PROG1` (ASUS key) |
+| Meta+F4–F12 | **Meta +** `KEY_Fn` |
+| Super tap | `KEY_LEFTMETA` pulse |
 
-Examples: `fn_row_policy=0` disables remaps; `fn_row_policy=15` keeps Mode B F4 (plain BL) — usually wrong for the table above.
+After rebuild: plain F3 → `KEY_F3` on if0 (not `KEY_VOLUMEUP` on if3). Fn+F1 → `KEY_MUTE`.
+hidraw3 may still log `03e9`. **EC may still change volume on F2/F3** even when the
+keycode is `KEY_F*` — that path is not HID-controllable.
 
-Meta/Super on if0 is handled for F-row shortcuts; plain F7’s firmware Win+P is remapped to `KEY_F7` when bit 6 is clear (intentional Meta+P on this keyboard then also becomes `KEY_F7` — use Fn+F7 for display switch).
+Examples: `fn_row_policy=0` disables remaps; `fn_row_policy=15` keeps Mode B F4 — usually wrong.
+
+Plain F7: firmware Win+P is remapped to bare `KEY_F7` (GUI-only precursor deferred so Meta never flashes). Fn+F7 still injects Win+P. Real Meta+P is also remapped to `KEY_F7` — use Fn+F7 for display switch.
+
+Synthetic Meta↓ (from deferred GUI flush for Meta+Fx) is tracked and **Meta↑ on GUI release** — HID will not clear an injected Meta, or it sticks and Fn+Fx becomes Meta+Fx.
+
+Simulator / regression: `python3 -m unittest tests.test_fn_row_policy -v`
 
 Full conf.d reference: [`DEPLOY.md`](../DEPLOY.md) §F (`/etc/conf.d/zenbook-kb-hid-asus`).
 

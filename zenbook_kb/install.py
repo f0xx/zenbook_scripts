@@ -45,12 +45,15 @@ OPENRC_HID_ASUS_CONF: Path
 OPENRC_SCREENPAD_INIT: Path
 OPENRC_SCREENPAD_SYNC_INIT: Path
 OPENRC_SCREENPAD_CONF: Path
+OPENRC_TOUCHPAD_INIT: Path
+OPENRC_TOUCHPAD_CONF: Path
 INSTALL_LIBEXEC: Path
 INSTALLED_KO_ROOT: Path
 OPENRC_CONF: Path
 SYSTEMD_UNIT: Path
 SYSTEMD_SCREENPAD_UNIT: Path
 SYSTEMD_SCREENPAD_SYNC_UNIT: Path
+SYSTEMD_TOUCHPAD_UNIT: Path
 SYSTEMD_SLEEP_HOOK: Path
 ACPI_EVENTS_DIR: Path
 ACPI_SLEEP_EVENT: Path
@@ -71,8 +74,10 @@ def refresh_install_paths(prefix: str | Path | None = None) -> Path:
     global OPENRC_INIT, OPENRC_LID_INIT, OPENRC_FAN_CONTROL_INIT, OPENRC_FAN_CONTROL_CONF
     global OPENRC_FAN_CONTROL_INIT_LEGACY, OPENRC_HID_ASUS_INIT, OPENRC_HID_ASUS_CONF
     global OPENRC_SCREENPAD_INIT, OPENRC_SCREENPAD_SYNC_INIT, OPENRC_SCREENPAD_CONF
+    global OPENRC_TOUCHPAD_INIT, OPENRC_TOUCHPAD_CONF
     global INSTALL_LIBEXEC, INSTALLED_KO_ROOT, OPENRC_CONF
     global SYSTEMD_UNIT, SYSTEMD_SCREENPAD_UNIT, SYSTEMD_SCREENPAD_SYNC_UNIT
+    global SYSTEMD_TOUCHPAD_UNIT
     global SYSTEMD_SLEEP_HOOK, ACPI_EVENTS_DIR, ACPI_SLEEP_EVENT, ACPI_SLEEP_HELPER
     global MODPROBE_CONF
 
@@ -116,12 +121,15 @@ def refresh_install_paths(prefix: str | Path | None = None) -> Path:
     OPENRC_SCREENPAD_INIT = zb_paths.INITD_DIR / "zenbook-screenpad"
     OPENRC_SCREENPAD_SYNC_INIT = zb_paths.INITD_DIR / "zenbook-screenpad-sync"
     OPENRC_SCREENPAD_CONF = zb_paths.CONFD_DIR / "zenbook-screenpad"
+    OPENRC_TOUCHPAD_INIT = zb_paths.INITD_DIR / "zenbook-platform-touchpad"
+    OPENRC_TOUCHPAD_CONF = zb_paths.CONFD_DIR / "zenbook-platform-touchpad"
     INSTALL_LIBEXEC = lx
     INSTALLED_KO_ROOT = zb_paths.KO_ROOT
     OPENRC_CONF = zb_paths.CONFD_DIR / "zenbook-kb-hotkeys"
     SYSTEMD_UNIT = zb_paths.SYSTEMD_DIR / "zenbook-kb-hotkeys.service"
     SYSTEMD_SCREENPAD_UNIT = zb_paths.SYSTEMD_DIR / "zenbook-screenpad.service"
     SYSTEMD_SCREENPAD_SYNC_UNIT = zb_paths.SYSTEMD_DIR / "zenbook-screenpad-sync.service"
+    SYSTEMD_TOUCHPAD_UNIT = zb_paths.SYSTEMD_DIR / "zenbook-platform-touchpad.service"
     SYSTEMD_SLEEP_HOOK = zb_paths.SYSTEMD_SLEEP_DIR / "zenbook-kb-brightness"
     ACPI_EVENTS_DIR = zb_paths.ACPI_EVENTS_DIR
     ACPI_SLEEP_EVENT = ACPI_EVENTS_DIR / "zenbook-kbd-sleep"
@@ -254,6 +262,7 @@ def install_kb_brightness_tree(script_dir: Path) -> None:
         (script_dir / "bin" / "platform-probe", INSTALL_BIN_PLATFORM_PROBE),
         (script_dir / "bin" / "platform-power", INSTALL_BIN_PLATFORM_POWER),
         (script_dir / "bin" / "platform-touchpad", INSTALL_BIN_PLATFORM_TOUCHPAD),
+        (script_dir / "bin" / "platform-screen-swap", zb_paths.bin_dir() / "platform-screen-swap"),
         (script_dir / "bin" / "platform-metrics", zb_paths.bin_dir() / "platform-metrics"),
         (script_dir / "bin" / "kb-fan", INSTALL_BIN_FAN_LEGACY),
         (script_dir / "bin" / "kb-fan-control", INSTALL_BIN_FAN_CONTROL_LEGACY),
@@ -544,6 +553,75 @@ def install_openrc_fan_control(
     )
 
 
+def install_touchpad_daemon_support(
+    script_dir: Path,
+    *,
+    enable_service: bool = False,
+) -> None:
+    """Install OpenRC and/or systemd unit for ``platform-touchpad run``.
+
+    Same pidfile (``/run/zenbook-platform-touchpad.pid``) as the GUI. Does not
+    enable the service by default — GUI or ``rc-update`` / ``systemctl enable``
+    is intentional opt-in.
+    """
+    example_tp = script_dir / "touchpad.json.example"
+    etc_dir = zb_paths.ETC_ZENBOOK
+    _sudo(["mkdir", "-p", str(etc_dir)])
+    if example_tp.is_file():
+        _sudo(["cp", str(example_tp), str(etc_dir / "touchpad.json.example")])
+        live = etc_dir / "touchpad.json"
+        if not live.is_file():
+            _sudo(["cp", str(example_tp), str(live)])
+            print(f"Seeded {live} from example")
+
+    init = detect_init_system()
+    if init == "systemd":
+        src = script_dir / "contrib" / "systemd" / "zenbook-platform-touchpad.service"
+        if src.is_file():
+            content = src.read_text(encoding="utf-8")
+            content = content.replace("/usr/bin/platform-touchpad", str(INSTALL_BIN_PLATFORM_TOUCHPAD))
+            _root_run(
+                ["tee", str(SYSTEMD_TOUCHPAD_UNIT)],
+                check=True,
+                input_bytes=content.encode(),
+            )
+            _sudo(["systemctl", "daemon-reload"])
+            if enable_service:
+                _sudo(["systemctl", "enable", "--now", "zenbook-platform-touchpad.service"])
+            print(f"Installed systemd unit {SYSTEMD_TOUCHPAD_UNIT}")
+    else:
+        src = script_dir / "contrib" / "openrc" / "zenbook-platform-touchpad"
+        conf_src = script_dir / "contrib" / "openrc" / "conf.d" / "zenbook-platform-touchpad"
+        if src.is_file():
+            content = src.read_text(encoding="utf-8")
+            _root_run(
+                ["tee", str(OPENRC_TOUCHPAD_INIT)],
+                check=True,
+                input_bytes=content.encode(),
+            )
+            _sudo(["chmod", "a+x", str(OPENRC_TOUCHPAD_INIT)])
+            rewrite_file_prefix(OPENRC_TOUCHPAD_INIT)
+        if conf_src.is_file():
+            _sudo(["cp", str(conf_src), str(OPENRC_TOUCHPAD_CONF)])
+        _sudo(["touch", "/var/log/zenbook-platform-touchpad.log"])
+        if enable_service and shutil.which("rc-update"):
+            _root_run(
+                ["rc-update", "add", "zenbook-platform-touchpad", "default"],
+                check=False,
+                timeout=30,
+            )
+            if shutil.which("rc-service"):
+                _root_run(
+                    ["rc-service", "zenbook-platform-touchpad", "restart"],
+                    check=False,
+                    timeout=30,
+                )
+        print(
+            f"Installed OpenRC {OPENRC_TOUCHPAD_INIT} "
+            f"(enable: rc-update add zenbook-platform-touchpad default)"
+        )
+
+
 def install_fan_control_support(
     script_dir: Path,
     *,
@@ -701,7 +779,7 @@ def install_hid_asus_ko(script_dir: Path, *, force: bool = False) -> bool:
 
 
 def ensure_ux8406_fn_row_policy(script_dir: Path) -> None:
-    """Force ``fn_row_policy=7`` in hid-asus conf.d on UX8406 (dmidecode/sysfs)."""
+    """Force ``fn_row_policy=7`` (plain F1–F3→KEY_Fn + F4–F12 swap) on UX8406."""
     from zenbook_kb.dmi import ensure_conf_assignment, is_ux8406
 
     if not is_ux8406():
@@ -892,6 +970,7 @@ def install_all(
 
     install_kb_brightness_tree(script_dir)
     install_sudoers_kb_brightness()
+    install_touchpad_daemon_support(script_dir, enable_service=False)
     print(f"Installed {INSTALL_BIN_BRIGHTNESS} and {INSTALL_BIN_HOTKEYS}")
     print(f"Support files under {INSTALL_SHARE}/")
 
