@@ -5,7 +5,13 @@ based on [Keep a Changelog](https://keepachangelog.com/). Version tags follow
 Gentoo-friendly naming where needed (`v0.0.1_hf1` → PV `0.0.1_p1`,
 `v0.0.2_pre1` → PV `0.0.2_pre1`).
 
-## [Unreleased] — toward **0.0.2**
+## [Unreleased]
+
+(nothing yet)
+
+## [0.0.2] — 2026-07-21
+
+Tag: [`v0.0.2`](https://github.com/f0xx/zenbook_scripts/releases/tag/v0.0.2). Gentoo PV: `0.0.2`.
 
 ### Added
 
@@ -33,12 +39,10 @@ Gentoo-friendly naming where needed (`v0.0.1_hf1` → PV `0.0.1_p1`,
 - UX8406 docked default remains **`fn_row_policy=7`** (F4–F12 swap + F1–F3
   fixed remap). See the Fn-row README for the full chord table.
 
-### Packaging note
+### Includes (since 0.0.2_pre1)
 
-Announced **0.0.2** is cut from `main` after this branch merges. Do **not** invent
-Manifest digests before the git tag/tarball exists. Prefer: merge → draft release
-notes on tag → `ebuild … manifest` → publish release. Packaging-only follow-ups
-use Gentoo `-rN` or `_pN`, not a second “same sources” product release.
+- EPP/RAPL power hooks, `platform-probe`, Qt6 tray, palm-filter MVP, adaptive
+  fan-control — see [0.0.2_pre1](#0202_pre1--2026-07-19).
 
 ## [0.0.2_pre1] — 2026-07-19
 
