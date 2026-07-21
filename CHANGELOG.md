@@ -5,9 +5,17 @@ based on [Keep a Changelog](https://keepachangelog.com/). Version tags follow
 Gentoo-friendly naming where needed (`v0.0.1_hf1` → PV `0.0.1_p1`,
 `v0.0.2_pre1` → PV `0.0.2_pre1`).
 
-## [Unreleased]
+## [Unreleased] — toward next RC (Plasma KCM + session)
 
-(nothing yet)
+Branch: `feature/plasma-kcm-powerdevil`. Design:
+[`README.plasma.md`](README.plasma.md).
+
+### Planned
+
+- Plasma **KCModule** (System Settings) over probe / touchpad / thermal / sleep.
+- **Per-user** sleep/hibernate/resume policies + presentation inhibit outside
+  plasmashell (survives `plasmashell --replace`).
+- Optional QSG-thread watch / gated auto-replace (off by default).
 
 ## [0.0.2] — 2026-07-21
 

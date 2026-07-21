@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "active_profile": "default",
+  "profiles": {
+    "default": {
+      "on_sleep": ["brightness_save", "fan_sleep_pre"],
+      "on_resume": ["brightness_restore", "fan_sleep_post"],
+      "on_hibernate": ["brightness_save"],
+      "presentation": {
+        "restore_after_plasmashell_replace": true,
+        "inhibit_backend": "auto"
+      },
+      "plasmashell": {
+        "watch_qsg_threads": false,
+        "auto_replace": false,
+        "qsg_thread_threshold": 32
+      }
+    }
+  }
+}

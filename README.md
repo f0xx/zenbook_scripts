@@ -7,13 +7,15 @@ package. We do **not** act as distro maintainers or QA. Use at your own risk.
 
 ## Models
 
-| Model | Docs | Branch |
-|-------|------|--------|
-| [ASUS Zenbook UX8406 (MA)](README.ux8406.md) | [`README.ux8406.md`](README.ux8406.md) | [`zenbook_ux8406ma`](https://github.com/f0xx/zenbook_scripts/tree/zenbook_ux8406ma) |
-| [ASUS Zenbook UX5400 (E)](README.ux5400.md) | [`README.ux5400.md`](README.ux5400.md) | [`zenbook_ux5400e`](https://github.com/f0xx/zenbook_scripts/tree/zenbook_ux5400e) |
-| ASUS Zenbook UX582 (LR) | — | [`zenbook_ux582lr`](https://github.com/f0xx/zenbook_scripts/tree/zenbook_ux582lr) |
+| Model | Docs | Notes |
+|-------|------|-------|
+| [ASUS Zenbook UX8406 (MA)](README.ux8406.md) | [`README.ux8406.md`](README.ux8406.md) | Docs on **`main`** |
+| [ASUS Zenbook UX5400 (E)](README.ux5400.md) | [`README.ux5400.md`](README.ux5400.md) | Docs on **`main`** |
+| ASUS Zenbook UX581 / UX582 | — | Lightbar work: [`zenbook_ux581`](https://github.com/f0xx/zenbook_scripts/tree/zenbook_ux581) (hardware pending) |
 
-Model-specific READMEs live on `main` after merge; feature work continues on the model branches.
+Model docs live on `main`. Active feature work: `feature/plasma-kcm-powerdevil`
+([README.plasma.md](README.plasma.md)). Stalled per-model git branches were pruned
+after merge.
 
 ## Install
 
@@ -95,6 +97,7 @@ platform-tray                  # USE=qt6 — metrics graph + profile/fan menu
 - [ROADMAP.md](ROADMAP.md) — where we are / next
 - [CHANGELOG.md](CHANGELOG.md) — release notes (keep updated with tags)
 - [PLANNED.md](PLANNED.md) — feature cheatsheets (`platform-fan*`, probe, tray)
+- [README.plasma.md](README.plasma.md) — Plasma KCM + PowerDevil / session (next RC)
 - [README.fn_row_policy.md](README.fn_row_policy.md) — UX8406 `fn_row_policy` bitmask / chords
 - [kernel/README.md](kernel/README.md) — out-of-tree `hid-asus` build & install
 - [packaging/README.md](packaging/README.md) — Gentoo ebuild / overlay notes
