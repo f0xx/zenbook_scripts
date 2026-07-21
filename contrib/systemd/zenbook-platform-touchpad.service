@@ -1,0 +1,16 @@
+[Unit]
+Description=Zenbook touchpad typing-inhibit / soft-accel live filter
+Documentation=file:///usr/share/zenbook-scripts/touchpad.json.example
+After=local-fs.target
+Wants=local-fs.target
+
+[Service]
+Type=simple
+# Process writes /run/zenbook-platform-touchpad.pid for GUI / OpenRC parity.
+ExecStart=/usr/bin/platform-touchpad run --replace --config /etc/zenbook-scripts/touchpad.json --device auto
+ExecStop=/bin/kill -s INT $MAINPID
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

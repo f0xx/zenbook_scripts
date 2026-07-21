@@ -4,7 +4,8 @@
 name="zenbook-screenpad-sync"
 description="Zenbook ScreenPad brightness sync"
 
-: "${command:=/usr/local/bin/screenpad-sync}"
+: "${command:=/usr/bin/screenpad-sync}"
+: "${command_args:=--replace}"
 : "${command_background:=yes}"
 : "${pidfile:=/run/${RC_SVCNAME}.pid}"
 : "${output_log:=/var/log/${RC_SVCNAME}.log}"
@@ -16,8 +17,20 @@ depend() {
 }
 
 start_pre() {
+	for _wait_lib in \
+		/usr/share/zenbook-scripts/lib/openrc-wait.sh \
+		/usr/local/share/zenbook-scripts/lib/openrc-wait.sh; do
+		if [ -f "${_wait_lib}" ]; then
+			# shellcheck source=lib/openrc-wait.sh
+			. "${_wait_lib}"
+			zenbook_rc_clear_stale_svc_pidfile
+			break
+		fi
+	done
 	if [ -x /usr/local/bin/screenpad-boot ]; then
 		SCREENPAD_BOOT_MODE=on /usr/local/bin/screenpad-boot >/dev/null 2>&1 || true
+	elif [ -x /usr/bin/screenpad-boot ]; then
+		SCREENPAD_BOOT_MODE=on /usr/bin/screenpad-boot >/dev/null 2>&1 || true
 	fi
 	if [ -n "${output_log:-}" ]; then
 		checkpath -f -m 0644 -o root:root "${output_log}"

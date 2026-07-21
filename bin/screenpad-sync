@@ -20,6 +20,17 @@ import sys
 import time
 from pathlib import Path
 
+_ROOT = Path(__file__).resolve().parent.parent
+_SHARE_CANDIDATES = (
+    _ROOT,
+    Path("/usr/share/zenbook-scripts"),
+    Path("/usr/local/share/zenbook-scripts"),
+)
+for _share in _SHARE_CANDIDATES:
+    if (_share / "zenbook_kb" / "pidfile.py").is_file():
+        sys.path.insert(0, str(_share))
+        break
+
 
 SCREENPAD_DEFAULT = Path("/sys/class/backlight/asus_screenpad")
 MIN_ON = int(os.environ.get("MIN_SCREENPAD_LEVEL", "20"))
@@ -154,13 +165,32 @@ def watch_loop(main: Path, sp: Path) -> None:
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     once = os.environ.get("ONCE", "0") == "1" or "--once" in argv
+    replace = "--replace" in argv
     sp = find_screenpad()
     main_bl = find_main(sp)
     target = sync_once(main_bl, sp)
     print(f"synced {main_bl.name} -> {sp.name} brightness={target}", flush=True)
     if once:
         return 0
-    watch_loop(main_bl, sp)
+
+    from zenbook_kb.pidfile import (
+        SCREENPAD_SYNC_PIDFILE,
+        acquire_pidfile,
+        release_pidfile,
+    )
+
+    conflict = acquire_pidfile(SCREENPAD_SYNC_PIDFILE, replace=replace)
+    if conflict is not None:
+        print(
+            f"screenpad-sync already running (pid {conflict}, {SCREENPAD_SYNC_PIDFILE}); "
+            f"pass --replace to take over",
+            file=sys.stderr,
+        )
+        return 1
+    try:
+        watch_loop(main_bl, sp)
+    finally:
+        release_pidfile(SCREENPAD_SYNC_PIDFILE)
     return 0
 
 

@@ -20,8 +20,10 @@ Copy recipes into your own overlay or install from a release tarball / git check
 
 ### Pre-release `v0.0.2_pre1` (testing; not the announced 0.0.2)
 
-Announced **0.0.2** is next after merging `feature/epp-rapl-touchpad` (EPP/RAPL +
-`platform-touchpad` + OpenRC fixes; UX5400 fan/tray validated). Meanwhile:
+Announced **0.0.2** is next after merging `feature/typing-inhibit` (typing-inhibit /
+soft-accel / pidfiles on top of EPP/RAPL + palm MVP). Release order:
+**merge → draft GitHub notes on a real tag → Manifest/ebuild from that tarball →
+publish** — never invent digests before the archive exists. Meanwhile:
 
 https://github.com/f0xx/zenbook_scripts/archive/refs/tags/v0.0.2_pre1.tar.gz
 

@@ -6,24 +6,30 @@
       "enabled": true,
       "filters": [
         { "plugin": "event_sim", "enabled": false },
+        { "plugin": "typing_inhibit", "window_ms": 350, "enabled": true },
         { "plugin": "exec_delay", "ms": 25, "enabled": true },
-        { "plugin": "outlier_reject", "max_delta": 1200, "enabled": true }
+        { "plugin": "outlier_reject", "max_delta": 1200, "enabled": true },
+        { "plugin": "soft_accel", "gain": 1.6, "mode": "linear", "pivot": 40, "enabled": true }
       ]
     },
     "ELAN9009:00 04F3:425A Touchpad|i2c-ELAN9009:00": {
       "enabled": false,
       "filters": [
         { "plugin": "event_sim", "enabled": false },
+        { "plugin": "typing_inhibit", "window_ms": 350, "enabled": true },
         { "plugin": "exec_delay", "ms": 25, "enabled": true },
-        { "plugin": "outlier_reject", "max_delta": 1200, "enabled": true }
+        { "plugin": "outlier_reject", "max_delta": 1200, "enabled": true },
+        { "plugin": "soft_accel", "gain": 1.6, "mode": "linear", "pivot": 40, "enabled": true }
       ]
     },
     "ELAN9008:00 04F3:425B Touchpad|i2c-ELAN9008:00": {
       "enabled": false,
       "filters": [
         { "plugin": "event_sim", "enabled": false },
+        { "plugin": "typing_inhibit", "window_ms": 350, "enabled": true },
         { "plugin": "exec_delay", "ms": 25, "enabled": true },
-        { "plugin": "outlier_reject", "max_delta": 1200, "enabled": true }
+        { "plugin": "outlier_reject", "max_delta": 1200, "enabled": true },
+        { "plugin": "soft_accel", "gain": 1.6, "mode": "linear", "pivot": 40, "enabled": true }
       ]
     }
   }

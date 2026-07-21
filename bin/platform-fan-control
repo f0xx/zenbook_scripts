@@ -35,6 +35,13 @@ from zenbook_kb.fan_control import (  # noqa: E402
     run_event,
     sample_system,
 )
+from zenbook_kb.pidfile import (  # noqa: E402
+    FAN_PIDFILE,
+    FAN_SVCNAME,
+    acquire_pidfile,
+    read_pidfile,
+    release_pidfile,
+)
 from zenbook_kb.users import default_fan_control_config  # noqa: E402
 
 
@@ -107,6 +114,11 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="kept for symmetry with other services (always foreground)",
     )
+    p_run.add_argument(
+        "--replace",
+        action="store_true",
+        help="stop an existing daemon (same pidfile) before starting",
+    )
 
     p_ev = sub.add_parser("event", parents=[cfg_parent], help="fire a named event from hooks")
     p_ev.add_argument(
@@ -158,7 +170,13 @@ def main(argv: list[str] | None = None) -> int:
     sample = sample_system()
 
     if args.cmd == "status":
+        live = read_pidfile(FAN_PIDFILE, clear_stale=True)
         print(f"config:   {cfg_path}")
+        if live is not None:
+            print(f"live:     running pid={live}  ({FAN_PIDFILE})")
+        else:
+            print(f"live:     stopped  ({FAN_PIDFILE})")
+        print(f"service:  {FAN_SVCNAME}  init={_service_running()}")
         print(format_status(cfg, sample, state))
         return 0
 
@@ -193,12 +211,18 @@ def main(argv: list[str] | None = None) -> int:
             print(f"OK: rule_want={wanted}")
         else:
             print("WARN: no rule matched current sensors")
+        live = read_pidfile(FAN_PIDFILE, clear_stale=True)
         svc = _service_running()
         print(f"service:  {svc}")
-        if "started" in svc.lower() or svc.strip() == "active":
-            print("OK: daemon appears running")
+        if live is not None:
+            print(f"OK: daemon pidfile live pid={live} ({FAN_PIDFILE})")
+        elif "started" in svc.lower() or svc.strip() == "active":
+            print("WARN: init says running but pidfile missing/stale")
         else:
-            print("WARN: daemon not running (optional: rc-service zenbook-platform-fan-control start)")
+            print(
+                "WARN: daemon not running "
+                f"(optional: rc-service {FAN_SVCNAME} start)"
+            )
         return 0 if ok else 1
 
     if args.cmd == "once":
@@ -220,12 +244,26 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.cmd == "run":
-        logging.info("platform-fan-control starting config=%s", cfg_path)
+        conflict = acquire_pidfile(FAN_PIDFILE, replace=bool(args.replace))
+        if conflict is not None:
+            print(
+                f"fan-control already running (pid {conflict}, {FAN_PIDFILE}); "
+                f"pass --replace to take over",
+                file=sys.stderr,
+            )
+            return 1
+        logging.info(
+            "platform-fan-control starting config=%s pidfile=%s",
+            cfg_path,
+            FAN_PIDFILE,
+        )
         try:
             daemon_loop(cfg, state)
         except KeyboardInterrupt:
             logging.info("stopped")
             return 0
+        finally:
+            release_pidfile(FAN_PIDFILE)
 
     return 2
 

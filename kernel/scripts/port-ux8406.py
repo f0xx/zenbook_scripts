@@ -114,26 +114,33 @@ static bool asus_fn_lock_default_for_device(struct hid_device *hdev,
 FN_ROW_POLICY_PARAMS = """
 /*
  * Per-key Fn-row merge on UX8406 USB (Mode B firmware baseline):
- *   plain F1-F3 → if3 KEY_VOLUME* (often ignored by mixer)
- *   Fn+F1-F3    → if0 KEY_F1-F3 (+ EC volume)
+ *   plain F1-F3 → if3 KEY_VOLUME*  → remapped to KEY_F1–F3 (typing / mc)
+ *   Fn+F1-F3    → if0 KEY_F1-F3 (+ EC volume) — not remapped
+ *   Meta/Alt/Ctrl+F1-F3 → KEY_Fn for desktop chords
  *   plain F5/F6 → if4 vendor 0x10/0x20 brightness
  *   Fn+F5/F6    → if0 KEY_F5/F6
  *   plain F4    → if4 vendor 0xc7 kbd BL
  *   Fn+F4       → if0 KEY_F4
  *   plain F7    → if0 Win+P (Plasma display switch) and/or vendor 0x35
+ *   plain F8    → if4 vendor 0x9c screen swap (KEY_F15)
+ *   plain F9    → if4 vendor 0x7c mic mute
+ *   plain F10   → if4 vendor 0x88 RFKILL / airplane (BT pictogram on Duo)
+ *   plain F11   → if4 vendor 0x7e emoji / face (KEY_EMOJI_PICKER)
  *   plain F12   → if4 vendor 0x86 MyASUS / ASUS key (KEY_PROG1)
  *
- * Bits 0-11: F1-F12, bit 12: Esc.
- * F1-F3 (bits 0-2): bit set → re-emit plain media on if0; bit clear → plain→KEY_Fn.
- * F4-F12 (bits 3-11): bit clear → swap (plain KEY_Fn, Fn+F → special);
- *                       bit set → keep Mode B (plain special, Fn KEY_Fn).
+ * Bits 0-2: unused (plain F1–F3 always → KEY_Fn; Fn+F1–F3 always → media).
+ * Bits 3-11: F4-F12 — bit clear → swap (plain KEY_Fn, Fn+F → special);
+ *            bit set → keep Mode B (plain special, Fn KEY_Fn).
  *
- * Recommended docked: fn_row_policy=7 (0x07) — F1-F3 as-is, F4-F12 swapped.
+ * Recommended docked: fn_row_policy=7 — F4–F12 swapped; plain F1–F3 = KEY_Fn;
+ * Fn+F1–F3 = MUTE/VOL± (software). EC may still nudge volume on F2/F3 physical
+ * presses (plain or Fn) — cannot gate from HID.
+ * fn_row_policy=0 disables all remaps.
  */
 static u32 fn_row_policy;
 module_param(fn_row_policy, uint, 0644);
 MODULE_PARM_DESC(fn_row_policy,
-		 "Fn-row bitmask: F1-F3 plain-sim / F4-F12 Fn-sim (see kernel/README)");
+		 "Fn-row bitmask: F4-F12 swap (bits 3-11); F1-F3 fixed remap (see kernel/README)");
 
 static struct asus_kbd_leds *zenbook_duo_vendor_leds;
 static struct hid_device *zenbook_duo_consumer_hdev;
@@ -142,6 +149,9 @@ static struct hid_device *zenbook_duo_vendor_hdev;
 
 static u8 zenbook_if0_modifiers;
 static bool zenbook_super_key_down;
+static bool zenbook_gui_deferred; /* GUI-only report swallowed; maybe Win+P/F-row */
+static bool zenbook_gui_suppress_tap; /* after F7 remap, eat trailing GUI/release */
+static bool zenbook_meta_synthetic; /* we injected Meta↓ — must Meta↑ ourselves */
 static bool zenbook_f56_vendor_pass_pending;
 static bool zenbook_f56_vendor_pass_down;
 static bool zenbook_f56_vendor_pass_gui;
@@ -290,18 +300,6 @@ static bool zenbook_if0_desktop_mods(void)
 	return !!(zenbook_if0_modifiers & ZENBOOK_IF0_MOD_DESKTOP);
 }
 
-static unsigned int zenbook_fn_row_f13_media_key(int bit)
-{
-	switch (bit) {
-	case 0:
-		return KEY_MUTE;
-	case 1:
-		return KEY_VOLUMEDOWN;
-	default:
-		return KEY_VOLUMEUP;
-	}
-}
-
 static void zenbook_fn_row_emit_on_hdev(struct hid_device *hdev,
 					unsigned int keycode)
 {
@@ -320,6 +318,105 @@ static void zenbook_fn_row_emit_on_hdev(struct hid_device *hdev,
 		input_sync(hidinput->input);
 		return;
 	}
+}
+
+/*
+ * Firmware often sends a GUI-only report before GUI+key. Passing that through
+ * then clearing Meta still flashes Meta on plain F7 (Win+P→F7). Defer GUI-only
+ * when F7 remap is active; resolve by:
+ *   Win+P      → bare KEY_F7 (no Meta)
+ *   Meta+F-row → Meta down + KEY_Fn (workspaces; do NOT clear Meta)
+ *   GUI release → Super tap
+ *   trailing GUI/release after F7 remap → swallow (no fake Super)
+ */
+static void zenbook_fn_row_clear_meta(struct hid_device *hdev)
+{
+	struct hid_input *hidinput;
+
+	if (!hdev)
+		return;
+
+	list_for_each_entry(hidinput, &hdev->inputs, list) {
+		if (!hidinput->input)
+			continue;
+		input_report_key(hidinput->input, KEY_LEFTMETA, 0);
+		input_report_key(hidinput->input, KEY_RIGHTMETA, 0);
+		input_sync(hidinput->input);
+		zenbook_super_key_down = false;
+		zenbook_meta_synthetic = false;
+		return;
+	}
+}
+
+static void zenbook_fn_row_emit_meta_down(struct hid_device *hdev)
+{
+	struct hid_input *hidinput;
+
+	if (!hdev)
+		return;
+
+	list_for_each_entry(hidinput, &hdev->inputs, list) {
+		if (!hidinput->input)
+			continue;
+		input_set_capability(hidinput->input, EV_KEY, KEY_LEFTMETA);
+		input_report_key(hidinput->input, KEY_LEFTMETA, 1);
+		input_sync(hidinput->input);
+		zenbook_super_key_down = true;
+		zenbook_meta_synthetic = true;
+		return;
+	}
+}
+
+static void zenbook_fn_row_ensure_meta_down(struct hid_device *hdev)
+{
+	if (!zenbook_gui_deferred)
+		return;
+	zenbook_gui_deferred = false;
+	zenbook_fn_row_emit_meta_down(hdev);
+}
+
+static void zenbook_fn_row_release_synthetic_meta(struct hid_device *hdev)
+{
+	/*
+	 * Synthetic Meta↓ was injected via input_report_key. HID will not
+	 * emit Meta↑ on a mods=0 report (it never saw Meta↓ in its stream),
+	 * so we must clear it or Meta sticks and Fn+Fx becomes Meta+Fx.
+	 */
+	if (!zenbook_meta_synthetic)
+		return;
+	zenbook_fn_row_clear_meta(hdev);
+}
+
+static void zenbook_fn_row_emit_meta_tap(struct hid_device *hdev)
+{
+	struct hid_input *hidinput;
+
+	if (!hdev)
+		return;
+
+	list_for_each_entry(hidinput, &hdev->inputs, list) {
+		if (!hidinput->input)
+			continue;
+		input_set_capability(hidinput->input, EV_KEY, KEY_LEFTMETA);
+		input_report_key(hidinput->input, KEY_LEFTMETA, 1);
+		input_sync(hidinput->input);
+		input_report_key(hidinput->input, KEY_LEFTMETA, 0);
+		input_sync(hidinput->input);
+		zenbook_super_key_down = false;
+		zenbook_meta_synthetic = false;
+		return;
+	}
+}
+
+static bool zenbook_fn_row_keys_empty(const u8 *data, int size)
+{
+	int i;
+
+	for (i = 2; i < size && i < 8; i++) {
+		if (data[i] != 0x00)
+			return false;
+	}
+	return true;
 }
 
 /* UX8406 plain F7 firmware synthesizes Win+P for Plasma display switch. */
@@ -345,12 +442,16 @@ static void zenbook_fn_row_emit_win_p(struct hid_device *hdev)
 	}
 }
 
-/* Meta+F4 uses vendor inject; other Meta+F-row → KEY_Fn on if0. */
+/*
+ * Meta+F-row → KEY_Fn for workspace bindings. Meta must stay held.
+ * If GUI-only was deferred, flush Meta down first (never clear_meta here).
+ */
 static void zenbook_fn_row_meta_emit_fkey(struct hid_device *if0, int bit)
 {
 	if (!if0 || bit < 0 || bit > 11 || bit == 3)
 		return;
 
+	zenbook_fn_row_ensure_meta_down(if0);
 	zenbook_fn_row_emit_on_hdev(if0, KEY_F1 + bit);
 }
 
@@ -481,7 +582,7 @@ static int zenbook_fn_row_fn_f13_event(struct hid_device *hdev,
 {
 	int bit;
 
-	/* Parsed if3 volume: only used when bit clear (plain → KEY_Fn). */
+	/* Safety net if if3 media reaches the event path (raw should swallow). */
 	if (!fn_row_policy || !zenbook_is_duo_consumer_if3(hdev))
 		return 0;
 	if (zenbook_if0_desktop_mods())
@@ -500,9 +601,6 @@ static int zenbook_fn_row_fn_f13_event(struct hid_device *hdev,
 	default:
 		return 0;
 	}
-
-	if (fn_row_policy & BIT(bit))
-		return 0;
 
 	if (value && zenbook_duo_main_hdev)
 		zenbook_fn_row_emit_on_hdev(zenbook_duo_main_hdev, KEY_F1 + bit);
@@ -527,10 +625,23 @@ static int zenbook_fn_row_fn_f56_event(struct hid_device *hdev,
 		return 0;
 
 	/*
-	 * Bit clear on F4–F12: Mode B swap — Fn+F (if0 KEY_Fn) → hardware special.
-	 * Plain specials are swallowed in vendor_raw and re-emitted as KEY_Fn.
+	 * F1–F3: Mode B if0 KEY_Fn is always Fn+F → emit media (bits 0–2 unused).
+	 * Plain F1–F3 are if3-only (→ KEY_Fn in consumer_raw); inject bypasses this.
+	 * F4–F12: bit clear → Fn+F specials.
 	 */
 	switch (usage->code) {
+	case KEY_F1:
+		bit = 0;
+		special = KEY_MUTE;
+		break;
+	case KEY_F2:
+		bit = 1;
+		special = KEY_VOLUMEDOWN;
+		break;
+	case KEY_F3:
+		bit = 2;
+		special = KEY_VOLUMEUP;
+		break;
 	case KEY_F4:
 		bit = 3;
 		break;
@@ -550,6 +661,26 @@ static int zenbook_fn_row_fn_f56_event(struct hid_device *hdev,
 		bit = 6;
 		special = KEY_SWITCHVIDEOMODE; /* fallback; prefer Win+P below */
 		break;
+	case KEY_F8:
+	case KEY_F15:
+		bit = 7;
+		special = KEY_F15; /* Fn+F8: screen swap (vendor 0x9c) */
+		break;
+	case KEY_F9:
+	case KEY_MICMUTE:
+		bit = 8;
+		special = KEY_MICMUTE; /* Fn+F9: mic mute */
+		break;
+	case KEY_F10:
+	case KEY_RFKILL:
+		bit = 9;
+		special = KEY_RFKILL; /* Fn+F10: airplane / BT rfkill (0x88) */
+		break;
+	case KEY_F11:
+	case KEY_EMOJI_PICKER:
+		bit = 10;
+		special = KEY_EMOJI_PICKER; /* Fn+F11: emoji / face (0x7e) */
+		break;
 	case KEY_F12:
 	case KEY_PROG1:
 		bit = 11;
@@ -559,6 +690,14 @@ static int zenbook_fn_row_fn_f56_event(struct hid_device *hdev,
 		return 0;
 	}
 
+	/* F1–F3: always Fn+media; ignore policy bits 0–2. */
+	if (bit <= 2) {
+		if (!value)
+			return 1;
+		zenbook_fn_row_emit_on_hdev(hdev, special);
+		return 1;
+	}
+
 	if (fn_row_policy & BIT(bit))
 		return 0;
 
@@ -566,6 +705,8 @@ static int zenbook_fn_row_fn_f56_event(struct hid_device *hdev,
 	if (zenbook_f56_plain_vendor_burst &&
 	    (usage->code == KEY_F4 || usage->code == KEY_F5 ||
 	     usage->code == KEY_F6 || usage->code == KEY_F7 ||
+	     usage->code == KEY_F8 || usage->code == KEY_F9 ||
+	     usage->code == KEY_F10 || usage->code == KEY_F11 ||
 	     usage->code == KEY_F12)) {
 		if (value)
 			zenbook_f56_plain_vendor_burst = false;
@@ -573,10 +714,17 @@ static int zenbook_fn_row_fn_f56_event(struct hid_device *hdev,
 	}
 
 	/* Special keycode on if0 (should not happen often): swallow. */
-	if (usage->code == KEY_BRIGHTNESSDOWN ||
+	if (usage->code == KEY_MUTE ||
+	    usage->code == KEY_VOLUMEDOWN ||
+	    usage->code == KEY_VOLUMEUP ||
+	    usage->code == KEY_BRIGHTNESSDOWN ||
 	    usage->code == KEY_BRIGHTNESSUP ||
 	    usage->code == KEY_DISPLAY_OFF ||
 	    usage->code == KEY_SWITCHVIDEOMODE ||
+	    usage->code == KEY_F15 ||
+	    usage->code == KEY_RFKILL ||
+	    usage->code == KEY_MICMUTE ||
+	    usage->code == KEY_EMOJI_PICKER ||
 	    usage->code == KEY_PROG1 ||
 	    usage->code == KEY_KBDILLUMTOGGLE) {
 		return 1;
@@ -735,35 +883,23 @@ static int zenbook_fn_row_policy_consumer_raw(struct hid_device *hdev,
 		break;
 	}
 
+	/*
+	 * Plain F1–F3: Mode B sends if3 media (sniff: 03 e9 → KEY_VOLUMEUP).
+	 * Swallow and emit KEY_Fn on if0. Fn+F1–F3 stay on if0 as KEY_Fn + EC vol.
+	 * Meta/Alt/Ctrl: KEY_Fn with modifiers (workspaces / launcher).
+	 */
 	if (zenbook_if0_modifiers & ZENBOOK_IF0_MOD_GUI) {
-		/* Meta+plain F1–F3: if3 media → KEY_Fn for workspace bindings. */
 		if (rising && if0)
 			zenbook_fn_row_meta_emit_fkey(if0, bit);
 		return -1;
 	}
 
 	if (zenbook_if0_modifiers & (ZENBOOK_IF0_MOD_ALT | ZENBOOK_IF0_MOD_CTRL)) {
-		/*
-		 * Mode B: Alt/Ctrl+F1–F3 still emit if3 media. Desktop wants
-		 * Alt+F2 (Plasma launcher), etc. — emit KEY_Fn; modifiers stay on if0.
-		 */
 		if (rising && if0)
 			zenbook_fn_row_emit_on_hdev(if0, KEY_F1 + bit);
 		return -1;
 	}
 
-	if (fn_row_policy & BIT(bit)) {
-		/*
-		 * Bit set: Mode B plain media on if3 is often ignored by the mixer.
-		 * Re-emit on if0 (main keyboard) and swallow the dead if3 event.
-		 */
-		if (rising && if0)
-			zenbook_fn_row_emit_on_hdev(if0,
-						    zenbook_fn_row_f13_media_key(bit));
-		return -1;
-	}
-
-	/* Bit clear: plain if3 media → KEY_F1–F3 on if0. */
 	if (rising && if0)
 		zenbook_fn_row_emit_on_hdev(if0, KEY_F1 + bit);
 	return -1;
@@ -797,10 +933,12 @@ static int zenbook_fn_row_policy_raw(struct hid_device *hdev,
 		int meta_swallow = 0;
 		bool has_p = zenbook_fn_row_report_has_usage(data, size, ZENBOOK_HID_P);
 		bool only_p = has_p;
+		bool keys_empty = zenbook_fn_row_keys_empty(data, size);
 		int ki;
 
 		/*
-		 * Plain F7: firmware sends Win+P (GUI + only 'P'). Remap to KEY_F7.
+		 * Plain F7: firmware sends Win+P (GUI + only 'P'), often after a
+		 * GUI-only report. Remap to KEY_F7 with no Meta flash.
 		 * Fn+F7 re-injects Win+P via input_report (bypasses this path).
 		 * Side effect: real Meta+P on this keyboard also becomes KEY_F7;
 		 * use Fn+F7 for Plasma display switch.
@@ -813,7 +951,38 @@ static int zenbook_fn_row_policy_raw(struct hid_device *hdev,
 				break;
 			}
 		}
+
+		/*
+		 * Swallow GUI-only while F7 remap is active so Meta never goes
+		 * down before we know whether this is Win+P / Meta+F-row.
+		 * After a remap / Meta+Fx, firmware often repeats GUI-only then
+		 * release — eat those without synthesizing a Super tap (that
+		 * looked like “Meta toggles off then plain Meta press”).
+		 */
+		if (!(fn_row_policy & BIT(6)) && keys_empty) {
+			if (zenbook_gui_suppress_tap || zenbook_meta_synthetic) {
+				if (size <= (int)sizeof(prev)) {
+					memcpy(prev, data, size);
+					prev_len = size;
+				} else {
+					prev_len = 0;
+				}
+				return -1;
+			}
+			zenbook_gui_deferred = true;
+			if (size <= (int)sizeof(prev)) {
+				memcpy(prev, data, size);
+				prev_len = size;
+			} else {
+				prev_len = 0;
+			}
+			return -1;
+		}
+
 		if (!(fn_row_policy & BIT(6)) && only_p) {
+			zenbook_gui_deferred = false;
+			zenbook_gui_suppress_tap = true;
+			/* Never flash Meta — deferred prelude was not emitted. */
 			zenbook_fn_row_emit_on_hdev(hdev, KEY_F7);
 			if (size <= (int)sizeof(prev)) {
 				memcpy(prev, data, size);
@@ -833,6 +1002,7 @@ static int zenbook_fn_row_policy_raw(struct hid_device *hdev,
 			rising = !zenbook_fn_row_report_has_usage(prev, prev_len, usage) &&
 				 zenbook_fn_row_report_has_usage(data, size, usage);
 			if (rising) {
+				/* Meta+F-row: keep Meta (ensure from deferred). */
 				zenbook_fn_row_meta_emit_fkey(hdev, bit);
 				meta_swallow = 1;
 			}
@@ -845,8 +1015,49 @@ static int zenbook_fn_row_policy_raw(struct hid_device *hdev,
 			prev_len = 0;
 		}
 
-		return meta_swallow ? -1 : 0;
+		if (meta_swallow) {
+			zenbook_gui_deferred = false;
+			return -1;
+		}
+
+		/*
+		 * Real Meta+chord (not remapped): if we deferred a GUI-only
+		 * prelude, let this report through — HID will apply Meta+keys
+		 * once without a prior Meta flash.
+		 */
+		zenbook_gui_deferred = false;
+		zenbook_gui_suppress_tap = false;
+		return 0;
 	}
+
+	/* GUI released: deferred prelude with no remap → bare Super tap. */
+	if (zenbook_gui_suppress_tap) {
+		zenbook_gui_suppress_tap = false;
+		zenbook_gui_deferred = false;
+		zenbook_fn_row_release_synthetic_meta(hdev);
+		if (size <= (int)sizeof(prev)) {
+			memcpy(prev, data, size);
+			prev_len = size;
+		} else {
+			prev_len = 0;
+		}
+		return -1;
+	}
+	if (zenbook_gui_deferred) {
+		zenbook_gui_deferred = false;
+		if (zenbook_fn_row_keys_empty(data, size)) {
+			zenbook_fn_row_emit_meta_tap(hdev);
+			if (size <= (int)sizeof(prev)) {
+				memcpy(prev, data, size);
+				prev_len = size;
+			} else {
+				prev_len = 0;
+			}
+			return -1;
+		}
+	}
+	/* Meta+Fx used synthetic Meta↓ — HID will not Meta↑; clear now. */
+	zenbook_fn_row_release_synthetic_meta(hdev);
 
 	swallow = 0;
 	for (i = 2; i < size && i < 8; i++) {
@@ -859,10 +1070,7 @@ static int zenbook_fn_row_policy_raw(struct hid_device *hdev,
 			 zenbook_fn_row_report_has_usage(data, size, usage);
 
 		if (zenbook_fn_row_is_f13(bit)) {
-			/*
-			 * Mode B: if0 F1–F3 is Fn+F1–F3 → KEY_Fn. Pass through.
-			 * (Bit clear does not add media on Fn; EC may still volume.)
-			 */
+			/* Fn+F1–F3: KEY_Fn → media in fn_f56_event. */
 			(void)rising;
 		} else if (bit >= 4 && bit <= 11 && !(fn_row_policy & BIT(bit))) {
 			/* Bit clear: Fn+F5+ on if0 KEY_Fn → redirect in fn_f56_event. */
@@ -899,7 +1107,8 @@ static int zenbook_fn_row_policy_vendor_raw(struct hid_device *hdev,
 {
 	static bool f4_vendor_down;
 	static bool f5_vendor_down, f6_vendor_down;
-	static bool f7_vendor_down, f12_vendor_down;
+	static bool f7_vendor_down, f8_vendor_down, f9_vendor_down;
+	static bool f10_vendor_down, f11_vendor_down, f12_vendor_down;
 
 	if (!fn_row_policy || !zenbook_is_duo_vendor_if4(hdev))
 		return 0;
@@ -920,6 +1129,10 @@ static int zenbook_fn_row_policy_vendor_raw(struct hid_device *hdev,
 		f5_vendor_down = false;
 		f6_vendor_down = false;
 		f7_vendor_down = false;
+		f8_vendor_down = false;
+		f9_vendor_down = false;
+		f10_vendor_down = false;
+		f11_vendor_down = false;
 		f12_vendor_down = false;
 		zenbook_f56_plain_vendor_burst = false;
 	}
@@ -927,10 +1140,12 @@ static int zenbook_fn_row_policy_vendor_raw(struct hid_device *hdev,
 	/*
 	 * Plain Mode B specials on if4 (bit clear → swap to KEY_Fn).
 	 * 0x10/0x20 F5/F6 brightness, 0xc7 F4 kbd BL, 0x35 F7 display,
-	 * 0x86 F12 MyASUS / ASUS key.
+	 * 0x9c F8 screen swap, 0x7c F9 mic, 0x88 F10 rfkill, 0x7e F11 emoji,
+	 * 0x86 F12 MyASUS.
 	 */
 	if (data[1] == 0x10 || data[1] == 0x20 || data[1] == 0xc7 ||
-	    data[1] == 0x35 || data[1] == 0x86) {
+	    data[1] == 0x35 || data[1] == 0x9c || data[1] == 0x7c ||
+	    data[1] == 0x88 || data[1] == 0x7e || data[1] == 0x86) {
 		bool down = size < 3 || data[2] == 0x00;
 		bool rising;
 		int bit;
@@ -961,6 +1176,30 @@ static int zenbook_fn_row_policy_vendor_raw(struct hid_device *hdev,
 			rising = down && !f7_vendor_down;
 			f7_vendor_down = down;
 			break;
+		case 0x9c:
+			bit = 7;
+			fkey = KEY_F8;
+			rising = down && !f8_vendor_down;
+			f8_vendor_down = down;
+			break;
+		case 0x7c:
+			bit = 8;
+			fkey = KEY_F9;
+			rising = down && !f9_vendor_down;
+			f9_vendor_down = down;
+			break;
+		case 0x88:
+			bit = 9;
+			fkey = KEY_F10;
+			rising = down && !f10_vendor_down;
+			f10_vendor_down = down;
+			break;
+		case 0x7e:
+			bit = 10;
+			fkey = KEY_F11;
+			rising = down && !f11_vendor_down;
+			f11_vendor_down = down;
+			break;
 		default: /* 0x86 MyASUS */
 			bit = 11;
 			fkey = KEY_F12;
@@ -971,8 +1210,10 @@ static int zenbook_fn_row_policy_vendor_raw(struct hid_device *hdev,
 
 		if (zenbook_if0_modifiers & ZENBOOK_IF0_MOD_GUI) {
 			if (bit == 3) {
-				if (down && rising && zenbook_duo_main_hdev)
+				if (down && rising && zenbook_duo_main_hdev) {
+					zenbook_fn_row_ensure_meta_down(zenbook_duo_main_hdev);
 					zenbook_fn_row_emit_f4_once(zenbook_duo_main_hdev);
+				}
 				if (!down)
 					zenbook_fn_row_f4_press_end();
 				return -1;
@@ -983,8 +1224,10 @@ static int zenbook_fn_row_policy_vendor_raw(struct hid_device *hdev,
 				zenbook_f56_vendor_pass_gui = true;
 				return 0;
 			}
-			if (down && rising && zenbook_duo_main_hdev)
+			if (down && rising && zenbook_duo_main_hdev) {
+				zenbook_fn_row_ensure_meta_down(zenbook_duo_main_hdev);
 				zenbook_fn_row_emit_on_hdev(zenbook_duo_main_hdev, fkey);
+			}
 			return -1;
 		}
 
@@ -1222,9 +1465,10 @@ def port_hid_asus(src: Path, dst: Path) -> None:
     text = replace_once(
         "\t\tcase 0x7e: asus_map_key_clear(KEY_EMOJI_PICKER);\tbreak;\n",
         "\t\tcase 0x7e: asus_map_key_clear(KEY_EMOJI_PICKER);\tbreak;\n"
-        "\t\tcase 0x86: asus_map_key_clear(KEY_PROG1);\t\tbreak; /* MyASUS / ASUS key */\n",
+        "\t\tcase 0x86: asus_map_key_clear(KEY_PROG1);\t\tbreak; /* MyASUS / ASUS key */\n"
+        "\t\tcase 0x9c: asus_map_key_clear(KEY_F15);\t\tbreak; /* Duo screen swap */\n",
         text,
-        "input_mapping 0x86 MyASUS",
+        "input_mapping 0x86 MyASUS + 0x9c screen swap",
     )
 
     text = replace_once(

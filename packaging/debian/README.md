@@ -88,7 +88,8 @@ sudo ./kernel/scripts/switch-hid-asus.sh sideload   # or unload/insmod/rebind; s
 ```
 
 Set `fn_row_policy=7` when using the sideloaded module (modprobe options or
-`insmod … fn_row_policy=7`). Details: [`kernel/README.md`](../../kernel/README.md),
+`insmod … fn_row_policy=7`). Details: [`README.fn_row_policy.md`](../../README.fn_row_policy.md),
+[`kernel/README.md`](../../kernel/README.md),
 [`DEPLOY.md`](../../DEPLOY.md).
 
 Rebuild the module after every kernel / headers upgrade.

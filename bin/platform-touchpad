@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Touchpad palm-filter pipeline (exec-delay + outlier-reject).
+"""Touchpad palm-filter pipeline (exec-delay + outlier-reject + typing-inhibit).
 
 Per-device profiles in touchpad.json (version 2), keyed by stable name|phys.
 
@@ -39,15 +39,23 @@ from zenbook_kb.touchpad import (  # noqa: E402
     Ev,
     UInputProxy,
     apply_pipeline_knobs,
+    bind_soft_accel_bounds,
     build_pipeline,
     device_profile_enabled,
     discover_touchpads,
     filters_for_device,
-    iter_device_events,
+    iter_touchpad_with_typing,
     load_config,
     make_sim_brush,
     resolve_touchpad,
     run_selftest,
+)
+from zenbook_kb.pidfile import (  # noqa: E402
+    TOUCHPAD_PIDFILE,
+    TOUCHPAD_SVCNAME,
+    acquire_pidfile,
+    read_pidfile,
+    release_pidfile,
 )
 
 
@@ -66,6 +74,7 @@ def _pipe_for(args: argparse.Namespace, info) -> object:
     cfg = _load(args)
     filters = filters_for_device(cfg, info, path=info.path)
     pipe = build_pipeline({"filters": filters})
+    bind_soft_accel_bounds(pipe, info.path)
     if getattr(args, "delay_ms", None) is not None or getattr(args, "max_delta", None) is not None:
         apply_pipeline_knobs(
             pipe,
@@ -133,8 +142,9 @@ def _pump(
     frame: list[Ev] = []
     frames_in = frames_out = 0
     try:
-        for ev in iter_device_events(
+        for ev in iter_touchpad_with_typing(
             path,
+            activity=getattr(pipe, "activity", None),
             grab=grab,
             stop_after_s=seconds,
             should_stop=lambda: stop,
@@ -180,25 +190,46 @@ def cmd_run(args: argparse.Namespace) -> int:
     if not device_profile_enabled(cfg, info, path=info.path):
         print(f"profile disabled for {info.key}; pass-through not started", file=sys.stderr)
         return 2
-    pipe = _pipe_for(args, info)
-    print(f"run {info.path} → uinput  key={info.key}  {pipe.summary()}", flush=True)
-    with UInputProxy(info.path) as sink:
-        return _pump(
-            info.path,
-            pipe,
-            grab=True,
-            seconds=args.seconds,
-            sink=sink,
-            quiet=True,
+    conflict = acquire_pidfile(TOUCHPAD_PIDFILE, replace=bool(args.replace))
+    if conflict is not None:
+        print(
+            f"live filter already running (pid {conflict}, {TOUCHPAD_PIDFILE}); "
+            f"pass --replace to take over",
+            file=sys.stderr,
         )
+        return 1
+    pipe = _pipe_for(args, info)
+    print(
+        f"run {info.path} → uinput  key={info.key}  pidfile={TOUCHPAD_PIDFILE}  "
+        f"{pipe.summary()}",
+        flush=True,
+    )
+    try:
+        with UInputProxy(info.path) as sink:
+            return _pump(
+                info.path,
+                pipe,
+                grab=True,
+                seconds=args.seconds,
+                sink=sink,
+                quiet=True,
+            )
+    finally:
+        release_pidfile(TOUCHPAD_PIDFILE)
 
 
 def cmd_status(args: argparse.Namespace) -> int:
     cfg_path = Path(args.config) if args.config else DEFAULT_CONFIG
     cfg = load_config(cfg_path if cfg_path.is_file() else None)
     pads = discover_touchpads()
+    live_pid = read_pidfile(TOUCHPAD_PIDFILE, clear_stale=True)
     print(f"config:   {cfg_path} {'(present)' if cfg_path.is_file() else '(defaults)'}")
     print(f"version:  {cfg.get('version')}  default_device={cfg.get('default_device')}")
+    if live_pid is not None:
+        print(f"live:     running pid={live_pid}  ({TOUCHPAD_PIDFILE})")
+    else:
+        print(f"live:     stopped  ({TOUCHPAD_PIDFILE})")
+    print(f"service:  {TOUCHPAD_SVCNAME}")
     print(f"pads:     {len(pads)}")
     for info in pads:
         filters = filters_for_device(cfg, info)
@@ -265,6 +296,11 @@ def main(argv: list[str] | None = None) -> int:
     p_run.add_argument("--seconds", type=float, default=None)
     p_run.add_argument("--delay-ms", type=float, default=None)
     p_run.add_argument("--max-delta", type=int, default=None)
+    p_run.add_argument(
+        "--replace",
+        action="store_true",
+        help="stop an existing live filter (same pidfile) before starting",
+    )
 
     p_status = sub.add_parser("status", help="show devices + per-device filter config")
     p_status.add_argument(

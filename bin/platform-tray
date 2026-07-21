@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import time
@@ -55,7 +56,7 @@ except ImportError:
     )
     raise SystemExit(1)
 
-from zenbook_kb.metrics import Event, MetricsStore  # noqa: E402
+from zenbook_kb.metrics import Event, MetricsStore, display_series  # noqa: E402
 from zenbook_kb.platform.capabilities import build_report  # noqa: E402
 
 ZOOM_PERCENTS = (75, 100, 125, 150, 175, 200)
@@ -166,6 +167,7 @@ class MetricsCanvas(QWidget):
         hours = self.visible_hours()
         since = time.time() - hours * 3600
         samples = self.store.history(since_ts=since, limit=4000)
+        points = display_series(samples)
         events = self.store.events(since_ts=since, limit=400)
         plot_w, plot_h = w - 2 * margin, h - 2 * margin
         self._hits = []
@@ -184,11 +186,11 @@ class MetricsCanvas(QWidget):
         painter.drawText(
             8,
             18,
-            f"temp °C (amber) · fan rpm (cyan) · POI · "
+            f"temp °C (amber, ±3°C deadband) · fan rpm (cyan) · POI · "
             f"X zoom {self._zoom_pct}% ({span_label})",
         )
 
-        if len(samples) < 2:
+        if len(points) < 2:
             painter.drawText(margin, h // 2, "Collecting samples…")
             return
 
@@ -196,8 +198,8 @@ class MetricsCanvas(QWidget):
         t1 = time.time()
         span = max(t1 - t0, 1.0)
 
-        temps = [s.temp_c for s in samples if s.temp_c is not None]
-        rpms = [s.rpm for s in samples if s.rpm is not None]
+        temps = [p.temp_c for p in points if p.temp_c is not None]
+        rpms = [p.rpm for p in points if p.rpm is not None]
         tmin = (min(temps) - 2) if temps else 40.0
         tmax = (max(temps) + 2) if temps else 90.0
         if tmax <= tmin:
@@ -227,10 +229,10 @@ class MetricsCanvas(QWidget):
         pen_t.setWidth(2)
         painter.setPen(pen_t)
         prev = None
-        for s in samples:
-            if s.temp_c is None:
+        for p in points:
+            if p.temp_c is None:
                 continue
-            pt = QPointF(x_at(s.ts), y_temp(s.temp_c))
+            pt = QPointF(x_at(p.ts), y_temp(p.temp_c))
             if prev is not None:
                 painter.drawLine(prev, pt)
             prev = pt
@@ -239,10 +241,10 @@ class MetricsCanvas(QWidget):
         pen_r.setWidth(2)
         painter.setPen(pen_r)
         prev = None
-        for s in samples:
-            if s.rpm is None:
+        for p in points:
+            if p.rpm is None:
                 continue
-            pt = QPointF(x_at(s.ts), y_rpm(float(s.rpm)))
+            pt = QPointF(x_at(p.ts), y_rpm(float(p.rpm)))
             if prev is not None:
                 painter.drawLine(prev, pt)
             prev = pt
@@ -489,6 +491,8 @@ class PlatformTray(QWidget):
         self.metrics_win.activateWindow()
 
     def _open_touchpad_gui(self) -> None:
+        # Re-resolve every open so a redeployed binary is picked up.
+        self.touchpad_gui = _which("platform-touchpad-gui")
         if not self.touchpad_gui:
             self.tray.showMessage(
                 "platform-tray",
@@ -499,7 +503,45 @@ class PlatformTray(QWidget):
             return
         proc = self._touchpad_gui_proc
         if proc is not None and proc.poll() is None:
-            return  # already running
+            # Restart if the on-disk binary is newer than this process
+            # (common after configure/redeploy while the tuner stayed open).
+            try:
+                bin_mtime = Path(self.touchpad_gui).stat().st_mtime
+                proc_mtime = Path(f"/proc/{proc.pid}").stat().st_mtime
+                stale = bin_mtime > proc_mtime
+            except OSError:
+                stale = False
+            if not stale:
+                self.tray.showMessage(
+                    "platform-tray",
+                    "Touchpad tuner already open",
+                    QSystemTrayIcon.MessageIcon.Information,
+                    2500,
+                )
+                return
+            try:
+                proc.terminate()
+                proc.wait(timeout=2.0)
+            except (OSError, subprocess.TimeoutExpired):
+                try:
+                    proc.kill()
+                except OSError:
+                    pass
+            self._touchpad_gui_proc = None
+        # Also clear orphans from older tray sessions / manual launches.
+        for entry in Path("/proc").iterdir():
+            if not entry.name.isdigit():
+                continue
+            try:
+                raw = (entry / "cmdline").read_bytes()
+            except OSError:
+                continue
+            if b"platform-touchpad-gui" not in raw:
+                continue
+            try:
+                os.kill(int(entry.name), signal.SIGTERM)
+            except OSError:
+                pass
         try:
             self._touchpad_gui_proc = subprocess.Popen(
                 [self.touchpad_gui],
