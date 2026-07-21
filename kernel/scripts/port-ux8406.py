@@ -1465,10 +1465,11 @@ def port_hid_asus(src: Path, dst: Path) -> None:
     text = replace_once(
         "\t\tcase 0x7e: asus_map_key_clear(KEY_EMOJI_PICKER);\tbreak;\n",
         "\t\tcase 0x7e: asus_map_key_clear(KEY_EMOJI_PICKER);\tbreak;\n"
+        "\t\tcase 0x76: asus_map_key_clear(KEY_PROG1);\t\tbreak; /* BT Mode B plain F12 / ASUS key */\n"
         "\t\tcase 0x86: asus_map_key_clear(KEY_PROG1);\t\tbreak; /* MyASUS / ASUS key */\n"
         "\t\tcase 0x9c: asus_map_key_clear(KEY_F15);\t\tbreak; /* Duo screen swap */\n",
         text,
-        "input_mapping 0x86 MyASUS + 0x9c screen swap",
+        "input_mapping 0x76/0x86 MyASUS + 0x9c screen swap",
     )
 
     text = replace_once(

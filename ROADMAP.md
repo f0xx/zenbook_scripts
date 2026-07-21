@@ -26,6 +26,8 @@ Status legend: **done** · **now** · **next** · **later**
 | Ubuntu `.deb` + packaging checks | **later** | Ubuntu access / install verification |
 | Alpine `apk` + packaging rules | **later** | Alpine install checks |
 | UX5400 WM/DE annoyance (TBD) | **later** | palm OK; separate Plasma/WM issue — describe when ready |
+| UX8406 dual-eDP touch jump (Plasma/Wayland) | **later** | touch on lower panel warps cursor to primary — likely KWin, not our filter |
+| Touchpad GUI calibrate (capture → knobs) | **now** | MVP Calibrate… in tuner; deepen for BT palm parasites |
 | UX581 lightbar (HID `0b05:0124`) | **later** | side branch `zenbook_ux581` when hardware returns |
 | UX5400 AccelSpeed polish | **later** | same pipeline; lower priority than UX8406 |
 | Generic non-ASUS fan backends | **later** | thinkpad/hp/dell hwmon profiles |

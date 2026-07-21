@@ -43,6 +43,25 @@ New sleep/resume / presentation preferences are **per-user** (Plasma session).
 Fan PWM / `platform_profile` stay machine-global; KCM may *link* to them but
 must not pretend they are per-seat.
 
+### 3. UX8406 dual-panel layout (operator intent)
+
+```
+  eDP-1 primary (top)     — always on; virtual-desktop set A
+  eDP-2 secondary (bottom)— on when keyboard is BT/undocked; off on pogo
+```
+
+Pointer should cross the shared edge top↔bottom. **Touch** on eDP-2 warping
+the cursor to eDP-1 under Plasma Wayland is almost certainly **KWin / seat
+touch routing**, not `platform-touchpad`. Track separately; our job is
+dock/undock backlight (`platform-duo-dock`) + palm filter on the **keyboard**
+touchpad (not chassis ELAN).
+
+### 4. Touchpad calibrate (tuner)
+
+GUI **Calibrate…** runs `platform-touchpad capture` for ~20s while you type /
+rest palms, then suggests `max_delta` / `exec_delay` / typing window from drop
+rates. Deepen later (guided sequences, per-profile BT vs USB).
+
 ## Architecture (target)
 
 ```

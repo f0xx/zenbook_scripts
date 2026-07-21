@@ -194,8 +194,12 @@ bitmask **does not apply**.
 | Transport | Keys | Fn-row |
 |-----------|------|--------|
 | USB pogo + oot `hid-asus` | yes | `fn_row_policy=7` (this document) |
-| Bluetooth + broken stock/oot Usage(76h) fixup | **no keyboard node** (touchpad only) | n/a |
-| Bluetooth + oot that **skips** BT Usage(76h) fixup | yes | firmware **Mode B** (plain = specials); invert with `platform-bt-fn-row run` |
+| Bluetooth + broken stock/oot Usage(76h) **rdesc** fixup | **no keyboard node** (touchpad only) | n/a |
+| Bluetooth + oot that **skips** BT rdesc fixup + maps usage `0x76` | yes | firmware **Mode B**; invert with `platform-bt-fn-row run` |
+
+Plain F12 on BT used to spam `Unmapped Asus vendor usagepage code 0x76` and do
+nothing — oot now maps vendor `0x76` → `KEY_PROG1` (ASUS key). With
+`platform-bt-fn-row`, that becomes plain `KEY_F12`.
 
 If BT is connected but only Mouse/Touchpad appear, `dmesg` shows
 `item fetching failed at offset 257/259` — sideload the oot module from this

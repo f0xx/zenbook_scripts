@@ -168,6 +168,8 @@ ramps toward `gain` on larger per-frame deltas (`pivot`, default 40).
 platform-touchpad list                 # shows stable key=
 platform-touchpad status
 platform-touchpad selftest
+platform-touchpad capture -o /tmp/tp.jsonl --seconds 30
+# /usr/share/zenbook-scripts/contrib/scripts/touchpad-capture-analyze.sh /tmp/tp.jsonl
 platform-touchpad-gui                  # USE=qt6 / PySide6; also from platform-tray
 ```
 
