@@ -756,6 +756,56 @@ class Pipeline:
             out = filt.process_frame(out)
         return out
 
+    def process_frame_traced(self, frame: list[Ev]) -> tuple[list[Ev], dict[str, Any]]:
+        """Like ``process_frame`` but return a JSON-friendly decision record."""
+        xy = None
+        x = y = None
+        for ev in frame:
+            if ev.type != EV_ABS:
+                continue
+            if ev.code in (ABS_MT_POSITION_X, ABS_X):
+                x = ev.value
+            elif ev.code in (ABS_MT_POSITION_Y, ABS_Y):
+                y = ev.value
+        if x is not None and y is not None:
+            xy = [int(x), int(y)]
+
+        typing_armed = bool(self.activity and self.activity.active())
+        stages: list[dict[str, Any]] = []
+        out = frame
+        dropped_by: str | None = None
+        for filt in self.filters:
+            before = len(out)
+            name = filt.stats.name
+            drops_before = filt.stats.dropped_frames
+            if not out:
+                break
+            out = filt.process_frame(out)
+            after = len(out)
+            dropped = after == 0 and before > 0
+            if dropped and dropped_by is None:
+                dropped_by = name
+            stages.append(
+                {
+                    "filter": name,
+                    "in_events": before,
+                    "out_events": after,
+                    "dropped": dropped,
+                    "drop_delta": int(filt.stats.dropped_frames - drops_before),
+                }
+            )
+
+        return out, {
+            "t": time.time(),
+            "typing_armed": typing_armed,
+            "xy": xy,
+            "in_events": len(frame),
+            "out_events": len(out),
+            "passed": bool(out),
+            "dropped_by": dropped_by,
+            "stages": stages,
+        }
+
     def process_events(self, events: Iterable[Ev]) -> list[Ev]:
         frame: list[Ev] = []
         result: list[Ev] = []
