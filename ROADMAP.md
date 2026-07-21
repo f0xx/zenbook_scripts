@@ -20,9 +20,9 @@ Status legend: **done** · **now** · **next** · **later**
 | Vendor-agnostic install hints | **done** | probe → Gentoo USE recommendations |
 | EPP / RAPL in fan-control profiles | **done** | `epp` / `rapl` / `intel_pstate` + `platform-power` |
 | Touchpad palm filter MVP | **done** | per-device profiles + Qt6 tuner; UX8406 primary |
-| Touchpad typing-inhibit + soft-accel | **done** | in **0.0.2** (draft publish pending) |
-| Package / announce **0.0.2** | **now** | Manifest/ebuild ready → undraft GitHub release |
-| Plasma resume hooks + sleep policies | **later** | after 0.0.2; per-user save/restore profiles |
+| Touchpad typing-inhibit + soft-accel | **done** | shipped in **0.0.2** |
+| Package / announce **0.0.2** | **done** | tag + published release + Gentoo Manifest/ebuild |
+| Plasma resume hooks + sleep policies | **next** | per-user save/restore profiles |
 | Ubuntu `.deb` + packaging checks | **later** | after 0.0.2; Ubuntu access / install verification |
 | Alpine `apk` + packaging rules | **later** | after 0.0.2; Alpine install checks |
 | UX5400 WM/DE annoyance (TBD) | **later** | palm OK; separate Plasma/WM issue — describe when ready |
@@ -107,8 +107,8 @@ platform-probe ──────────────► install decisions (
                     │         │                         └─ soft-accel
                     │         └─ per-device touchpad.json v2
                     │
-                    └─► (now) undraft / announce 0.0.2
-                              └─► (later) Plasma resume · .deb · apk · UX581
+                    └─► (done) announced 0.0.2
+                              └─► (next) Plasma resume · .deb · apk · UX581
 
 screenpad* / zenbook-screenpad (oneshot)     UX5400 only
 screenpad-sync (daemon)                      optional brightness mirror

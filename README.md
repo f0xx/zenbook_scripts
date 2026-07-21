@@ -26,8 +26,9 @@ Model-specific READMEs live on `main` after merge; feature work continues on the
 ### Release tarball checksums (`v0.0.2`)
 
 Typing-inhibit / soft-accel / pidfiles + fan-control / probe / tray stack.
-Draft GitHub release until publish step; Gentoo Manifest already matches this archive
-([CHANGELOG.md](CHANGELOG.md)).
+Published release + Gentoo Manifest/ebuild ([CHANGELOG.md](CHANGELOG.md)).
+Prefer `~amd64` keywords (not `**`) so `emerge -u` does not pull live `9999`
+ahead of this tag — see [packaging/README.md](packaging/README.md) upgrade note.
 
 Source: https://github.com/f0xx/zenbook_scripts/archive/refs/tags/v0.0.2.tar.gz
 

@@ -151,11 +151,50 @@ command -v eix-update >/dev/null && sudo eix-update
 Path is **`package.accept_keywords`** (plural). Release ebuild is `KEYWORDS="~amd64"`; live `9999` needs `**`:
 
 ```bash
+# Prefer announced releases (0.0.2):
 # /etc/portage/package.accept_keywords/zenbook-scripts
 echo 'app-laptop/zenbook-scripts ~amd64' | sudo tee /etc/portage/package.accept_keywords/zenbook-scripts
-# for 9999:
-# echo 'app-laptop/zenbook-scripts **' | sudo tee -a /etc/portage/package.accept_keywords/zenbook-scripts
+
+# Live git only (pulls 9999 ahead of any release — see upgrade note below):
+# echo 'app-laptop/zenbook-scripts **' | sudo tee /etc/portage/package.accept_keywords/zenbook-scripts
 ```
+
+**Do not leave `**` in place if you want `emerge -u zenbook-scripts` to track
+releases.** With `**`, Portage prefers `9999` over `0.0.2` (9999 is “newer”).
+
+### Upgrade note: file collisions (9999 ↔ release)
+
+Both live and versioned ebuilds are **`SLOT="0"`** and install the same paths under
+`/usr/bin` and `/usr/share/zenbook-scripts`. Switching atoms is a **replace**, not a
+side-by-side install.
+
+If you see `Detected file collision(s):` while emerging `0.0.2` and the search finds
+`app-laptop/zenbook-scripts-9999` (or the reverse), that is Portage listing paths
+owned by the package about to be replaced. With default `protect-owned`, emerge
+**continues** after the scan — it is noisy, not a hard failure.
+
+Clean switch to the announced release:
+
+```bash
+# 1) stop preferring live
+echo 'app-laptop/zenbook-scripts ~amd64' | sudo tee /etc/portage/package.accept_keywords/zenbook-scripts
+
+# 2) optional: hard-mask live so world upgrades never pull it back
+echo '=app-laptop/zenbook-scripts-9999' | sudo tee /etc/portage/package.mask/zenbook-scripts-live
+
+# 3) pin the release atom (replace 9999 / older PV)
+sudo emerge -av =app-laptop/zenbook-scripts-0.0.2
+```
+
+If collisions are from **unowned** files (a prior `configure.py --prefix /usr` over
+the same tree), either remove those paths or, one-shot:
+
+```bash
+sudo FEATURES="-collision-protect -protect-owned" emerge -av =app-laptop/zenbook-scripts-0.0.2
+```
+
+Do **not** put that FEATURES tweak in `make.conf`. After Portage owns the files,
+normal emerges are quiet.
 
 ### 6. Emerge (or manual ebuild phases)
 
