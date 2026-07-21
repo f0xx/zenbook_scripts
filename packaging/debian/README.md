@@ -18,18 +18,18 @@ sudo apt install -y python3 python3-usb python3-pip \
 # sudo apt install -y python3-pyside6.qtwidgets
 ```
 
-## Fetch `v0.0.2_pre1` (pre-release / testing)
+## Fetch `v0.0.2`
 
 ```bash
 cd /tmp
-curl -fsSL -o zenbook_scripts-0.0.2_pre1.tar.gz \
-  https://github.com/f0xx/zenbook_scripts/archive/refs/tags/v0.0.2_pre1.tar.gz
+curl -fsSL -o zenbook_scripts-0.0.2.tar.gz \
+  https://github.com/f0xx/zenbook_scripts/archive/refs/tags/v0.0.2.tar.gz
 
-echo '3cf2601c11e6af18bf7e245add0c750a5c7076086872dbf87e73bfd1fcc55c38  zenbook_scripts-0.0.2_pre1.tar.gz' | sha256sum -c
-echo 'ea455a5250bd15d03fd9b046b884d134510d481610a1e978fe74adfff78f67567b0214e4ddaaec5f1f27abac69236a34be5864a90690c82612b761168b77ee47  zenbook_scripts-0.0.2_pre1.tar.gz' | sha512sum -c
+echo 'be5b80f3a145a6efb53fb9863d365569f897d38b7cf722af3c32288fcf9093d9  zenbook_scripts-0.0.2.tar.gz' | sha256sum -c
+echo '36ca9e5965814d7aa1ef8c6ce156849599c61515d07b17c93f840ca78197aeadbecda01af4db42241217802a6c1dbb4f617333da43047e8d7a1f7ea9be09a052  zenbook_scripts-0.0.2.tar.gz' | sha512sum -c
 
-tar -xzf zenbook_scripts-0.0.2_pre1.tar.gz
-cd zenbook_scripts-0.0.2_pre1
+tar -xzf zenbook_scripts-0.0.2.tar.gz
+cd zenbook_scripts-0.0.2
 ```
 
 ## Fetch `v0.0.1_hf1`

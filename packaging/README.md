@@ -10,20 +10,37 @@ Copy recipes into your own overlay or install from a release tarball / git check
 
 | Path | Purpose |
 |------|---------|
-| [`gentoo/zenbook-scripts-0.0.2_pre1.ebuild`](gentoo/zenbook-scripts-0.0.2_pre1.ebuild) | **Pre-release** → tag **`v0.0.2_pre1`** (fan-control stack; try on UX5400) |
-| [`gentoo/zenbook-scripts-0.0.1_p1.ebuild`](gentoo/zenbook-scripts-0.0.1_p1.ebuild) | Stable-ish → tag **`v0.0.1_hf1`** |
+| [`gentoo/zenbook-scripts-0.0.2.ebuild`](gentoo/zenbook-scripts-0.0.2.ebuild) | **Announced** → tag **`v0.0.2`** (typing-inhibit + prior stack) |
+| [`gentoo/zenbook-scripts-0.0.2_pre1.ebuild`](gentoo/zenbook-scripts-0.0.2_pre1.ebuild) | Pre-release → tag **`v0.0.2_pre1`** |
+| [`gentoo/zenbook-scripts-0.0.1_p1.ebuild`](gentoo/zenbook-scripts-0.0.1_p1.ebuild) | Older → tag **`v0.0.1_hf1`** |
 | [`gentoo/zenbook-scripts-9999.ebuild`](gentoo/zenbook-scripts-9999.ebuild) | Live git (`EGIT`) |
 | [`gentoo/files/`](gentoo/files/) | Conditional UX8406 patches + README (no prebuilt `.ko`) |
-| [`gentoo/Manifest`](gentoo/Manifest) | Distfile digests for `0.0.1_hf1` + `0.0.2_pre1` |
+| [`gentoo/Manifest`](gentoo/Manifest) | Distfile digests for `0.0.1_hf1` + `0.0.2_pre1` + `0.0.2` |
 | [`gentoo/metadata.xml`](gentoo/metadata.xml) | USE flag / upstream metadata |
 | [`debian/README.md`](debian/README.md) | Debian/Ubuntu from-source install (no `.deb` yet) |
 
-### Pre-release `v0.0.2_pre1` (testing; not the announced 0.0.2)
+### Release `v0.0.2`
 
-Announced **0.0.2** is next after merging `feature/typing-inhibit` (typing-inhibit /
-soft-accel / pidfiles on top of EPP/RAPL + palm MVP). Release order:
-**merge → draft GitHub notes on a real tag → Manifest/ebuild from that tarball →
-publish** — never invent digests before the archive exists. Meanwhile:
+Tag + draft GitHub release first; **Manifest digests from that tarball** (`ebuild … manifest`).
+
+https://github.com/f0xx/zenbook_scripts/archive/refs/tags/v0.0.2.tar.gz
+
+| Algo | Digest |
+|------|--------|
+| Size | `243457` bytes |
+| SHA256 | `be5b80f3a145a6efb53fb9863d365569f897d38b7cf722af3c32288fcf9093d9` |
+| SHA512 | `36ca9e5965814d7aa1ef8c6ce156849599c61515d07b17c93f840ca78197aeadbecda01af4db42241217802a6c1dbb4f617333da43047e8d7a1f7ea9be09a052` |
+| BLAKE2B | `e495347571a71fd73c7be5bf5b5f0a2809d025d719c5204abbe36be4dc8f0c12940160136ee1179b414379761f9a73f1384127357b624493c312d6bf9b8abaef` |
+
+Portage DIST name: `zenbook_scripts-0.0.2.tar.gz`.
+
+```bash
+# UX5400 example (ScreenPad + fans, no oot hid-asus):
+USE="screenpad fan_control -kernel -zenbook_ux8406" \
+  emerge -av =app-laptop/zenbook-scripts-0.0.2
+```
+
+### Pre-release `v0.0.2_pre1` (superseded by 0.0.2)
 
 https://github.com/f0xx/zenbook_scripts/archive/refs/tags/v0.0.2_pre1.tar.gz
 
@@ -35,12 +52,6 @@ https://github.com/f0xx/zenbook_scripts/archive/refs/tags/v0.0.2_pre1.tar.gz
 | BLAKE2B | `8f2ef64bb33105b03b1d5609f94096f8b784e232f0e5acf7f2adaa6ffccc6a57b452f0e4cf175cd6690e67591b4376a40cded0c616143ef92a62434f2a8eca00` |
 
 Portage DIST name: `zenbook_scripts-0.0.2_pre1.tar.gz`.
-
-```bash
-# UX5400 example (ScreenPad + fans, no oot hid-asus):
-USE="screenpad fan_control -kernel -zenbook_ux8406" \
-  emerge -av =app-laptop/zenbook-scripts-0.0.2_pre1
-```
 
 ### Release `v0.0.1_hf1`
 
@@ -88,7 +99,8 @@ From a git checkout of this repo (or copy from the release tarball’s `packagin
 ```bash
 PKG=/var/db/repos/foxx/app-laptop/zenbook-scripts
 sudo mkdir -p "${PKG}/files"
-sudo cp packaging/gentoo/zenbook-scripts-0.0.2_pre1.ebuild "${PKG}/"
+sudo cp packaging/gentoo/zenbook-scripts-0.0.2.ebuild "${PKG}/"
+sudo cp packaging/gentoo/zenbook-scripts-0.0.2_pre1.ebuild "${PKG}/"   # optional
 sudo cp packaging/gentoo/zenbook-scripts-0.0.1_p1.ebuild "${PKG}/"
 sudo cp packaging/gentoo/zenbook-scripts-9999.ebuild "${PKG}/"   # optional live
 sudo cp packaging/gentoo/metadata.xml "${PKG}/"
@@ -119,12 +131,13 @@ After copying or editing ebuilds:
 
 ```bash
 cd /var/db/repos/foxx/app-laptop/zenbook-scripts
-sudo ebuild zenbook-scripts-0.0.2_pre1.ebuild manifest
+sudo ebuild zenbook-scripts-0.0.2.ebuild manifest
+# sudo ebuild zenbook-scripts-0.0.2_pre1.ebuild manifest
 # sudo ebuild zenbook-scripts-0.0.1_p1.ebuild manifest
 # sudo ebuild zenbook-scripts-9999.ebuild manifest   # live; often empty DIST
 ```
 
-Or keep the shipped `Manifest` (hashes for `0.0.1_hf1` + `0.0.2_pre1` above).
+Or keep the shipped `Manifest` (hashes for `0.0.1_hf1` + `0.0.2_pre1` + `0.0.2` above).
 First fetch may come from GitHub if Gentoo mirrors lack the file.
 
 ### 4. Optional: `eix-update`
@@ -148,12 +161,13 @@ echo 'app-laptop/zenbook-scripts ~amd64' | sudo tee /etc/portage/package.accept_
 
 ```bash
 # UX8406 docked (default USE: hotkeys kernel zenbook_ux8406)
-emerge -av =app-laptop/zenbook-scripts-0.0.2_pre1
+emerge -av =app-laptop/zenbook-scripts-0.0.2
 
 # UX5400 ScreenPad + fans, no oot hid-asus:
-# USE="screenpad fan_control -kernel -zenbook_ux8406" emerge -av =app-laptop/zenbook-scripts-0.0.2_pre1
+# USE="screenpad fan_control -kernel -zenbook_ux8406" emerge -av =app-laptop/zenbook-scripts-0.0.2
 
-# Older tag still available:
+# Older tags still available:
+# emerge -av =app-laptop/zenbook-scripts-0.0.2_pre1
 # emerge -av =app-laptop/zenbook-scripts-0.0.1_p1
 
 # Live git:
@@ -163,7 +177,7 @@ emerge -av =app-laptop/zenbook-scripts-0.0.2_pre1
 Manual phase walk (same as emerge internals):
 
 ```bash
-EBUILD=/var/db/repos/foxx/app-laptop/zenbook-scripts/zenbook-scripts-0.0.2_pre1.ebuild
+EBUILD=/var/db/repos/foxx/app-laptop/zenbook-scripts/zenbook-scripts-0.0.2.ebuild
 sudo ebuild "${EBUILD}" clean unpack prepare configure compile
 sudo ebuild "${EBUILD}" install
 sudo ebuild "${EBUILD}" qmerge   # or: preinst merge postinst
@@ -180,6 +194,9 @@ sudo rc-service zenbook-kb-hid-asus start
 # Hotkeys listener
 sudo rc-update add zenbook-kb-hotkeys default
 sudo rc-service zenbook-kb-hotkeys start
+
+# Optional typing-inhibit live filter
+# sudo rc-update add zenbook-platform-touchpad default
 
 # Optional lid watcher
 # sudo rc-update add zenbook-kb-lid default
