@@ -223,6 +223,21 @@ Example: `contrib/modprobe/zenbook-hid-asus.conf` → `/etc/modprobe.d/`
 
 ---
 
+## Plasma KCM + PowerDevil / session — in progress
+
+Branch: **`feature/plasma-kcm-powerdevil`**. Full design: [`README.plasma.md`](README.plasma.md).
+
+One shot for next RC:
+
+1. **KCModule** — System Settings UI (Overview / Touchpad / Thermal link / Sleep·Resume)
+2. **`platform-session`** — per-user `session.json` profiles; sleep/hibernate/resume actions
+3. **Presentation inhibit** held outside plasmashell (survives `--replace`)
+4. Optional QSG-thread watch (default off)
+
+Scaffold: `plasma/session.json.example`. Tray remains the quick thermal surface.
+
+---
+
 ## Boot sideload (OpenRC) — implemented
 
 - `contrib/openrc/zenbook-kb-hid-asus` — default runlevel, before hotkeys
