@@ -181,7 +181,7 @@ Snapshot: `~/.config/zenbook-scripts/zenbook_duo.save` (from `command_user`) —
 | `usb_wait_secs` | seconds | How long to wait for docked keyboard when `sideload=yes` |
 | `fn_lock_default` | `-1`, `0`, `1` | Initial layout at module load (see below) |
 | `fn_lock_allow_toggle` | `0`, `1` | Whether Fn+Esc / vendor `0x4e` may switch layout |
-| `fn_row_policy` | decimal bitmask | Per-key Fn-row merge; recommended docked **`7`** (plain F1–F3→`KEY_Fn` + F4–F12 swap); full `insmod` only |
+| `fn_row_policy` | decimal bitmask | Per-key Fn-row merge; recommended docked **`7`** (plain F1–F3→`KEY_Fn` + F4–F12 swap); full `insmod` only — see [`README.fn_row_policy.md`](README.fn_row_policy.md) |
 
 `/etc/modprobe.d/zenbook-hid-asus.conf` does **not** apply to sideload (`insmod`); set
 `fn_row_policy` in this conf.d file (or `ROW_POLICY=7 ./kmod_deploy.sh`).

@@ -292,7 +292,8 @@ sudo make -C kernel install   # → /usr/lib/modules/zenbook-hid-asus/$(uname -r
 sudo rc-service zenbook-kb-hid-asus restart
 ```
 
-Details: [`kernel/README.md`](kernel/README.md) (build, `install` / `modules_install`, `fn_row_policy=7`).
+Details: [`kernel/README.md`](kernel/README.md) (build, `install` / `modules_install`);
+[`README.fn_row_policy.md`](README.fn_row_policy.md) (`fn_row_policy=7` bitmask / chords).
 
 ---
 

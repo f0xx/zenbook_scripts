@@ -198,12 +198,16 @@ OpenRGB / rogauracore: **not applicable** on UX5400EA (no USB Aura Core HID; whi
 
 ---
 
-## Fn-lock module parameters (UX8406) — implemented
+## Fn-lock / Fn-row module parameters (UX8406) — implemented
 
 `kernel/scripts/port-ux8406.py` adds:
 
 - `fn_lock_default` — `-1` = DMI (UX8406 → Mode B), `0` / `1` override
 - `fn_lock_allow_toggle` — disable Fn+Esc when `0`
+- `fn_row_policy` — F4–F12 swap bitmask + F1–F3 fixed remap when ≠ 0
+
+Default docked: **`fn_row_policy=7`**. Full tables / drawings:
+[`README.fn_row_policy.md`](README.fn_row_policy.md).
 
 Example: `contrib/modprobe/zenbook-hid-asus.conf` → `/etc/modprobe.d/`
 

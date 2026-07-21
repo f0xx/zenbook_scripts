@@ -26,7 +26,8 @@ Model-specific READMEs live on `main` after merge; feature work continues on the
 ### Pre-release tarball checksums (`v0.0.2_pre1`)
 
 Testing build (fan-control / probe / tray / power / touchpad). UX5400 field-validated
-fan+tray on `feature/epp-rapl-touchpad`. Announced **0.0.2** is next after merge/package.
+fan+tray on `feature/epp-rapl-touchpad`. Announced **0.0.2** is next after
+`feature/typing-inhibit` merge + package ([CHANGELOG.md](CHANGELOG.md)).
 
 Source: https://github.com/f0xx/zenbook_scripts/archive/refs/tags/v0.0.2_pre1.tar.gz
 
@@ -90,7 +91,9 @@ platform-tray                  # USE=qt6 — metrics graph + profile/fan menu
 
 - [DEPLOY.md](DEPLOY.md) — when to rebuild / reinstall / reload `hid-asus`
 - [ROADMAP.md](ROADMAP.md) — where we are / next
+- [CHANGELOG.md](CHANGELOG.md) — release notes (keep updated with tags)
 - [PLANNED.md](PLANNED.md) — feature cheatsheets (`platform-fan*`, probe, tray)
+- [README.fn_row_policy.md](README.fn_row_policy.md) — UX8406 `fn_row_policy` bitmask / chords
 - [kernel/README.md](kernel/README.md) — out-of-tree `hid-asus` build & install
 - [packaging/README.md](packaging/README.md) — Gentoo ebuild / overlay notes
 - [packaging/debian/README.md](packaging/debian/README.md) — Debian/Ubuntu from source

@@ -254,6 +254,9 @@ Synthetic Meta↓ (from deferred GUI flush for Meta+Fx) is tracked and **Meta↑
 
 Simulator / regression: `python3 -m unittest tests.test_fn_row_policy -v`
 
+**Full Fn-row reference** (bitmask drawings, tables, decision flow, EC caveat):
+[`README.fn_row_policy.md`](../README.fn_row_policy.md).
+
 Full conf.d reference: [`DEPLOY.md`](../DEPLOY.md) §F (`/etc/conf.d/zenbook-kb-hid-asus`).
 
 ```bash
