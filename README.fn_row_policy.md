@@ -201,6 +201,29 @@ Plain F12 on BT used to spam `Unmapped Asus vendor usagepage code 0x76` and do
 nothing — oot now maps vendor `0x76` → `KEY_PROG1` (ASUS key). With
 `platform-bt-fn-row`, that becomes plain `KEY_F12`.
 
+### Bluetooth Mode B vs expected (docked policy=7)
+
+`Fn` column: `0` = plain key, `1` = Fn held. Observed = stock BT firmware
+(Mode B). Expected = same as USB `fn_row_policy=7`.
+
+| Fn | Key | Observed (BT Mode B) | Expected (policy=7) | `platform-bt-fn-row` |
+|---:|-----|----------------------|---------------------|----------------------|
+| 0 | F1–F3 | vol mute / − / + | `KEY_F1`–`F3` | yes (swap media↔F) |
+| 1 | F1–F3 | `KEY_F1`–`F3` | vol mute / − / + | yes |
+| 0 | F4 | kbd BL / vendor (often) | `KEY_F4` | yes if `KEY_KBDILLUMTOGGLE` |
+| 1 | F4 | `KEY_F4` | kbd BL toggle | yes |
+| 0 | F5–F6 | brightness −/+ (often) | `KEY_F5`–`F6` | yes if brightness keys |
+| 1 | F5–F6 | `KEY_F5`–`F6` | brightness −/+ | yes |
+| 0 | F7 | display config (Win+P) | `KEY_F7` | **partial** — chord, not 1:1 |
+| 1 | F7 | `KEY_F7` | Win+P / display config | **partial** |
+| 0 | F8 | screen-swap vendor / `???` | screen swap (`KEY_F15`) | yes if `KEY_F15`↔`F8` |
+| 1 | F8 | `KEY_F8` (typical) | `KEY_F8` | passthrough |
+| 0 | F9–F12 | mic / rfkill / emoji / ASUS (`0x76`) | `KEY_F*` | yes when codes match |
+| 1 | F9–F12 | `KEY_F*` | specials | yes |
+
+Invert on BT: `sudo platform-bt-fn-row run` (grab + uinput). USB pogo does **not**
+need it — kernel policy already applies.
+
 If BT is connected but only Mouse/Touchpad appear, `dmesg` shows
 `item fetching failed at offset 257/259` — sideload the oot module from this
 repo (`./kmod_deploy.sh`) and reconnect Bluetooth. `platform-probe` reports
