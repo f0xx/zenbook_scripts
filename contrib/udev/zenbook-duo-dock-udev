@@ -1,0 +1,31 @@
+#!/bin/sh
+# Called from udev when UX8406 Primax keyboard USB appears/disappears.
+# Runs platform-duo-dock as the graphical seat user when possible.
+
+BIN="${ZENBOOK_DUO_DOCK_BIN:-/usr/bin/platform-duo-dock}"
+[ -x "$BIN" ] || BIN="/usr/local/bin/platform-duo-dock"
+[ -x "$BIN" ] || exit 0
+
+# Prefer the user who owns the seat0 session
+uid=""
+if [ -n "${ZENBOOK_DUO_UID:-}" ]; then
+	uid="$ZENBOOK_DUO_UID"
+elif command -v loginctl >/dev/null 2>&1; then
+	uid="$(loginctl list-sessions --no-legend 2>/dev/null | awk '/seat0/ {print $2; exit}')"
+fi
+[ -n "$uid" ] || uid="$(id -u)"
+
+export ZENBOOK_DUO_UID="$uid"
+if [ -S "/run/user/${uid}/bus" ]; then
+	export DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/${uid}/bus"
+	export XDG_RUNTIME_DIR="/run/user/${uid}"
+fi
+
+action="${1:-auto}"
+if [ "$(id -u)" -eq 0 ] && [ -n "$uid" ] && [ "$uid" != 0 ]; then
+	user="$(getent passwd "$uid" | cut -d: -f1)"
+	if [ -n "$user" ] && command -v sudo >/dev/null 2>&1; then
+		exec sudo -u "$user" -E "$BIN" "$action"
+	fi
+fi
+exec "$BIN" "$action"

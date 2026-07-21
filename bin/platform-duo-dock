@@ -1,0 +1,98 @@
+#!/usr/bin/env bash
+# UX8406 Duo: enable/disable the lower panel (eDP-2) based on keyboard dock state.
+#
+# Docked on pogo (USB 0b05:1b2c): lower screen off / powersave (keyboard covers it).
+# Undocked (BT / removed): lower screen on so it is usable.
+#
+# Manual: platform-duo-dock status|docked|undocked|auto
+# udev:   contrib/udev/99-zenbook-duo-dock.rules
+#
+# Requires: kscreen-doctor. Primary stays eDP-1 (upper).
+
+set -euo pipefail
+
+LOWER="${ZENBOOK_DUO_LOWER:-eDP-2}"
+UPPER="${ZENBOOK_DUO_UPPER:-eDP-1}"
+
+if [[ -z "${DBUS_SESSION_BUS_ADDRESS:-}" ]]; then
+	uid="$(id -u)"
+	if [[ -S "/run/user/${uid}/bus" ]]; then
+		export DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/${uid}/bus"
+	elif [[ -n "${ZENBOOK_DUO_UID:-}" && -S "/run/user/${ZENBOOK_DUO_UID}/bus" ]]; then
+		export DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/${ZENBOOK_DUO_UID}/bus"
+	fi
+fi
+
+have_kscreen() {
+	command -v kscreen-doctor >/dev/null 2>&1
+}
+
+usb_pogo_present() {
+	lsusb -d 0b05:1b2c >/dev/null 2>&1
+}
+
+cmd_status() {
+	echo "usb_pogo_1b2c: $(usb_pogo_present && echo yes || echo no)"
+	if have_kscreen; then
+		kscreen-doctor -o 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g' | \
+			awk -v u="$UPPER" -v l="$LOWER" '
+				$1=="Output:" && $3==u {cur=u}
+				$1=="Output:" && $3==l {cur=l}
+				cur!="" && ($1=="enabled"||$1=="disabled") {print cur": "$1; cur=""}
+			'
+	else
+		echo "kscreen-doctor: missing"
+	fi
+	# DRM + backlight hints
+	for c in /sys/class/drm/card0-${LOWER}/enabled /sys/class/drm/card0-${UPPER}/enabled; do
+		[[ -f "$c" ]] && echo "drm $(basename "$(dirname "$c")"): $(cat "$c")"
+	done
+}
+
+kscreen_set_lower() {
+	local mode=$1
+	have_kscreen || { echo "kscreen-doctor not found" >&2; return 1; }
+	case "$mode" in
+		on)  kscreen-doctor "output.${LOWER}.enable" ;;
+		off) kscreen-doctor "output.${LOWER}.disable" ;;
+		*) return 1 ;;
+	esac
+}
+
+cmd_docked() {
+	# Keyboard on pogo — hide lower panel
+	kscreen_set_lower off
+	echo "duo-dock: docked → ${LOWER} disable"
+}
+
+cmd_undocked() {
+	# Keyboard removed — show lower panel under former keyboard area
+	kscreen_set_lower on
+	# Stack below upper if geometry known
+	if have_kscreen; then
+		# Best-effort vertical stack: upper at 0,0; lower below (Plasma scale-aware via kscreen)
+		kscreen-doctor "output.${UPPER}.enable" "output.${LOWER}.enable" >/dev/null 2>&1 || true
+	fi
+	echo "duo-dock: undocked → ${LOWER} enable"
+}
+
+cmd_auto() {
+	if usb_pogo_present; then
+		cmd_docked
+	else
+		cmd_undocked
+	fi
+}
+
+usage() {
+	echo "Usage: $0 status|docked|undocked|auto" >&2
+	exit 2
+}
+
+case "${1:-}" in
+	status) cmd_status ;;
+	docked) cmd_docked ;;
+	undocked) cmd_undocked ;;
+	auto) cmd_auto ;;
+	*) usage ;;
+esac

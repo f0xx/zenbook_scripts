@@ -185,6 +185,23 @@ echo 7 | sudo tee /sys/module/hid_asus/parameters/fn_row_policy
 
 `modprobe.d` alone is **not** enough for the OpenRC sideload path.
 
+## Bluetooth vs USB (important)
+
+`fn_row_policy` remaps need **USB** interfaces if0 / if3 / if4 (`0b05:1b2c` on
+pogo pins). Bluetooth `0b05:1b2d` is a single HID keyboard collection — the same
+bitmask **does not apply**.
+
+| Transport | Keys | Fn-row |
+|-----------|------|--------|
+| USB pogo + oot `hid-asus` | yes | `fn_row_policy=7` (this document) |
+| Bluetooth + broken stock/oot Usage(76h) fixup | **no keyboard node** (touchpad only) | n/a |
+| Bluetooth + oot that **skips** BT Usage(76h) fixup | yes | firmware **Mode B** (plain = specials); invert with `platform-bt-fn-row run` |
+
+If BT is connected but only Mouse/Touchpad appear, `dmesg` shows
+`item fetching failed at offset 257/259` — sideload the oot module from this
+repo (`./kmod_deploy.sh`) and reconnect Bluetooth. `platform-probe` reports
+**Duo keyboard (Bluetooth)** health.
+
 ## Related knobs
 
 | Parameter | Typical docked | Meaning |

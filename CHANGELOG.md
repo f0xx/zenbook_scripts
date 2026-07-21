@@ -17,6 +17,15 @@ Branch: `feature/plasma-kcm-powerdevil`. Design:
   plasmashell (survives `plasmashell --replace`).
 - Optional QSG-thread watch / gated auto-replace (off by default).
 
+### Fixed (UX8406 Bluetooth / Duo layout)
+
+- **BT keyboard dead keys:** oot `hid-asus` no longer applies the broken
+  Usage(76h) rdesc fixup on `0b05:1b2d` (probe used to fail → touchpad only).
+- **Typing-inhibit:** rescan keyboard nodes so late BT attach is seen.
+- **`platform-duo-dock`:** enable/disable lower `eDP-2` on USB pogo add/remove.
+- **`platform-bt-fn-row`:** userspace Mode B → policy-7-ish Fn-row swap for BT.
+- **`platform-probe`:** Duo keyboard (Bluetooth) health line.
+
 ## [0.0.2] — 2026-07-21
 
 Tag: [`v0.0.2`](https://github.com/f0xx/zenbook_scripts/releases/tag/v0.0.2). Gentoo PV: `0.0.2`.

@@ -1724,8 +1724,19 @@ def port_hid_asus(src: Path, dst: Path) -> None:
 \t\t\t\trsize_orig = 90;
 \t\t\t\toffs = 66;
 \t\t\t} else {
-\t\t\t\trsize_orig = 257;
-\t\t\t\toffs = 176;
+\t\t\t\t/*
+\t\t\t\t * Bluetooth 0b05:1b2d (firmware v1.25+): expanding
+\t\t\t\t * Usage(76h) at offs 176 produces a corrupt rdesc
+\t\t\t\t * ("item fetching failed at offset 257/259") and
+\t\t\t\t * probe fails — no keyboard input node, only
+\t\t\t\t * mouse/touchpad. Leave the stock BT descriptor
+\t\t\t\t * alone so hid-asus can bind; Fn-row stays Mode B
+\t\t\t\t * until userspace remap (fn_row_policy is USB-only).
+\t\t\t\t */
+\t\t\t\thid_info(hdev,
+\t\t\t\t\t "Skipping Zenbook Duo BT Usage(76h) rdesc fixup\\n");
+\t\t\t\trsize_orig = -1;
+\t\t\t\toffs = 0;
 \t\t\t}
 \t\t}
 

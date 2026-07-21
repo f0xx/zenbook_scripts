@@ -1,0 +1,210 @@
+#!/usr/bin/env python3
+"""Invert Primax UX8406 Bluetooth Mode B Fn-row toward docked fn_row_policy=7.
+
+Firmware Mode B (BT, no USB if0/if3/if4 policy):
+  plain F-key → special / media
+  Fn+F-key    → KEY_F*
+
+Docked policy=7 target:
+  plain F-key → KEY_F*
+  Fn+F-key    → special / media
+
+Grab the BT keyboard node and emit the swapped codes on a uinput device.
+Does nothing useful for USB pogo (kernel policy already handles that).
+
+Usage:
+  sudo platform-bt-fn-row run          # foreground
+  platform-bt-fn-row status
+  platform-bt-fn-row list
+"""
+
+from __future__ import annotations
+
+import argparse
+import os
+import select
+import struct
+import sys
+import time
+from pathlib import Path
+
+# linux/input-event-codes.h
+EV_KEY = 0x01
+EV_SYN = 0x00
+SYN_REPORT = 0
+KEY_MUTE = 113
+KEY_VOLUMEDOWN = 114
+KEY_VOLUMEUP = 115
+KEY_F1 = 59
+KEY_F2 = 60
+KEY_F3 = 61
+KEY_F4 = 62
+KEY_F5 = 63
+KEY_F6 = 64
+KEY_F7 = 65
+KEY_F8 = 66
+KEY_F9 = 67
+KEY_F10 = 68
+KEY_F11 = 69
+KEY_F12 = 70
+KEY_KBDILLUMTOGGLE = 228
+KEY_BRIGHTNESSDOWN = 224
+KEY_BRIGHTNESSUP = 225
+KEY_MICMUTE = 248
+KEY_RFKILL = 247
+KEY_PROG1 = 148
+KEY_F15 = 185  # screen swap (docked Fn+F8)
+KEY_LEFTMETA = 125
+KEY_P = 25
+
+# Mode B special ↔ F-key (symmetric swap)
+SWAP: dict[int, int] = {
+    KEY_MUTE: KEY_F1,
+    KEY_F1: KEY_MUTE,
+    KEY_VOLUMEDOWN: KEY_F2,
+    KEY_F2: KEY_VOLUMEDOWN,
+    KEY_VOLUMEUP: KEY_F3,
+    KEY_F3: KEY_VOLUMEUP,
+    KEY_KBDILLUMTOGGLE: KEY_F4,
+    KEY_F4: KEY_KBDILLUMTOGGLE,
+    KEY_BRIGHTNESSDOWN: KEY_F5,
+    KEY_F5: KEY_BRIGHTNESSDOWN,
+    KEY_BRIGHTNESSUP: KEY_F6,
+    KEY_F6: KEY_BRIGHTNESSUP,
+    KEY_MICMUTE: KEY_F9,
+    KEY_F9: KEY_MICMUTE,
+    KEY_RFKILL: KEY_F10,
+    KEY_F10: KEY_RFKILL,
+    KEY_PROG1: KEY_F12,
+    KEY_F12: KEY_PROG1,
+    KEY_F15: KEY_F8,
+    KEY_F8: KEY_F15,
+}
+
+EVENT_FMT = "llHHi"
+EVENT_SIZE = struct.calcsize(EVENT_FMT)
+EVIOCGRAB = 0x40044590
+
+
+def discover_bt_duo_keyboards() -> list[Path]:
+    out: list[Path] = []
+    for event_dir in sorted(Path("/sys/class/input").glob("event*")):
+        name_p = event_dir / "device" / "name"
+        if not name_p.is_file():
+            continue
+        name = name_p.read_text(encoding="utf-8", errors="replace").strip().lower()
+        if "zenbook duo keyboard" not in name:
+            continue
+        if "touchpad" in name or "mouse" in name:
+            continue
+        vendor = event_dir / "device" / "id" / "vendor"
+        product = event_dir / "device" / "id" / "product"
+        bustype = event_dir / "device" / "id" / "bustype"
+        if not (vendor.is_file() and product.is_file() and bustype.is_file()):
+            continue
+        if bustype.read_text().strip() != "0005":  # BUS_BLUETOOTH
+            continue
+        if vendor.read_text().strip().lower().lstrip("0") not in ("b05",):
+            continue
+        if product.read_text().strip().lower() not in ("1b2d",):
+            continue
+        path = Path("/dev/input") / event_dir.name
+        if path.exists():
+            out.append(path)
+    return out
+
+
+def _uinput_setup(name: str = "Zenbook Duo BT Fn-row") -> int:
+    import fcntl
+
+    UI_SET_EVBIT = 0x40045564
+    UI_SET_KEYBIT = 0x40045565
+    UI_DEV_SETUP = 0x405C5503
+    UI_DEV_CREATE = 0x5501
+    BUS_VIRTUAL = 0x06
+
+    fd = os.open("/dev/uinput", os.O_WRONLY | os.O_NONBLOCK)
+    fcntl.ioctl(fd, UI_SET_EVBIT, EV_KEY)
+    fcntl.ioctl(fd, UI_SET_EVBIT, EV_SYN)
+    for code in range(1, 768):
+        try:
+            fcntl.ioctl(fd, UI_SET_KEYBIT, code)
+        except OSError:
+            pass
+
+    # struct uinput_setup { struct input_id id; char name[UINPUT_MAX_NAME_SIZE]; … }
+    name_b = name.encode("utf-8")[:79]
+    setup = struct.pack("HHHH80sI", BUS_VIRTUAL, 0x0B05, 0x1B2D, 1, name_b, 0)
+    fcntl.ioctl(fd, UI_DEV_SETUP, setup)
+    fcntl.ioctl(fd, UI_DEV_CREATE)
+    time.sleep(0.1)
+    return fd
+
+
+def _emit(fd: int, etype: int, code: int, value: int) -> None:
+    now = time.time()
+    sec = int(now)
+    usec = int((now - sec) * 1_000_000)
+    os.write(fd, struct.pack(EVENT_FMT, sec, usec, etype, code, value))
+
+
+def run_remap(src: Path) -> int:
+    import fcntl
+
+    in_fd = os.open(src, os.O_RDONLY | os.O_NONBLOCK)
+    fcntl.ioctl(in_fd, EVIOCGRAB, 1)
+    out_fd = _uinput_setup()
+    print(f"bt-fn-row: grabbed {src} → uinput", flush=True)
+    buf = b""
+    try:
+        while True:
+            r, _, _ = select.select([in_fd], [], [], 1.0)
+            if not r:
+                continue
+            try:
+                chunk = os.read(in_fd, EVENT_SIZE * 64)
+            except BlockingIOError:
+                continue
+            if not chunk:
+                print("bt-fn-row: source EOF", flush=True)
+                return 0
+            buf += chunk
+            while len(buf) >= EVENT_SIZE:
+                raw, buf = buf[:EVENT_SIZE], buf[EVENT_SIZE:]
+                sec, usec, etype, code, value = struct.unpack(EVENT_FMT, raw)
+                if etype == EV_KEY and code in SWAP:
+                    code = SWAP[code]
+                os.write(out_fd, struct.pack(EVENT_FMT, sec, usec, etype, code, value))
+    finally:
+        try:
+            fcntl.ioctl(in_fd, EVIOCGRAB, 0)
+        except OSError:
+            pass
+        os.close(in_fd)
+        os.close(out_fd)
+    return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    p = argparse.ArgumentParser(description=__doc__)
+    p.add_argument("cmd", choices=("status", "list", "run"), nargs="?", default="status")
+    args = p.parse_args(argv)
+    nodes = discover_bt_duo_keyboards()
+    if args.cmd == "list" or args.cmd == "status":
+        if not nodes:
+            print("bt-fn-row: no BT Duo keyboard event node (0b05:1b2d)")
+            print("  (USB pogo uses kernel fn_row_policy; reconnect BT after oot hid-asus)")
+            return 1 if args.cmd == "run" else 0
+        for n in nodes:
+            print(n)
+        if args.cmd == "status":
+            print("bt-fn-row: ready (Mode B → policy-7-ish swap on run)")
+        return 0
+    if not nodes:
+        print("bt-fn-row: no BT keyboard to grab", file=sys.stderr)
+        return 1
+    return run_remap(nodes[0])
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
