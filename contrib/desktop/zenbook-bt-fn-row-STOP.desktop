@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Zenbook BT Fn-row STOP
+Comment=Ungrab Bluetooth keyboard remapper (restores typing if Enter is dead)
+Exec=pkexec /usr/bin/platform-bt-fn-row panic
+Icon=process-stop
+Terminal=false
+Categories=Utility;System;
+Keywords=zenbook;keyboard;bt;ungrab;

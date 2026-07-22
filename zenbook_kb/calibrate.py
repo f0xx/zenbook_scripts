@@ -10,11 +10,13 @@ Requires root (sudo) so devices can be grabbed exclusively and queues drained.
 from __future__ import annotations
 
 import argparse
+import atexit
 import fcntl
 import json
 import os
 import pwd
 import select
+import signal
 import struct
 import sys
 import termios
@@ -44,7 +46,11 @@ MODIFIER_CODES = frozenset({KEY_FN, 125, 126, 29, 42, 54, 97})  # FN, L/R META, 
 
 
 class _TerminalSession:
-    """Isolate the tty from keyboard echo while evdev nodes are grabbed."""
+    """Isolate the tty from keyboard echo while evdev nodes are grabbed.
+
+    Keep ISIG so Ctrl+C still delivers SIGINT (otherwise the shell can look
+    "stuck" after an unclean exit). Always restore with TCSAFLUSH + atexit.
+    """
 
     def __init__(self) -> None:
         self._fd: int | None = None
@@ -57,21 +63,31 @@ class _TerminalSession:
         self._fd = sys.stdin.fileno()
         self._old = termios.tcgetattr(self._fd)
         new = termios.tcgetattr(self._fd)
-        new[tty.LFLAG] &= ~(termios.ECHO | termios.ICANON | termios.ISIG | termios.IEXTEN)
+        # Keep ISIG — Ctrl+C must work; disable echo/canon only.
+        new[tty.LFLAG] &= ~(termios.ECHO | termios.ICANON | termios.IEXTEN)
         new[tty.IFLAG] &= ~(
             termios.IXON | termios.ICRNL | termios.BRKINT | termios.INPCK | termios.ISTRIP
         )
         new[tty.CC][termios.VMIN] = 0
         new[tty.CC][termios.VTIME] = 0
-        termios.tcsetattr(self._fd, termios.TCSADRAIN, new)
+        termios.tcsetattr(self._fd, termios.TCSAFLUSH, new)
         self.active = True
+        atexit.register(self._restore)
         self.drain()
         return self
 
-    def __exit__(self, *_exc: object) -> None:
+    def _restore(self) -> None:
         if self._old is not None and self._fd is not None:
-            termios.tcsetattr(self._fd, termios.TCSADRAIN, self._old)
+            try:
+                self.drain()
+                termios.tcsetattr(self._fd, termios.TCSAFLUSH, self._old)
+            except termios.error:
+                pass
+            self._old = None
         self.active = False
+
+    def __exit__(self, *_exc: object) -> None:
+        self._restore()
 
     def drain(self) -> int:
         if self._fd is None:
@@ -214,6 +230,443 @@ QUICK_STEP_IDS = frozenset({
     "F1", "Fn+F1", "F2", "Fn+F2", "F3", "Fn+F3", "F4", "Fn+F4", "F12", "Fn+F12",
 })
 
+# policy=7 target (docked / BT-after-remap). Values are KEY_* name sets that count as OK.
+# Meta chords: expected primary is KEY_Fn with Meta held (workspace).
+POLICY7_EXPECTED: dict[tuple[int, int, str], set[str]] = {}
+_POLICY7_FN_SPECIALS: dict[str, set[str]] = {
+    "F1": {"KEY_MUTE"},
+    "F2": {"KEY_VOLUMEDOWN"},
+    "F3": {"KEY_VOLUMEUP"},
+    "F4": {"KEY_KBDILLUMTOGGLE", "KEY_KBDILLUMUP", "KEY_KBDILLUMDOWN"},
+    "F5": {"KEY_BRIGHTNESSDOWN"},
+    "F6": {"KEY_BRIGHTNESSUP"},
+    "F7": {"KEY_LEFTMETA", "KEY_P", "KEY_SWITCHVIDEOMODE"},  # Win+P chord
+    "F8": {"KEY_F15"},
+    "F9": {"KEY_MICMUTE"},
+    "F10": {"KEY_RFKILL", "KEY_BLUETOOTH", "KEY_WLAN"},
+    "F11": {"KEY_EMOJI_PICKER"},
+    "F12": {"KEY_PROG1"},
+}
+for _fkey in [f"F{n}" for n in range(1, 13)]:
+    if _fkey == "F11":
+        continue  # optional; many units skip
+    # Meta=0 Fn=0 → plain KEY_F*
+    POLICY7_EXPECTED[(0, 0, _fkey)] = {f"KEY_{_fkey}"}
+    # Meta=0 Fn=1 → special
+    POLICY7_EXPECTED[(0, 1, _fkey)] = _POLICY7_FN_SPECIALS.get(_fkey, {f"KEY_{_fkey}"})
+    # Meta=1 Fn=0 → Meta+KEY_F* (workspace)
+    POLICY7_EXPECTED[(1, 0, _fkey)] = {f"KEY_{_fkey}", "KEY_LEFTMETA", "KEY_RIGHTMETA"}
+    # Meta=1 Fn=1 → Meta+special (acceptable either special or F after invert confusion)
+    POLICY7_EXPECTED[(1, 1, _fkey)] = _POLICY7_FN_SPECIALS.get(_fkey, {f"KEY_{_fkey}"}) | {
+        "KEY_LEFTMETA",
+        "KEY_RIGHTMETA",
+        f"KEY_{_fkey}",
+    }
+
+MATRIX_KEYS_FULL = [f"F{n}" for n in range(1, 13) if n != 11]
+MATRIX_KEYS_QUICK = ["F1", "F2", "F3", "F4", "F5", "F6", "F7", "F8", "F9", "F12"]
+
+
+def _matrix_steps(keys: list[str]) -> list[tuple[str, str, int, int, str]]:
+    """Return (step_id, prompt, meta, fn, fkey) for Meta×Fn×key walkthrough."""
+    out: list[tuple[str, str, int, int, str]] = []
+    for meta in (0, 1):
+        for fn in (0, 1):
+            for fkey in keys:
+                sid = f"M{meta}Fn{fn}-{fkey}"
+                hold = []
+                if meta:
+                    hold.append("Meta")
+                if fn:
+                    hold.append("Fn")
+                held = ("Hold " + "+".join(hold) + ", then " if hold else "Plain ") + fkey
+                expect = POLICY7_EXPECTED.get((meta, fn, fkey), set())
+                exp_s = "|".join(sorted(expect)) if expect else "?"
+                prompt = f"{held} once and release  [expect policy-7: {exp_s}]"
+                out.append((sid, prompt, meta, fn, fkey))
+    return out
+
+
+def _bt_fn_row_pid() -> int | None:
+    pidfile = Path("/run/zenbook-bt-fn-row.pid")
+    if not pidfile.is_file():
+        return None
+    try:
+        pid = int(pidfile.read_text().strip())
+        os.kill(pid, 0)
+        return pid
+    except (OSError, ValueError):
+        return None
+
+
+def _flush_bt_fn_row(pid: int | None = None) -> None:
+    """Ask remapper to release any stuck uinput keys (SIGUSR1)."""
+    pid = pid if pid is not None else _bt_fn_row_pid()
+    if pid is None:
+        return
+    try:
+        os.kill(pid, signal.SIGUSR1)
+        time.sleep(0.05)
+    except OSError:
+        pass
+
+
+def _summarize_press(events: list[CapturedEvent]) -> str:
+    downs = [e for e in events if e.value == 1]
+    if not downs:
+        return "(none)"
+    # unique names in order
+    seen: list[str] = []
+    for e in downs:
+        if e.name not in seen:
+            seen.append(e.name)
+    return "+".join(seen)
+
+
+def _matrix_match(meta: int, fn: int, fkey: str, events: list[CapturedEvent]) -> str:
+    expect = POLICY7_EXPECTED.get((meta, fn, fkey), set())
+    if not events:
+        return "MISS"
+    names = {e.name for e in events if e.value == 1}
+    # Raw Mode B vendor path (pre-remap): count as DIFF but not MISS
+    vendor_for = {
+        "F4": {"VENDOR:0xc7"},
+        "F5": {"VENDOR:0x10"},
+        "F6": {"VENDOR:0x20"},
+        "F7": {"VENDOR:0x35", "KEY_P", "KEY_LEFTMETA"},
+        "F8": {"VENDOR:0x9c"},
+        "F9": {"VENDOR:0x7c"},
+        "F10": {"VENDOR:0x88"},
+        "F11": {"VENDOR:0x7e"},
+        "F12": {"VENDOR:0x86", "VENDOR:0x76", "KEY_PROG1"},
+    }
+    if not expect:
+        return "?"
+    if meta == 0 and fn == 0:
+        if f"KEY_{fkey}" in names:
+            return "OK"
+        if names & vendor_for.get(fkey, set()):
+            return "DIFF"  # raw Mode B vendor — remapper must synthesize KEY_F*
+        return "DIFF" if names else "MISS"
+    if meta == 0 and fn == 1:
+        if fkey == "F7":
+            if "KEY_SWITCHVIDEOMODE" in names:
+                return "OK"
+            if "KEY_LEFTMETA" in names and "KEY_P" in names:
+                return "OK"
+            return "DIFF"
+        return "OK" if names & expect else "DIFF"
+    if meta == 1 and fn == 0:
+        # Workspace chords need Meta actually held with KEY_Fn (not bare F-key).
+        has_meta = "KEY_LEFTMETA" in names or "KEY_RIGHTMETA" in names
+        has_fkey = f"KEY_{fkey}" in names
+        if has_meta and has_fkey:
+            return "OK"
+        if has_fkey and not has_meta:
+            return "DIFF"  # remapper dropped Meta — workspaces won't fire
+        if names & vendor_for.get(fkey, set()):
+            return "DIFF"
+        return "DIFF" if names else "MISS"
+    return "OK" if names & expect else "DIFF"
+
+
+def _print_matrix_report(
+    rows: list[dict[str, object]],
+    *,
+    transport: str,
+    remapper_was_active: bool,
+) -> str:
+    lines = [
+        f"# Fn-row matrix ({transport})",
+        f"target: policy=7  remapper_during_capture: {remapper_was_active}",
+        "",
+        "| Meta | Fn | Key | Observed | Expected (policy-7) | Result |",
+        "|-----:|---:|-----|----------|---------------------|--------|",
+    ]
+    for r in rows:
+        exp = "|".join(sorted(r["expected"])) if r["expected"] else "?"  # type: ignore[arg-type]
+        lines.append(
+            f"| {r['meta']} | {r['fn']} | {r['fkey']} | `{r['observed']}` | `{exp}` | {r['result']} |"
+        )
+    ok = sum(1 for r in rows if r["result"] == "OK")
+    diff = sum(1 for r in rows if r["result"] == "DIFF")
+    miss = sum(1 for r in rows if r["result"] == "MISS")
+    lines += ["", f"summary: OK={ok} DIFF={diff} MISS={miss} total={len(rows)}", ""]
+
+    # Suggest Mode B → policy7 swaps from M0Fn0 / M0Fn1 pairs when remapper off
+    if not remapper_was_active and transport in ("bluetooth", "auto"):
+        lines.append("## Suggested SWAP seeds (raw Mode B → policy-7)")
+        lines.append("From plain (M0 Fn0) observed special ↔ KEY_F*:")
+        for r in rows:
+            if r["meta"] != 0 or r["fn"] != 0 or r["result"] == "MISS":
+                continue
+            obs = str(r["observed"])
+            if obs.startswith("KEY_") and obs != f"KEY_{r['fkey']}" and "+" not in obs:
+                lines.append(f"  {obs} ↔ KEY_{r['fkey']}")
+            if obs.startswith("VENDOR:"):
+                lines.append(f"  {obs} → KEY_{r['fkey']}  (hidraw 0x5a; remapper synthesizes F-key)")
+        lines.append("")
+    return "\n".join(lines)
+
+
+def _discover_remapper_uinput() -> list[tuple[Path, dict[str, str]]]:
+    """platform-bt-fn-row virtual keyboard (post-invert verify target)."""
+    out: list[tuple[Path, dict[str, str]]] = []
+    for event_dir in sorted(Path("/sys/class/input").glob("event*")):
+        name_p = event_dir / "device" / "name"
+        if not name_p.is_file():
+            continue
+        name = name_p.read_text().strip()
+        if "BT Fn-row" not in name:
+            continue
+        dev = Path("/dev/input") / event_dir.name
+        if not dev.exists():
+            continue
+        meta = _event_metadata(event_dir)
+        meta["transport"] = "remapper"
+        out.append((dev, meta))
+    return out
+
+
+def run_fn_row_matrix(
+    *,
+    transport: str = "auto",
+    quick: bool = False,
+    output_dir: Path | None = None,
+    timeout_s: float = 12.0,
+    grab: bool = True,
+    burst_ms: int = 800,
+    idle_ms: int = 450,
+    release_settle_ms: int = 250,
+    keep_remapper: bool = False,
+    plain_only: bool = False,
+) -> int:
+    """Guided Meta×Fn×F matrix: expected policy-7 vs observed codes."""
+    _require_root()
+    dmi = DmiInfo.read()
+    user, home, uid, gid = _target_account()
+    out_dir = output_dir or calib_dir()
+    out_dir.mkdir(parents=True, exist_ok=True)
+    if uid is not None and gid is not None and os.geteuid() == 0:
+        _chown_tree(out_dir, uid, gid)
+
+    board = dmi.board_name or "unknown"
+    keys = MATRIX_KEYS_QUICK if quick else MATRIX_KEYS_FULL
+    steps = _matrix_steps(keys)
+    if plain_only:
+        steps = [s for s in steps if s[2] == 0]  # meta==0
+        print("Mode: --plain-only (skip Meta× rows — avoids Plasma workspace switch)\n")
+
+    remapper_pid = _bt_fn_row_pid()
+    remapper_was_active = remapper_pid is not None
+    verify_mode = False
+
+    if keep_remapper:
+        if not remapper_was_active:
+            print(
+                "ERROR: --keep-remapper but platform-bt-fn-row is NOT running.\n"
+                "  After dock/undock the daemon dies unless it has the reconnect loop.\n"
+                "  Start it first:\n"
+                "    sudo platform-bt-fn-row start\n"
+                "    platform-bt-fn-row status   # must say ACTIVE + hidraw\n"
+                "  Then re-run with --keep-remapper.\n"
+                "  Or omit --keep-remapper to capture raw firmware Mode B.",
+                file=sys.stderr,
+            )
+            return 2
+        bt_present = any(
+            m.get("transport") == "bluetooth"
+            for _, m in _discover_evdev_sources(transport="bluetooth")
+        )
+        if not bt_present:
+            print(
+                "ERROR: --keep-remapper is BT-only, but no Bluetooth Duo keyboard "
+                "(0b05:1b2d) is present.\n"
+                "  Docked USB uses kernel fn_row_policy — do not verify via remapper uinput.\n"
+                "  For docked capture:\n"
+                "    sudo platform-bt-fn-row stop   # optional; avoids confusion\n"
+                "    sudo kb-calibrate-hotkeys --fn-row-matrix --transport usb\n"
+                "  For BT remapper verify: undock / connect BT, then:\n"
+                "    platform-bt-fn-row status      # ACTIVE + hidraw\n"
+                "    sudo kb-calibrate-hotkeys --fn-row-matrix --transport bluetooth "
+                "--keep-remapper",
+                file=sys.stderr,
+            )
+            return 2
+        verify_mode = True
+        print(
+            "VERIFY mode: listening to uinput «Zenbook Duo BT Fn-row» "
+            "(not raw event8/hidraw).\n"
+            "  Remapper stays ACTIVE.\n"
+        )
+    elif remapper_was_active:
+        print(
+            f"Stopping platform-bt-fn-row (pid {remapper_pid}) for raw firmware capture.\n"
+            "  (use --keep-remapper to measure post-invert instead)\n"
+        )
+        try:
+            os.kill(remapper_pid, 15)
+            time.sleep(0.3)
+        except OSError:
+            pass
+        remapper_was_active = False
+
+    # Auto-pick transport if needed
+    if verify_mode:
+        evdev_sources = _discover_remapper_uinput()
+        hidraw_sources: list[tuple[Path, str]] = []
+        transport = "bluetooth-remapper"
+        if not evdev_sources:
+            print(
+                "ERROR: remapper running but no «Zenbook Duo BT Fn-row» uinput node.\n"
+                "  Check: platform-bt-fn-row status / debug log.",
+                file=sys.stderr,
+            )
+            return 2
+    else:
+        evdev_sources = _discover_evdev_sources(transport=transport)
+        if transport == "auto":
+            has_bt = any(m.get("transport") == "bluetooth" for _, m in evdev_sources)
+            has_usb = any(m.get("transport") == "usb" for _, m in evdev_sources)
+            if has_bt and not has_usb:
+                transport = "bluetooth"
+            elif has_usb and not has_bt:
+                transport = "usb"
+            elif has_bt and has_usb:
+                print(
+                    "Both USB (1b2c) and BT (1b2d) present — defaulting to bluetooth.\n"
+                    "  Pass --transport usb to force docked.\n"
+                )
+                transport = "bluetooth"
+                evdev_sources = _discover_evdev_sources(transport=transport)
+        hidraw_sources = _discover_hidraw_sources(transport=transport)
+
+    if not evdev_sources and not hidraw_sources:
+        print(f"No {transport} keyboard sources found.", file=sys.stderr)
+        return 1
+
+    fds = _open_sources(evdev_sources, hidraw_sources, grab=grab)
+    if not fds:
+        print("Could not open any input devices.", file=sys.stderr)
+        return 1
+
+    print(f"Zenbook Fn-row MATRIX — {board} transport={transport}")
+    print(f"Steps: {len(steps)} (Meta×Fn×{keys})" + (" plain-only" if plain_only else ""))
+    print("s=skip  Ctrl+C=abort")
+    if not plain_only and not verify_mode:
+        print(
+            "Tip: Meta+F1–F6 switches Plasma workspaces — prefer --plain-only for "
+            "first pass, or run calibrator on an empty activity."
+        )
+    print()
+    _print_sources(evdev_sources, hidraw_sources)
+
+    rows: list[dict[str, object]] = []
+    captures: list[StepCapture] = []
+    try:
+        with _TerminalSession() as term:
+            for step_id, prompt, meta, fn, fkey in steps:
+                term.drain()
+                print(f"── {step_id} ──")
+                print(prompt)
+                print(f"(tap once and release; {timeout_s:.0f}s timeout, s=skip)")
+                raw_events, filtered, skipped = _capture_step(
+                    fds,
+                    step_id,
+                    timeout_s=timeout_s,
+                    burst_ms=burst_ms,
+                    idle_ms=idle_ms,
+                    release_settle_ms=release_settle_ms,
+                    term=term,
+                )
+                if skipped:
+                    print("  (skipped)")
+                    obs = "(skipped)"
+                    result = "SKIP"
+                elif not raw_events:
+                    print("  (no events — timed out)")
+                    obs = "(none)"
+                    result = "MISS"
+                else:
+                    _print_step_events(raw_events, filtered)
+                    obs = _summarize_press(filtered)
+                    result = _matrix_match(meta, fn, fkey, filtered)
+                    print(f"  → observed `{obs}`  [{result}]")
+                expect = POLICY7_EXPECTED.get((meta, fn, fkey), set())
+                rows.append(
+                    {
+                        "step_id": step_id,
+                        "meta": meta,
+                        "fn": fn,
+                        "fkey": fkey,
+                        "observed": obs,
+                        "expected": sorted(expect),
+                        "result": result,
+                    }
+                )
+                captures.append(
+                    StepCapture(
+                        step_id=step_id,
+                        prompt=prompt,
+                        raw_events=raw_events,
+                        events=filtered,
+                        skipped=skipped,
+                    )
+                )
+                print()
+    except KeyboardInterrupt:
+        print("\nAborted — writing partial report.")
+    finally:
+        _close_fds(fds, grab=grab)
+        # Grab ate remapper ups/downs; force-clear any leftover uinput holds.
+        if verify_mode:
+            _flush_bt_fn_row(remapper_pid)
+
+    report = _print_matrix_report(
+        rows,
+        transport=transport,
+        remapper_was_active=verify_mode or remapper_was_active,
+    )
+    print(report)
+
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    out_md = out_dir / f"{board}-fn-row-{transport}-{stamp}.md"
+    out_json = out_dir / f"{board}-fn-row-{transport}-{stamp}.json"
+    out_md.write_text(report + "\n")
+    payload = {
+        "dmi": dmi.as_dict(),
+        "transport": transport,
+        "remapper_during_capture": verify_mode or remapper_was_active,
+        "verify_mode": verify_mode,
+        "target": "policy=7",
+        "rows": rows,
+        "steps": [
+            {
+                **{k: v for k, v in asdict(c).items() if k not in ("raw_events", "events")},
+                "raw_events": [asdict(e) for e in c.raw_events],
+                "events": [asdict(e) for e in c.events],
+            }
+            for c in captures
+        ],
+    }
+    out_json.write_text(json.dumps(payload, indent=2) + "\n")
+    if uid is not None and gid is not None and os.geteuid() == 0:
+        for path in (out_md, out_json):
+            _chown_tree(path, uid, gid)
+    print(f"Wrote {out_md}")
+    print(f"Wrote {out_json}")
+    if verify_mode:
+        print("\nVerify done — OK rows mean remapper matches policy=7.")
+    else:
+        print(
+            "\nRaw capture done. To verify remapper:\n"
+            "  sudo platform-bt-fn-row start\n"
+            "  sudo kb-calibrate-hotkeys --fn-row-matrix --transport bluetooth "
+            "--quick --plain-only --keep-remapper"
+        )
+    return 0
+
+
 # Evdev code → suggested hotkey action (union across fn-lock modes).
 _CODE_ACTIONS: dict[str, str] = {
     "KEY_KBDILLUMTOGGLE": "kb-brightness:toggle",
@@ -272,8 +725,15 @@ def _require_root() -> None:
     raise SystemExit(1)
 
 
-def _discover_evdev_sources(*, include_main: bool = True) -> list[tuple[Path, dict[str, str]]]:
-    """All Zenbook-related evdev nodes with metadata."""
+def _discover_evdev_sources(
+    *,
+    include_main: bool = True,
+    transport: str = "auto",
+) -> list[tuple[Path, dict[str, str]]]:
+    """All Zenbook-related evdev nodes with metadata.
+
+    *transport*: ``auto`` | ``usb`` | ``bluetooth`` — filter Primax dock vs BT.
+    """
     candidates: list[tuple[Path, dict[str, str]]] = []
     seen: set[Path] = set()
 
@@ -287,7 +747,26 @@ def _discover_evdev_sources(*, include_main: bool = True) -> list[tuple[Path, di
         meta = _event_metadata(event_dir)
         if "Mouse" in meta["name"] or "Touchpad" in meta["name"]:
             return
+        if "BT Fn-row" in meta["name"]:
+            # Virtual remapper output — only useful for verify pass
+            return
+        bustype_p = event_dir / "device" / "id" / "bustype"
+        bustype = bustype_p.read_text().strip() if bustype_p.is_file() else ""
+        product = meta.get("product", "")
+        is_usb = product in ("1b2c", "1bf2") or bustype == "0003"
+        is_bt = product == "1b2d" or bustype == "0005"
+        if transport == "usb" and is_bt:
+            return
+        if transport == "bluetooth" and is_usb:
+            return
+        if transport == "bluetooth" and not is_bt and "WMI" not in meta["name"]:
+            # keep WMI; drop unrelated
+            if "Zenbook Duo" not in meta["name"] and meta["name"] != "Asus Keyboard":
+                return
         seen.add(dev)
+        meta = dict(meta)
+        meta["bustype"] = bustype
+        meta["transport"] = "bluetooth" if is_bt else ("usb" if is_usb else "other")
         candidates.append((dev, meta))
 
     for event_dir in sorted(Path("/sys/class/input").glob("event*")):
@@ -297,7 +776,7 @@ def _discover_evdev_sources(*, include_main: bool = True) -> list[tuple[Path, di
         name = name_path.read_text().strip()
         product = _usb_product_id(event_dir)
         iface = _interface_number(event_dir)
-        if product in ("1b2c", "1bf2"):
+        if product in ("1b2c", "1bf2", "1b2d"):
             add(event_dir)
             continue
         if name in ("Asus WMI hotkeys",) or "Zenbook Duo" in name or name == "Asus Keyboard":
@@ -330,16 +809,33 @@ def _discover_evdev_sources(*, include_main: bool = True) -> list[tuple[Path, di
     return sorted(sources, key=lambda x: (x[1].get("iface", "99"), x[0].name))
 
 
-def _discover_hidraw_sources() -> list[tuple[Path, str]]:
-    """Vendor hotkey hidraw only (90-byte rdesc / USB if04), not every 1b2c node."""
+def _discover_hidraw_sources(*, transport: str = "auto") -> list[tuple[Path, str]]:
+    """USB if4 (90-byte) and/or BT asus keyboard (257-byte) vendor hidraw."""
     out: list[tuple[Path, str]] = []
-    dev = _find_hidraw_by_product(DEFAULT_USB_VENDOR_ID, DEFAULT_USB_PRODUCT_ID, 90)
-    if dev is None:
-        return out
-    hidraw_sysfs = Path("/sys/class/hidraw") / dev.name
-    uevent = hidraw_sysfs / "device" / "uevent"
-    text = uevent.read_text().strip() if uevent.is_file() else ""
-    out.append((dev, text))
+    if transport in ("auto", "usb"):
+        dev = _find_hidraw_by_product(DEFAULT_USB_VENDOR_ID, DEFAULT_USB_PRODUCT_ID, 90)
+        if dev is not None:
+            hidraw_sysfs = Path("/sys/class/hidraw") / dev.name
+            uevent = hidraw_sysfs / "device" / "uevent"
+            text = uevent.read_text().strip() if uevent.is_file() else ""
+            out.append((dev, text))
+    if transport in ("auto", "bluetooth"):
+        for hr in sorted(Path("/sys/class/hidraw").glob("hidraw*")):
+            uevent_p = hr / "device" / "uevent"
+            if not uevent_p.is_file():
+                continue
+            text = uevent_p.read_text().strip()
+            if "1B2D" not in text.upper():
+                continue
+            rd = hr / "device" / "report_descriptor"
+            try:
+                if not rd.is_file() or len(rd.read_bytes()) != 257:
+                    continue
+            except OSError:
+                continue
+            path = Path("/dev") / hr.name
+            if path.exists() and path not in {p for p, _ in out}:
+                out.append((path, text))
     return out
 
 
@@ -368,6 +864,25 @@ def _poll_fds(
 
         if meta is None:
             if _is_zero_hidraw(data):
+                continue
+            # BT/USB ASUS vendor: report-id 0x5a, byte1 = usage
+            if len(data) >= 2 and data[0] == 0x5A:
+                usage = data[1]
+                down = 1 if (len(data) < 3 or data[2] == 0x00) else 0
+                if usage == 0x00:
+                    name = "VENDOR:RELEASE"
+                    down = 0
+                else:
+                    name = f"VENDOR:0x{usage:02x}"
+                out.append(
+                    CapturedEvent(
+                        source=src,
+                        code=usage,
+                        name=name,
+                        value=down if usage else 0,
+                        offset_ms=int((now - t0) * 1000) if t0 else 0,
+                    )
+                )
                 continue
             out.append(
                 CapturedEvent(
@@ -481,20 +996,38 @@ def _filter_burst(step_id: str, raw: list[CapturedEvent]) -> list[CapturedEvent]
 
     # Drop leading key-ups (stale releases from previous step).
     trimmed = list(raw)
-    while trimmed and trimmed[0].value == 0 and not trimmed[0].name.startswith("HIDRAW"):
+    while trimmed and trimmed[0].value == 0 and not trimmed[0].name.startswith("VENDOR:"):
+        if trimmed[0].name.startswith("HIDRAW:"):
+            trimmed[0].tag = "stale"
+            trimmed = trimmed[1:]
+            continue
         trimmed[0].tag = "stale"
         trimmed = trimmed[1:]
 
     downs: list[CapturedEvent] = []
-    seen: set[tuple[str, int]] = set()
+    seen: set[tuple[str, int | str]] = set()
     for ev in trimmed:
-        if ev.name.startswith("HIDRAW"):
+        if ev.name.startswith("HIDRAW:"):
             ev.tag = "stale"
+            continue
+        if ev.name.startswith("VENDOR:"):
+            if ev.value != 1 or ev.name == "VENDOR:RELEASE":
+                continue
+            key = (ev.source, ev.name)
+            if key in seen:
+                continue
+            seen.add(key)
+            downs.append(ev)
             continue
         if ev.value != 1:
             continue
         if ev.code in MODIFIER_CODES:
             ev.tag = "modifier"
+            # Keep modifiers in filtered list for Meta+P / chords (matrix needs them)
+            key = (ev.source, ev.code)
+            if key not in seen:
+                seen.add(key)
+                downs.append(ev)
             continue
         key = (ev.source, ev.code)
         if key in seen:
@@ -546,7 +1079,15 @@ def _capture_step(
 
         for ev in batch:
             if t0 is None:
-                if ev.name.startswith("HIDRAW"):
+                if ev.name.startswith("HIDRAW:") and not ev.name.startswith("VENDOR:"):
+                    continue
+                # Accept vendor-usage downs and normal key downs as trigger
+                is_vendor = ev.name.startswith("VENDOR:") and ev.name != "VENDOR:RELEASE"
+                if is_vendor and ev.value == 1:
+                    t0 = time.monotonic()
+                    trigger = (ev.source, ev.code)
+                    ev.offset_ms = 0
+                    raw.append(ev)
                     continue
                 if ev.value != 1 or ev.code in MODIFIER_CODES:
                     ev.tag = "stale"
@@ -836,6 +1377,7 @@ def run_calibration(
     idle_ms: int = 450,
     release_settle_ms: int = 250,
     dual_fn_lock: bool = False,
+    transport: str = "auto",
 ) -> int:
     _require_root()
     steps = steps or DEFAULT_STEPS
@@ -850,8 +1392,8 @@ def run_calibration(
     out_json = out_dir / f"{board}{suffix}.json"
     out_conf = out_dir / f"{board}{suffix}-suggested.conf"
 
-    evdev_sources = _discover_evdev_sources()
-    hidraw_sources = _discover_hidraw_sources()
+    evdev_sources = _discover_evdev_sources(transport=transport)
+    hidraw_sources = _discover_hidraw_sources(transport=transport)
     if not evdev_sources and not hidraw_sources:
         print("No input sources found. Is the keyboard connected?", file=sys.stderr)
         return 1
@@ -862,7 +1404,7 @@ def run_calibration(
         return 1
 
     user = os.environ.get("ZENBOOK_CALIB_USER") or os.environ.get("SUDO_USER") or user
-    print(f"Zenbook hotkey calibration — {board} (user {user})")
+    print(f"Zenbook hotkey calibration — {board} (user {user}) transport={transport}")
     print(f"Output directory: {out_dir}")
     if dual_fn_lock:
         print("Mode: dual fn-lock (A then B) — union conf at end")
@@ -1015,8 +1557,42 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Capture fn-lock mode A and B, emit union conf",
     )
+    parser.add_argument(
+        "--fn-row-matrix",
+        action="store_true",
+        help="Guided Meta×Fn×F matrix vs policy=7 (preferred for BT remapper work)",
+    )
+    parser.add_argument(
+        "--transport",
+        choices=("auto", "usb", "bluetooth"),
+        default="auto",
+        help="Filter docked USB (1b2c) vs Bluetooth (1b2d)",
+    )
+    parser.add_argument(
+        "--keep-remapper",
+        action="store_true",
+        help="With --fn-row-matrix: verify uinput output (remapper must be ACTIVE)",
+    )
+    parser.add_argument(
+        "--plain-only",
+        action="store_true",
+        help="With --fn-row-matrix: skip Meta× rows (avoids Plasma workspace switch)",
+    )
     args = parser.parse_args(argv)
     reexec_with_sudo_if_needed(argv)
+    if args.fn_row_matrix:
+        return run_fn_row_matrix(
+            transport=args.transport,
+            quick=args.quick,
+            output_dir=args.output_dir,
+            timeout_s=args.timeout,
+            grab=not args.no_grab,
+            burst_ms=args.burst_ms,
+            idle_ms=args.idle_ms,
+            release_settle_ms=args.release_ms,
+            keep_remapper=args.keep_remapper,
+            plain_only=args.plain_only,
+        )
     steps = None
     if args.quick:
         steps = [s for s in DEFAULT_STEPS if s[0] in QUICK_STEP_IDS]
@@ -1029,6 +1605,7 @@ def main(argv: list[str] | None = None) -> int:
         idle_ms=args.idle_ms,
         release_settle_ms=args.release_ms,
         dual_fn_lock=args.dual_fn_lock,
+        transport=args.transport,
     )
 
 

@@ -195,7 +195,7 @@ bitmask **does not apply**.
 |-----------|------|--------|
 | USB pogo + oot `hid-asus` | yes | `fn_row_policy=7` (this document) |
 | Bluetooth + broken stock/oot Usage(76h) **rdesc** fixup | **no keyboard node** (touchpad only) | n/a |
-| Bluetooth + oot that **skips** BT rdesc fixup + maps usage `0x76` | yes | firmware **Mode B**; invert with `platform-bt-fn-row run` |
+| Bluetooth + oot that **skips** BT rdesc fixup + maps usage `0x76` | yes | firmware **Mode B**; invert with `sudo platform-bt-fn-row start` |
 
 Plain F12 on BT used to spam `Unmapped Asus vendor usagepage code 0x76` and do
 nothing — oot now maps vendor `0x76` → `KEY_PROG1` (ASUS key). With
@@ -204,25 +204,63 @@ nothing — oot now maps vendor `0x76` → `KEY_PROG1` (ASUS key). With
 ### Bluetooth Mode B vs expected (docked policy=7)
 
 `Fn` column: `0` = plain key, `1` = Fn held. Observed = stock BT firmware
-(Mode B). Expected = same as USB `fn_row_policy=7`.
+(Mode B) **without** remapper. Expected = same as USB `fn_row_policy=7`.
 
-| Fn | Key | Observed (BT Mode B) | Expected (policy=7) | `platform-bt-fn-row` |
-|---:|-----|----------------------|---------------------|----------------------|
-| 0 | F1–F3 | vol mute / − / + | `KEY_F1`–`F3` | yes (swap media↔F) |
-| 1 | F1–F3 | `KEY_F1`–`F3` | vol mute / − / + | yes |
-| 0 | F4 | kbd BL / vendor (often) | `KEY_F4` | yes if `KEY_KBDILLUMTOGGLE` |
-| 1 | F4 | `KEY_F4` | kbd BL toggle | yes |
-| 0 | F5–F6 | brightness −/+ (often) | `KEY_F5`–`F6` | yes if brightness keys |
-| 1 | F5–F6 | `KEY_F5`–`F6` | brightness −/+ | yes |
-| 0 | F7 | display config (Win+P) | `KEY_F7` | **partial** — chord, not 1:1 |
-| 1 | F7 | `KEY_F7` | Win+P / display config | **partial** |
-| 0 | F8 | screen-swap vendor / `???` | screen swap (`KEY_F15`) | yes if `KEY_F15`↔`F8` |
-| 1 | F8 | `KEY_F8` (typical) | `KEY_F8` | passthrough |
-| 0 | F9–F12 | mic / rfkill / emoji / ASUS (`0x76`) | `KEY_F*` | yes when codes match |
-| 1 | F9–F12 | `KEY_F*` | specials | yes |
+| Meta | Fn | Key | Observed (BT Mode B, idle) | Expected (policy=7) | remapper |
+|-----:|---:|-----|----------------------------|---------------------|----------|
+| 0 | 0 | F1–F3 | vol mute / − / + | `KEY_F1`–`F3` | yes |
+| 0 | 1 | F1–F3 | `KEY_F1`–`F3` | vol mute / − / + | yes |
+| 1 | 0 | F1–F3 | Meta+media (broken) | Meta+`F*` (workspace 1–3) | yes → Meta+F |
+| 1 | 1 | F1–F3 | Meta+`F*` (workspace) | Meta+media (after invert) | yes |
+| 0 | 0 | F4 | kbd BL (often) | `KEY_F4` | yes |
+| 0 | 1 | F4 | `KEY_F4` | kbd BL | yes |
+| 1 | 0 | F4 | ??? | Meta+`F4` (ws 4) | yes |
+| 1 | 1 | F4 | Meta+`F4` (ws) | Meta+BL (after invert) | yes |
+| 0 | 0 | F5–F6 | brightness −/+ | `KEY_F5`–`F6` | yes |
+| 0 | 1 | F5–F6 | `KEY_F5`–`F6` | brightness −/+ | yes |
+| 1 | 0 | F5–F6 | ??? | Meta+`F*` (ws 5–6) | yes |
+| 1 | 1 | F5–F6 | Meta+`F*` (ws) | Meta+brightness | yes |
+| 0 | 0 | F7 | Win+P chord | `KEY_F7` | yes (chord→F7) |
+| 0 | 1 | F7 | `KEY_F7` | Win+P | yes (F7→Meta+P) |
+| 0 | 0 | F8 | `KEY_F15` / vendor | `KEY_F8` | yes + `platform-screen-swap` on Fn |
+| 0 | 0 | F9–F12 | mic / rfkill / emoji / `PROG1` | `KEY_F*` | yes (`KEY_F12`=88, not ScrollLock) |
 
-Invert on BT: `sudo platform-bt-fn-row run` (grab + uinput). USB pogo does **not**
-need it — kernel policy already applies.
+**`status` ≠ invert.** `platform-bt-fn-row status` only reports the BT event node.
+Keys change only while the daemon is **ACTIVE**:
+
+```bash
+sudo platform-bt-fn-row start   # or: sudo rc-service zenbook-bt-fn-row start
+platform-bt-fn-row status       # must say ACTIVE (pid …); shows debug tail
+# live map log while pressing keys:
+sudo tail -f /run/zenbook-bt-fn-row.debug
+```
+
+Note: an early remapper build used `KEY_F12=70` (ScrollLock) — Fn+F12 looked like
+plain F12 and PROG1 never became F12. Current build uses `KEY_F12=88`.
+
+Fn+F4 backlight on BT calls `kb-brightness --mode bluetooth +1` (needs root /
+working `/usr/share/zenbook-scripts/lib`).
+
+After invert: **Meta+plain F1–F6** = workspace switch; **Meta+Fn+F*** becomes
+Meta+special (swapped). USB docked stays on kernel policy — no remapper.
+
+### Capture your own matrix (preferred over chat ping-pong)
+
+```bash
+sudo rc-service zenbook-kb-hotkeys stop   # if running
+# Raw firmware (stops platform-bt-fn-row automatically):
+sudo kb-calibrate-hotkeys --fn-row-matrix --transport bluetooth --quick
+# After remapper fixes — verify invert:
+sudo platform-bt-fn-row start
+sudo kb-calibrate-hotkeys --fn-row-matrix --transport bluetooth --quick --keep-remapper
+```
+
+Writes `~/.config/zenbook-scripts/calibration/*-fn-row-*.md` (Expected vs Observed).
+Paste that table back and we derive SWAP / remapper from DIFF/MISS rows.
+
+Fn+Esc / vendor `0x4e` Mode A↔B toggle is controlled by `fn_lock_allow_toggle=1`
+(always left on in this repo’s deploy). Remapper assumes Mode B; if you Fn+Esc
+into Mode A on BT, `stop` the remapper or keys invert twice.
 
 If BT is connected but only Mouse/Touchpad appear, `dmesg` shows
 `item fetching failed at offset 257/259` — sideload the oot module from this
@@ -234,8 +272,8 @@ repo (`./kmod_deploy.sh`) and reconnect Bluetooth. `platform-probe` reports
 | Parameter | Typical docked | Meaning |
 |-----------|----------------|---------|
 | `fn_lock_default` | `0` | Mode B firmware baseline |
-| `fn_lock_allow_toggle` | `0` | Ignore Fn+Esc / vendor `0x4e` |
-| `fn_row_policy` | `7` | This document |
+| `fn_lock_allow_toggle` | `1` | Fn+Esc / vendor `0x4e` may switch Mode A/B |
+| `fn_row_policy` | `7` | This document (USB only) |
 
 ## See also
 

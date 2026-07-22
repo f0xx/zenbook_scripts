@@ -1,19 +1,26 @@
 #!/usr/bin/env python3
 """Invert Primax UX8406 Bluetooth Mode B Fn-row toward docked fn_row_policy=7.
 
-Firmware Mode B (BT, no USB if0/if3/if4 policy):
-  plain F-key → special / media
-  Fn+F-key    → KEY_F*
+Firmware Mode B (BT): plain F → special/media, Fn+F → KEY_F*
+Docked policy=7:       plain F → KEY_F*,         Fn+F → special/media
 
-Docked policy=7 target:
-  plain F-key → KEY_F*
-  Fn+F-key    → special / media
+Safety model
+------------
+EVIOCGRAB silences the physical keyboard. If our uinput is not yet accepted by
+the session, **every key dies** (Enter included). Flushing uinput keys cannot
+fix that — only **ungrab** (stop) restores typing.
 
-Grab the BT keyboard node and emit the swapped codes on a uinput device.
-Does nothing useful for USB pogo (kernel policy already handles that).
+So we:
+  1. Create uinput and wait until it has ID_INPUT_KEYBOARD in sysfs
+  2. Grab only after that, and verify the grab is exclusive
+  3. Never blast 1..255 key-ups (that confused sessions before)
+  4. ``stop`` / ``panic`` always ungrab — use the STOP desktop icon if Enter is dead
 
 Usage:
-  sudo platform-bt-fn-row run          # foreground
+  sudo platform-bt-fn-row start
+  sudo platform-bt-fn-row stop     # ungrab — restores physical keyboard
+  sudo platform-bt-fn-row panic    # alias for stop (mouse / SSH emergency)
+  sudo platform-bt-fn-row run
   platform-bt-fn-row status
   platform-bt-fn-row list
 """
@@ -21,14 +28,18 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import atexit
+import errno
 import os
 import select
+import shutil
+import signal
 import struct
+import subprocess
 import sys
 import time
 from pathlib import Path
 
-# linux/input-event-codes.h
 EV_KEY = 0x01
 EV_SYN = 0x00
 SYN_REPORT = 0
@@ -45,19 +56,35 @@ KEY_F7 = 65
 KEY_F8 = 66
 KEY_F9 = 67
 KEY_F10 = 68
-KEY_F11 = 69
-KEY_F12 = 70
+KEY_F11 = 87
+KEY_F12 = 88
 KEY_KBDILLUMTOGGLE = 228
 KEY_BRIGHTNESSDOWN = 224
 KEY_BRIGHTNESSUP = 225
 KEY_MICMUTE = 248
 KEY_RFKILL = 247
 KEY_PROG1 = 148
-KEY_F15 = 185  # screen swap (docked Fn+F8)
+KEY_F15 = 185
+KEY_EMOJI_PICKER = 585
+KEY_SWITCHVIDEOMODE = 227
 KEY_LEFTMETA = 125
+KEY_RIGHTMETA = 126
 KEY_P = 25
 
-# Mode B special ↔ F-key (symmetric swap)
+VENDOR_PLAIN_TO_FKEY: dict[int, int] = {
+    0xC7: KEY_F4,
+    0x10: KEY_F5,
+    0x20: KEY_F6,
+    0x35: KEY_F7,
+    0x9C: KEY_F8,
+    0x7C: KEY_F9,
+    0x88: KEY_F10,
+    0x7E: KEY_F11,
+    0x86: KEY_F12,
+    0x76: KEY_F12,
+}
+VENDOR_ROW_CODES = frozenset(VENDOR_PLAIN_TO_FKEY) - {0x76}
+
 SWAP: dict[int, int] = {
     KEY_MUTE: KEY_F1,
     KEY_F1: KEY_MUTE,
@@ -71,38 +98,99 @@ SWAP: dict[int, int] = {
     KEY_F5: KEY_BRIGHTNESSDOWN,
     KEY_BRIGHTNESSUP: KEY_F6,
     KEY_F6: KEY_BRIGHTNESSUP,
+    KEY_SWITCHVIDEOMODE: KEY_F7,
     KEY_MICMUTE: KEY_F9,
     KEY_F9: KEY_MICMUTE,
     KEY_RFKILL: KEY_F10,
     KEY_F10: KEY_RFKILL,
-    KEY_PROG1: KEY_F12,
+    KEY_EMOJI_PICKER: KEY_F11,
+    KEY_F11: KEY_EMOJI_PICKER,
     KEY_F12: KEY_PROG1,
     KEY_F15: KEY_F8,
     KEY_F8: KEY_F15,
 }
 
-EVENT_FMT = "llHHi"
+KEY_NAMES: dict[int, str] = {
+    KEY_MUTE: "MUTE",
+    KEY_VOLUMEDOWN: "VOLD",
+    KEY_VOLUMEUP: "VOLU",
+    KEY_F1: "F1",
+    KEY_F2: "F2",
+    KEY_F3: "F3",
+    KEY_F4: "F4",
+    KEY_F5: "F5",
+    KEY_F6: "F6",
+    KEY_F7: "F7",
+    KEY_F8: "F8",
+    KEY_F9: "F9",
+    KEY_F10: "F10",
+    KEY_F11: "F11",
+    KEY_F12: "F12",
+    KEY_KBDILLUMTOGGLE: "KBDILLUM",
+    KEY_BRIGHTNESSDOWN: "BRTDOWN",
+    KEY_BRIGHTNESSUP: "BRTUP",
+    KEY_MICMUTE: "MICMUTE",
+    KEY_RFKILL: "RFKILL",
+    KEY_PROG1: "PROG1",
+    KEY_F15: "F15",
+    KEY_EMOJI_PICKER: "EMOJI",
+    KEY_SWITCHVIDEOMODE: "SWITCHVIDEO",
+    KEY_LEFTMETA: "LMETA",
+    KEY_RIGHTMETA: "RMETA",
+    KEY_P: "P",
+    28: "ENTER",
+    29: "LCTRL",
+    42: "LSHIFT",
+    54: "RSHIFT",
+    97: "RCTRL",
+}
+
+EVENT_FMT = "@llHHi"
 EVENT_SIZE = struct.calcsize(EVENT_FMT)
 EVIOCGRAB = 0x40044590
+UI_SET_EVBIT = 0x40045564
+UI_SET_KEYBIT = 0x40045565
+UI_DEV_SETUP = 0x405C5503
+UI_DEV_CREATE = 0x5501
+UI_DEV_DESTROY = 0x5502
+BUS_VIRTUAL = 0x06
+UINPUT_NAME = "Zenbook Duo BT Fn-row"
+
+PIDFILE = Path("/run/zenbook-bt-fn-row.pid")
+DEBUG_LOG = Path("/run/zenbook-bt-fn-row.debug")
+CMD_FIFO = Path("/run/zenbook-bt-fn-row.cmd")
+
+
+def _key_label(code: int) -> str:
+    return KEY_NAMES.get(code, str(code))
+
+
+def _debug(msg: str) -> None:
+    line = f"{time.strftime('%H:%M:%S')} {msg}\n"
+    try:
+        with DEBUG_LOG.open("a", encoding="utf-8") as f:
+            f.write(line)
+    except OSError:
+        pass
 
 
 def discover_bt_duo_keyboards() -> list[Path]:
+    """BT Primax *main keyboard* only — never Mouse/Touchpad."""
     out: list[Path] = []
     for event_dir in sorted(Path("/sys/class/input").glob("event*")):
         name_p = event_dir / "device" / "name"
         if not name_p.is_file():
             continue
         name = name_p.read_text(encoding="utf-8", errors="replace").strip().lower()
-        if "zenbook duo keyboard" not in name:
-            continue
-        if "touchpad" in name or "mouse" in name:
+        # Exact role: must END with "keyboard", not "keyboard mouse".
+        if not name.endswith("keyboard"):
             continue
         vendor = event_dir / "device" / "id" / "vendor"
         product = event_dir / "device" / "id" / "product"
         bustype = event_dir / "device" / "id" / "bustype"
         if not (vendor.is_file() and product.is_file() and bustype.is_file()):
             continue
-        if bustype.read_text().strip() != "0005":  # BUS_BLUETOOTH
+        if bustype.read_text().strip() != "0005":
             continue
         if vendor.read_text().strip().lower().lstrip("0") not in ("b05",):
             continue
@@ -114,14 +202,116 @@ def discover_bt_duo_keyboards() -> list[Path]:
     return out
 
 
-def _uinput_setup(name: str = "Zenbook Duo BT Fn-row") -> int:
-    import fcntl
+def discover_bt_asus_hidraw() -> Path | None:
+    for hr in sorted(Path("/sys/class/hidraw").glob("hidraw*")):
+        uevent_p = hr / "device" / "uevent"
+        if not uevent_p.is_file():
+            continue
+        if "1B2D" not in uevent_p.read_text(encoding="utf-8", errors="replace").upper():
+            continue
+        rd = hr / "device" / "report_descriptor"
+        if not rd.is_file():
+            continue
+        try:
+            size = len(rd.read_bytes())
+        except OSError:
+            continue
+        if size != 257:
+            continue
+        path = Path("/dev") / hr.name
+        if path.exists():
+            return path
+    return None
 
-    UI_SET_EVBIT = 0x40045564
-    UI_SET_KEYBIT = 0x40045565
-    UI_DEV_SETUP = 0x405C5503
-    UI_DEV_CREATE = 0x5501
-    BUS_VIRTUAL = 0x06
+
+def find_uinput_event(name: str = UINPUT_NAME) -> Path | None:
+    for event_dir in Path("/sys/class/input").glob("event*"):
+        name_p = event_dir / "device" / "name"
+        if not name_p.is_file():
+            continue
+        if name_p.read_text(encoding="utf-8", errors="replace").strip() != name:
+            continue
+        path = Path("/dev/input") / event_dir.name
+        if path.exists():
+            return path
+    return None
+
+
+def uinput_has_keyboard_tag(event_path: Path) -> bool:
+    """True when udev has classified the node as a keyboard."""
+    sys_dev = Path("/sys/class/input") / event_path.name / "device"
+    try:
+        props = subprocess.check_output(
+            ["udevadm", "info", "-q", "property", "-p", str(sys_dev)],
+            text=True,
+            stderr=subprocess.DEVNULL,
+        )
+    except (OSError, subprocess.CalledProcessError):
+        return True  # best-effort: allow if udevadm missing
+    return "ID_INPUT_KEYBOARD=1" in props or "ID_INPUT_KEY=1" in props
+
+
+def _pidfile_pid() -> int | None:
+    if not PIDFILE.is_file():
+        return None
+    try:
+        pid = int(PIDFILE.read_text(encoding="utf-8").strip())
+    except (OSError, ValueError):
+        return None
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return None
+    except PermissionError:
+        return pid
+    except OSError as e:
+        if e.errno == errno.EPERM:
+            return pid
+        return None
+    return pid
+
+
+def _write_pidfile() -> None:
+    PIDFILE.write_text(f"{os.getpid()}\n", encoding="utf-8")
+    try:
+        PIDFILE.chmod(0o644)
+    except OSError:
+        pass
+
+
+def _clear_pidfile() -> None:
+    try:
+        if PIDFILE.is_file() and int(PIDFILE.read_text().strip()) == os.getpid():
+            PIDFILE.unlink(missing_ok=True)
+    except (OSError, ValueError):
+        pass
+
+
+def _emit(fd: int, etype: int, code: int, value: int, sec: int = 0, usec: int = 0) -> None:
+    if not sec:
+        now = time.time()
+        sec = int(now)
+        usec = int((now - sec) * 1_000_000)
+    os.write(fd, struct.pack(EVENT_FMT, sec, usec, etype, code, value))
+
+
+def _drain_evdev(fd: int) -> int:
+    drained = 0
+    while True:
+        try:
+            chunk = os.read(fd, EVENT_SIZE * 64)
+        except BlockingIOError:
+            break
+        except OSError:
+            break
+        if not chunk:
+            break
+        drained += len(chunk) // EVENT_SIZE
+    return drained
+
+
+def _uinput_setup(name: str = UINPUT_NAME) -> int:
+    import fcntl
 
     fd = os.open("/dev/uinput", os.O_WRONLY | os.O_NONBLOCK)
     fcntl.ioctl(fd, UI_SET_EVBIT, EV_KEY)
@@ -131,79 +321,698 @@ def _uinput_setup(name: str = "Zenbook Duo BT Fn-row") -> int:
             fcntl.ioctl(fd, UI_SET_KEYBIT, code)
         except OSError:
             pass
-
-    # struct uinput_setup { struct input_id id; char name[UINPUT_MAX_NAME_SIZE]; … }
-    name_b = name.encode("utf-8")[:79]
-    setup = struct.pack("HHHH80sI", BUS_VIRTUAL, 0x0B05, 0x1B2D, 1, name_b, 0)
+    # Virtual bus, unique product — never impersonate Primax 1b2d (udev loops).
+    setup = struct.pack("HHHH80sI", BUS_VIRTUAL, 0x0000, 0xFD70, 1, name.encode("utf-8")[:79], 0)
     fcntl.ioctl(fd, UI_DEV_SETUP, setup)
     fcntl.ioctl(fd, UI_DEV_CREATE)
-    time.sleep(0.1)
     return fd
 
 
-def _emit(fd: int, etype: int, code: int, value: int) -> None:
-    now = time.time()
-    sec = int(now)
-    usec = int((now - sec) * 1_000_000)
-    os.write(fd, struct.pack(EVENT_FMT, sec, usec, etype, code, value))
-
-
-def run_remap(src: Path) -> int:
+def _uinput_destroy(fd: int) -> None:
     import fcntl
 
-    in_fd = os.open(src, os.O_RDONLY | os.O_NONBLOCK)
-    fcntl.ioctl(in_fd, EVIOCGRAB, 1)
-    out_fd = _uinput_setup()
-    print(f"bt-fn-row: grabbed {src} → uinput", flush=True)
-    buf = b""
     try:
-        while True:
-            r, _, _ = select.select([in_fd], [], [], 1.0)
-            if not r:
-                continue
-            try:
-                chunk = os.read(in_fd, EVENT_SIZE * 64)
-            except BlockingIOError:
-                continue
-            if not chunk:
-                print("bt-fn-row: source EOF", flush=True)
-                return 0
-            buf += chunk
-            while len(buf) >= EVENT_SIZE:
-                raw, buf = buf[:EVENT_SIZE], buf[EVENT_SIZE:]
-                sec, usec, etype, code, value = struct.unpack(EVENT_FMT, raw)
-                if etype == EV_KEY and code in SWAP:
-                    code = SWAP[code]
-                os.write(out_fd, struct.pack(EVENT_FMT, sec, usec, etype, code, value))
-    finally:
+        fcntl.ioctl(fd, UI_DEV_DESTROY)
+    except OSError:
+        pass
+    try:
+        os.close(fd)
+    except OSError:
+        pass
+
+
+def _wait_uinput_ready(name: str = UINPUT_NAME, timeout_s: float = 2.5) -> Path | None:
+    t0 = time.monotonic()
+    while time.monotonic() - t0 < timeout_s:
+        path = find_uinput_event(name)
+        if path is not None and uinput_has_keyboard_tag(path):
+            return path
+        time.sleep(0.05)
+    return find_uinput_event(name)
+
+
+def _grab_exclusive(path: Path) -> int:
+    """Open + EVIOCGRAB. Raise RuntimeError if grab is not exclusive."""
+    import fcntl
+
+    fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
+    try:
+        fcntl.ioctl(fd, EVIOCGRAB, 1)
+    except OSError as e:
+        os.close(fd)
+        raise RuntimeError(f"EVIOCGRAB failed: {e}") from e
+
+    # Second grab must fail — otherwise we would silence nobody and double-emit.
+    fd2 = None
+    try:
+        fd2 = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
         try:
-            fcntl.ioctl(in_fd, EVIOCGRAB, 0)
+            fcntl.ioctl(fd2, EVIOCGRAB, 1)
+        except OSError:
+            os.close(fd2)
+            fd2 = None
+            return fd  # exclusive — good
+        # Second grab succeeded → not exclusive on this node (uhid quirk).
+        try:
+            fcntl.ioctl(fd2, EVIOCGRAB, 0)
         except OSError:
             pass
-        os.close(in_fd)
-        os.close(out_fd)
+        try:
+            fcntl.ioctl(fd, EVIOCGRAB, 0)
+        except OSError:
+            pass
+        os.close(fd)
+        raise RuntimeError(
+            f"grab on {path} is NOT exclusive — refusing to remap "
+            "(would double keys / brick Enter). Use docked USB or report this."
+        )
+    finally:
+        if fd2 is not None:
+            try:
+                os.close(fd2)
+            except OSError:
+                pass
+
+
+def _spawn_helper(argv: list[str]) -> None:
+    try:
+        subprocess.Popen(
+            argv,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+        _debug(f"helper: {' '.join(argv)}")
+    except OSError as e:
+        _debug(f"helper fail {argv}: {e}")
+
+
+def _side_effect_for_emitted(code: int, value: int) -> None:
+    if value != 1:
+        return
+    if code == KEY_KBDILLUMTOGGLE:
+        kb = shutil.which("kb-brightness") or "/usr/bin/kb-brightness"
+        _spawn_helper([kb, "--mode", "bluetooth", "+1"])
+    elif code == KEY_F15:
+        swap = shutil.which("platform-screen-swap") or "/usr/bin/platform-screen-swap"
+        _spawn_helper([swap])
+
+
+def _ensure_cmd_fifo() -> None:
+    """Create a fresh command FIFO (drop any leftover 'stop' from a prior panic)."""
+    try:
+        if CMD_FIFO.exists():
+            CMD_FIFO.unlink()
+    except OSError:
+        pass
+    try:
+        os.mkfifo(CMD_FIFO, 0o666)
+    except OSError as e:
+        _debug(f"cmd fifo: {e}")
+
+
+def _open_cmd_fifo() -> int | None:
+    """Open FIFO RDWR so we never see perpetual EOF (RDONLY-with-no-writer)."""
+    try:
+        return os.open(CMD_FIFO, os.O_RDWR | os.O_NONBLOCK)
+    except OSError as e:
+        _debug(f"cmd fifo open: {e}")
+        return None
+
+
+def _read_cmd_fifo(fd: int) -> str | None:
+    try:
+        data = os.read(fd, 128)
+    except BlockingIOError:
+        return None
+    except OSError:
+        return None
+    if not data:
+        return None
+    lines = data.decode("utf-8", errors="replace").strip().splitlines()
+    if not lines:
+        return None
+    return lines[0].strip().lower()
+
+
+def run_remap(_src_ignored: Path | None = None) -> int:
+    import fcntl
+
+    try:
+        DEBUG_LOG.write_text("", encoding="utf-8")
+        DEBUG_LOG.chmod(0o644)
+    except OSError:
+        pass
+
+    _ensure_cmd_fifo()
+    cmd_fd = _open_cmd_fifo()
+
+    stop_requested = False
+
+    def _on_term(_s: int, _f: object) -> None:
+        nonlocal stop_requested
+        stop_requested = True
+
+    signal.signal(signal.SIGTERM, _on_term)
+    signal.signal(signal.SIGINT, _on_term)
+    signal.signal(signal.SIGHUP, signal.SIG_IGN)
+
+    print("bt-fn-row: reconnect loop (safe grab)", flush=True)
+    _debug("reconnect loop start")
+
+    while not stop_requested:
+        try:
+            nodes = discover_bt_duo_keyboards()
+            if not nodes:
+                if cmd_fd is not None:
+                    r, _, _ = select.select([cmd_fd], [], [], 1.0)
+                    if r:
+                        cmd = _read_cmd_fifo(cmd_fd)
+                        if cmd in ("stop", "panic", "quit"):
+                            _debug(f"cmd while idle: {cmd}")
+                            stop_requested = True
+                            break
+                else:
+                    time.sleep(1.0)
+                continue
+
+            src = nodes[0]
+            hidraw_path = discover_bt_asus_hidraw()
+            _debug(f"candidate {src} hidraw={hidraw_path}")
+
+            try:
+                out_fd = _uinput_setup()
+            except OSError as e:
+                _debug(f"uinput setup fail: {e}")
+                time.sleep(1.0)
+                continue
+
+            u_path = _wait_uinput_ready()
+            if u_path is None:
+                print(
+                    "bt-fn-row: uinput node not ready — NOT grabbing",
+                    flush=True,
+                )
+                _debug("uinput not ready — skip grab")
+                _uinput_destroy(out_fd)
+                time.sleep(1.0)
+                continue
+            _debug(f"uinput ready at {u_path}")
+            time.sleep(0.3)
+
+            in_fd: int | None = None
+            hid_fd: int | None = None
+            session_err: Exception | None = None
+            try:
+                try:
+                    in_fd = _grab_exclusive(src)
+                except RuntimeError as e:
+                    print(f"bt-fn-row: {e}", flush=True)
+                    _debug(str(e))
+                    session_err = e
+                    raise
+
+                n_drain = _drain_evdev(in_fd)
+                if n_drain:
+                    _debug(f"drained {n_drain} raced event(s)")
+
+                if hidraw_path is not None:
+                    try:
+                        hid_fd = os.open(hidraw_path, os.O_RDONLY | os.O_NONBLOCK)
+                        try:
+                            while True:
+                                os.read(hid_fd, 64)
+                        except BlockingIOError:
+                            pass
+                        except OSError as e:
+                            _debug(f"hidraw drain: {e}")
+                        print(f"bt-fn-row: vendor hidraw {hidraw_path}", flush=True)
+                        _debug(f"hidraw {hidraw_path}")
+                    except OSError as e:
+                        _debug(f"hidraw open fail: {e} (continuing without vendor)")
+                        hid_fd = None
+                else:
+                    print("bt-fn-row: WARN no BT asus hidraw (257)", flush=True)
+
+                print(
+                    f"bt-fn-row: active — grabbed {src} → {u_path}\n"
+                    f"  emergency ungrab: sudo platform-bt-fn-row panic\n"
+                    f"  or: echo stop > {CMD_FIFO}",
+                    flush=True,
+                )
+                _debug(f"active grab {src} → {u_path}")
+
+                stop_box = [False]
+
+                def _stop_flag() -> bool:
+                    return stop_box[0] or stop_requested
+
+                def _request_stop() -> None:
+                    nonlocal stop_requested
+                    stop_box[0] = True
+                    stop_requested = True
+
+                _session_loop(
+                    in_fd=in_fd,
+                    out_fd=out_fd,
+                    hid_fd=hid_fd,
+                    cmd_fd=cmd_fd,
+                    stop_flag=_stop_flag,
+                    request_stop=_request_stop,
+                )
+            except RuntimeError:
+                pass  # grab refused — already logged
+            except Exception as e:
+                session_err = e
+                _debug(f"session error: {e!r}")
+                print(f"bt-fn-row: session error {e!r} — will retry", flush=True)
+            finally:
+                if in_fd is not None:
+                    try:
+                        fcntl.ioctl(in_fd, EVIOCGRAB, 0)
+                    except OSError:
+                        pass
+                    try:
+                        os.close(in_fd)
+                    except OSError:
+                        pass
+                    _debug("ungrabbed source")
+                if hid_fd is not None:
+                    try:
+                        os.close(hid_fd)
+                    except OSError:
+                        pass
+                _uinput_destroy(out_fd)
+                _debug("uinput destroyed")
+
+            if stop_requested:
+                break
+            time.sleep(0.5)
+        except Exception as e:
+            # Never let the daemon vanish silently.
+            _debug(f"reconnect loop error: {e!r}")
+            print(f"bt-fn-row: loop error {e!r}", flush=True)
+            time.sleep(1.0)
+
+    if cmd_fd is not None:
+        try:
+            os.close(cmd_fd)
+        except OSError:
+            pass
+    print("bt-fn-row: exiting (keyboard ungrabbed)", flush=True)
+    _debug("exiting cleanly")
     return 0
+
+
+def _session_loop(
+    *,
+    in_fd: int,
+    out_fd: int,
+    hid_fd: int | None,
+    cmd_fd: int | None,
+    stop_flag,
+    request_stop,
+) -> None:
+    """One grab session. Returns when source EOF, stop, or error."""
+    meta_held = False
+    meta_code = KEY_LEFTMETA
+    win_p_as_f7 = False
+    vendor_held: dict[int, int] = {}
+    vendor_armed: set[int] = set()
+    emitted_down: set[int] = set()
+    buf = b""
+    poll_fds = [in_fd]
+    if hid_fd is not None:
+        poll_fds.append(hid_fd)
+    if cmd_fd is not None:
+        poll_fds.append(cmd_fd)
+    last_activity = time.monotonic()
+
+    def release_codes(codes: set[int]) -> None:
+        for code in codes:
+            try:
+                _emit(out_fd, EV_KEY, code, 0)
+            except OSError:
+                pass
+        try:
+            _emit(out_fd, EV_SYN, SYN_REPORT, 0)
+        except OSError:
+            pass
+
+    def emit_key(code: int, value: int, sec: int = 0, usec: int = 0) -> None:
+        if value == 2:
+            return
+        if value == 1:
+            if code in emitted_down:
+                try:
+                    _emit(out_fd, EV_KEY, code, 0, sec, usec)
+                    _emit(out_fd, EV_SYN, SYN_REPORT, 0, sec, usec)
+                except OSError:
+                    pass
+                emitted_down.discard(code)
+            try:
+                _emit(out_fd, EV_KEY, code, 1, sec, usec)
+                _emit(out_fd, EV_SYN, SYN_REPORT, 0, sec, usec)
+            except OSError:
+                return
+            emitted_down.add(code)
+            _side_effect_for_emitted(code, 1)
+            return
+        if value == 0:
+            if code not in emitted_down:
+                return
+            try:
+                _emit(out_fd, EV_KEY, code, 0, sec, usec)
+                _emit(out_fd, EV_SYN, SYN_REPORT, 0, sec, usec)
+            except OSError:
+                pass
+            emitted_down.discard(code)
+
+    def emit_tap(code: int, sec: int = 0, usec: int = 0) -> None:
+        emit_key(code, 1, sec, usec)
+        emit_key(code, 0, sec, usec)
+
+    def emit_win_p_tap(sec: int = 0, usec: int = 0) -> None:
+        _debug("out Meta+P tap")
+        emit_key(KEY_LEFTMETA, 1, sec, usec)
+        emit_key(KEY_P, 1, sec, usec)
+        emit_key(KEY_P, 0, sec, usec)
+        emit_key(KEY_LEFTMETA, 0, sec, usec)
+
+    def handle_vendor_report(data: bytes) -> None:
+        if len(data) < 2 or data[0] != 0x5A:
+            return
+        _debug(f"vendor raw {data[:8].hex()}")
+        usages = [b for b in data[1:6] if b != 0]
+        if not usages:
+            vendor_held.clear()
+            vendor_armed.clear()
+            return
+        row = [u for u in usages if u in VENDOR_ROW_CODES]
+        if row:
+            usages = row
+        elif 0x76 in usages or 0x86 in usages:
+            usages = [u for u in usages if u in (0x76, 0x86)]
+        else:
+            usages = [u for u in usages if u in VENDOR_PLAIN_TO_FKEY]
+        seen: set[int] = set()
+        for usage in usages:
+            if usage not in VENDOR_PLAIN_TO_FKEY:
+                continue
+            fkey = VENDOR_PLAIN_TO_FKEY[usage]
+            if fkey in seen:
+                continue
+            seen.add(fkey)
+            if usage in vendor_armed or fkey in vendor_held.values():
+                continue
+            # Meta must already be live on uinput (immediate passthrough).
+            _debug(
+                f"vendor {usage:#x} → tap {_key_label(fkey)}"
+                + (" (with Meta)" if meta_held and meta_code in emitted_down else "")
+            )
+            emit_tap(fkey)
+            vendor_armed.add(usage)
+            vendor_held[usage] = fkey
+
+    while not stop_flag():
+        r, _, _ = select.select(poll_fds, [], [], 0.05)
+        now = time.monotonic()
+
+        if emitted_down and (now - last_activity) > 0.45:
+            stuck = set(emitted_down)
+            if meta_held:
+                stuck.discard(KEY_LEFTMETA)
+                stuck.discard(KEY_RIGHTMETA)
+            if stuck:
+                _debug(f"idle release {sorted(stuck)}")
+                release_codes(stuck)
+                for c in stuck:
+                    emitted_down.discard(c)
+
+        if not r:
+            continue
+
+        if cmd_fd is not None and cmd_fd in r:
+            cmd = _read_cmd_fifo(cmd_fd)
+            if cmd in ("stop", "panic", "quit"):
+                _debug(f"cmd fifo: {cmd}")
+                request_stop()
+                return
+            if cmd == "flush":
+                stuck = set(emitted_down)
+                if stuck:
+                    release_codes(stuck)
+                    emitted_down.clear()
+                meta_held = False
+                win_p_as_f7 = False
+
+        if hid_fd is not None and hid_fd in r:
+            try:
+                data = os.read(hid_fd, 64)
+            except BlockingIOError:
+                data = b""
+            except OSError as e:
+                _debug(f"hidraw read: {e}")
+                data = b""
+            if data:
+                usages = (
+                    [b for b in data[1:6] if b != 0]
+                    if len(data) >= 2 and data[0] == 0x5A
+                    else []
+                )
+                if usages:
+                    last_activity = now
+                handle_vendor_report(data)
+
+        if in_fd not in r:
+            continue
+        try:
+            chunk = os.read(in_fd, EVENT_SIZE * 64)
+        except BlockingIOError:
+            continue
+        except OSError as e:
+            _debug(f"evdev read: {e}")
+            raise
+        if not chunk:
+            print("bt-fn-row: source EOF — waiting for BT reconnect", flush=True)
+            _debug("source EOF")
+            return
+        last_activity = now
+        buf += chunk
+        while len(buf) >= EVENT_SIZE:
+            raw, buf = buf[:EVENT_SIZE], buf[EVENT_SIZE:]
+            sec, usec, etype, code, value = struct.unpack(EVENT_FMT, raw)
+            if etype != EV_KEY:
+                continue
+            if value == 2:
+                continue
+            if code == KEY_PROG1:
+                continue
+
+            # Meta/Super: emit IMMEDIATELY so Plasma modifier state is live
+            # before F1–F6. Deferred Meta made calibrator OK while KWin ignored chords.
+            if code in (KEY_LEFTMETA, KEY_RIGHTMETA):
+                if value == 1:
+                    meta_held = True
+                    meta_code = code
+                    emit_key(code, 1, sec, usec)
+                    continue
+                meta_held = False
+                if win_p_as_f7:
+                    win_p_as_f7 = False
+                    if code in emitted_down:
+                        emit_key(code, 0, sec, usec)
+                    continue
+                emit_key(code, 0, sec, usec)
+                continue
+
+            # Firmware plain F7 = Win+P. Drop Meta, emit bare F7 (kernel parity).
+            if code == KEY_P and meta_held and meta_code in emitted_down:
+                if value == 1:
+                    win_p_as_f7 = True
+                    _debug("in Meta+P → retract Meta, tap F7")
+                    emit_key(meta_code, 0, sec, usec)
+                    emit_tap(KEY_F7, sec, usec)
+                continue
+            if code == KEY_P and win_p_as_f7:
+                continue
+
+            if code == KEY_F7:
+                if meta_held:
+                    emit_key(KEY_F7, value, sec, usec)
+                elif value == 1:
+                    emit_win_p_tap(sec, usec)
+                continue
+
+            out_code = SWAP.get(code, code)
+            if value == 1:
+                _debug(
+                    f"↓ {_key_label(code)}→{_key_label(out_code)}"
+                    + (
+                        " Meta"
+                        if meta_held and meta_code in emitted_down
+                        else ""
+                    )
+                )
+            emit_key(out_code, value, sec, usec)
+
+    # release tracked on way out
+    if emitted_down:
+        release_codes(set(emitted_down))
+        emitted_down.clear()
+
+
+def cmd_status() -> int:
+    nodes = discover_bt_duo_keyboards()
+    pid = _pidfile_pid()
+    u = find_uinput_event()
+    if not nodes:
+        print("bt-fn-row: no BT Duo keyboard event node (0b05:1b2d)")
+        print("  (USB pogo uses kernel fn_row_policy)")
+        if pid:
+            print(f"bt-fn-row: daemon pid {pid} waiting for BT")
+        return 0
+    for n in nodes:
+        print(n)
+    if u:
+        print(f"bt-fn-row: uinput {u}")
+    if pid:
+        print(f"bt-fn-row: ACTIVE (pid {pid})")
+        print(f"  emergency: sudo platform-bt-fn-row panic   OR  echo stop > {CMD_FIFO}")
+        if DEBUG_LOG.is_file():
+            try:
+                tail = DEBUG_LOG.read_text(encoding="utf-8", errors="replace").strip().splitlines()
+                for line in tail[-6:]:
+                    print(f"  {line}")
+            except OSError:
+                pass
+    else:
+        print("bt-fn-row: READY but IDLE — sudo platform-bt-fn-row start")
+    return 0
+
+
+def cmd_stop() -> int:
+    # Prefer fifo so a wedged process still ungrabs via its select loop.
+    if CMD_FIFO.is_fifo():
+        try:
+            fd = os.open(CMD_FIFO, os.O_WRONLY | os.O_NONBLOCK)
+            os.write(fd, b"stop\n")
+            os.close(fd)
+            time.sleep(0.4)
+        except OSError:
+            pass
+    pid = _pidfile_pid()
+    if not pid:
+        PIDFILE.unlink(missing_ok=True)
+        print("bt-fn-row: stopped (nothing was active)")
+        return 0
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except OSError as e:
+        print(f"bt-fn-row: kill {pid}: {e}", file=sys.stderr)
+        PIDFILE.unlink(missing_ok=True)
+        return 1
+    for _ in range(60):
+        time.sleep(0.05)
+        try:
+            os.kill(pid, 0)
+        except OSError:
+            break
+    else:
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except OSError:
+            pass
+    PIDFILE.unlink(missing_ok=True)
+    print(f"bt-fn-row: stopped pid {pid} (keyboard ungrabbed)")
+    return 0
+
+
+def cmd_start(foreground: bool = False) -> int:
+    existing = _pidfile_pid()
+    if existing and not foreground:
+        print(f"bt-fn-row: already active (pid {existing})", file=sys.stderr)
+        return 0
+
+    nodes = discover_bt_duo_keyboards()
+    if not nodes:
+        print("bt-fn-row: no BT keyboard yet — starting reconnect loop", flush=True)
+
+    if not foreground:
+        if os.fork() > 0:
+            # Wait long enough for first grab attempt / early crash.
+            for _ in range(20):
+                time.sleep(0.1)
+                pid = _pidfile_pid()
+                if not pid:
+                    continue
+                # Still alive after a beat?
+                time.sleep(0.4)
+                if _pidfile_pid() == pid:
+                    where = str(nodes[0]) if nodes else "(waiting for BT)"
+                    print(f"bt-fn-row: started pid {pid} on {where}")
+                    print("  emergency: sudo platform-bt-fn-row panic")
+                    return 0
+                print(
+                    "bt-fn-row: daemon died immediately — see /run/zenbook-bt-fn-row.debug",
+                    file=sys.stderr,
+                )
+                try:
+                    print(DEBUG_LOG.read_text(encoding="utf-8", errors="replace"), file=sys.stderr)
+                except OSError:
+                    pass
+                return 1
+            print("bt-fn-row: start failed (no pidfile)", file=sys.stderr)
+            try:
+                print(DEBUG_LOG.read_text(encoding="utf-8", errors="replace"), file=sys.stderr)
+            except OSError:
+                pass
+            return 1
+        os.setsid()
+        if os.fork() > 0:
+            os._exit(0)
+        try:
+            sys.stdin.close()
+        except Exception:
+            pass
+        signal.signal(signal.SIGHUP, signal.SIG_IGN)
+
+    _write_pidfile()
+    atexit.register(_clear_pidfile)
+    try:
+        return run_remap(nodes[0] if nodes else None)
+    finally:
+        _clear_pidfile()
 
 
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("cmd", choices=("status", "list", "run"), nargs="?", default="status")
+    p.add_argument(
+        "cmd",
+        choices=("status", "list", "run", "start", "stop", "panic", "flush"),
+        nargs="?",
+        default="status",
+    )
     args = p.parse_args(argv)
-    nodes = discover_bt_duo_keyboards()
-    if args.cmd == "list" or args.cmd == "status":
+    if args.cmd == "list":
+        nodes = discover_bt_duo_keyboards()
         if not nodes:
             print("bt-fn-row: no BT Duo keyboard event node (0b05:1b2d)")
-            print("  (USB pogo uses kernel fn_row_policy; reconnect BT after oot hid-asus)")
-            return 1 if args.cmd == "run" else 0
+            return 1
         for n in nodes:
             print(n)
-        if args.cmd == "status":
-            print("bt-fn-row: ready (Mode B → policy-7-ish swap on run)")
         return 0
-    if not nodes:
-        print("bt-fn-row: no BT keyboard to grab", file=sys.stderr)
-        return 1
-    return run_remap(nodes[0])
+    if args.cmd == "status":
+        return cmd_status()
+    if args.cmd in ("stop", "panic", "flush"):
+        # flush used to only release keys — useless when grab killed typing.
+        return cmd_stop()
+    if args.cmd == "start":
+        return cmd_start(foreground=False)
+    if args.cmd == "run":
+        return cmd_start(foreground=True)
+    return 1
 
 
 if __name__ == "__main__":
