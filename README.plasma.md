@@ -149,21 +149,27 @@ Gentoo: new USE `plasma` (or extend `qt6`) installing:
 
 ## Incremental delivery (this branch)
 
-| Step | Deliverable |
-|------|-------------|
-| **A** | Design (this doc) + roadmap/CHANGELOG wiring |
-| **B** | `platform-session` CLI + per-user JSON + wire existing sleep hooks |
-| **C** | Presentation inhibit save/restore outside plasmashell |
-| **D** | Optional QSG-thread watcher (suggest or gated auto-replace) |
-| **E** | KCModule MVP (Sleep/Resume + Overview first; Touchpad/Thermal next) |
-| **F** | Packaging: USE/`--with-plasma`, docs, RC notes |
+| Step | Deliverable | Status |
+|------|-------------|--------|
+| **A** | Design (this doc) + roadmap/CHANGELOG wiring | **done** |
+| **B** | `platform-session` CLI + per-user JSON + sleep hooks | **done** |
+| **C** | Presentation inhibit save/restore outside plasmashell | **done** (in `platform-session presentation`) |
+| **D** | Optional QSG-thread watcher (suggest or gated auto-replace) | **done** (opt-in; off by default) |
+| **E** | KCModule MVP (Sleep/Resume + Overview + Duo; Touchpad/Thermal later) | **done** (minimal) |
+| **F** | Packaging: Gentoo `USE=plasma`, Debian/Alpine scaffolds + Alpine install smoke | **done** (scaffolds; not published) |
 
-## Non-goals (this branch)
+**Out of this RC:** UX581 lightbar (needs hardware). Typing-inhibit polish for USB/BT palm — parallel operator work, not gated on the RC tag.
+
+**Packaging hosts (operator):**
+- Ubuntu `augury0` (20.04): read-only probe — Focal has no Qt6/KF6; CLI `.deb` scaffold only. Call operator before installing build deps or writing.
+- Alpine `cast04`: playground — `zenbook-scripts-0.0.3_pre1-r0.apk` built and `apk add --allow-untrusted` smoke-tested.
+
+## Non-goals (this RC)
 
 - Rewriting fan-control to per-user
 - Full replacement of `platform-tray`
-- UX581 lightbar (stays on `zenbook_ux581`)
-- Ubuntu `.deb` / Alpine `apk` (parallel later tracks)
+- UX581 lightbar (blocked on hardware; `zenbook_ux581`)
+- Publishing official apt/Alpine repos (scaffolds only)
 
 ## Related existing code
 

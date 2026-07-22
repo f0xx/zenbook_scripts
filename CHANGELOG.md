@@ -5,25 +5,31 @@ based on [Keep a Changelog](https://keepachangelog.com/). Version tags follow
 Gentoo-friendly naming where needed (`v0.0.1_hf1` → PV `0.0.1_p1`,
 `v0.0.2_pre1` → PV `0.0.2_pre1`).
 
-## [Unreleased] — toward next RC (Plasma KCM + session)
+## [Unreleased] — toward **0.0.3_pre1** (Plasma KCM + session)
 
 Branch: `feature/plasma-kcm-powerdevil`. Design:
-[`README.plasma.md`](README.plasma.md).
+[`README.plasma.md`](README.plasma.md). **UX581 lightbar not in this RC** (no
+hardware). Typing-inhibit polish continues in parallel on the operator machine.
 
-### Planned
+### Added
 
-- Plasma **KCModule** (System Settings) over probe / touchpad / thermal / sleep.
-- **Per-user** sleep/hibernate/resume policies + presentation inhibit outside
-  plasmashell (survives `plasmashell --replace`).
-- Optional QSG-thread watch / gated auto-replace (off by default).
+- **`platform-session`:** per-user `session.json` orchestrator for sleep/resume/
+  hibernate actions; presentation inhibit outside plasmashell; optional QSG check.
+- **`kcm_zenbook_platform`:** Plasma 6 System Settings module (Overview / Duo /
+  Sleep·Resume / About) — install via `plasma/kcm/build.sh`.
+- **Packaging scaffolds:** Gentoo `USE=plasma`; Debian `packaging/debian/`;
+  Alpine `packaging/alpine/` (APK smoke-tested on cast04).
 
 ### Fixed (UX8406 Bluetooth / Duo layout)
 
 - **BT keyboard dead keys:** oot `hid-asus` no longer applies the broken
   Usage(76h) rdesc fixup on `0b05:1b2d` (probe used to fail → touchpad only).
 - **Typing-inhibit:** rescan keyboard nodes so late BT attach is seen.
-- **`platform-duo-dock`:** enable/disable lower `eDP-2` on USB pogo add/remove.
-- **`platform-bt-fn-row`:** userspace Mode B → policy-7-ish Fn-row swap for BT.
+- **`platform-duo-dock`:** enable/disable lower `eDP-2` on USB pogo add/remove;
+  save/restore backlight; restack after enable (avoid kscreen 0,0 clone).
+- **`platform-bt-fn-row`:** userspace Mode B → policy-7-ish Fn-row; RFKILL;
+  session D-Bus from plasmashell environ for helpers.
+- **`platform-screen-swap`:** layout + window exchange (KWin); Fn+F8.
 - **`platform-probe`:** Duo keyboard (Bluetooth) health line.
 
 ## [0.0.2] — 2026-07-21

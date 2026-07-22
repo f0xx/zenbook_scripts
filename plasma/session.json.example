@@ -4,7 +4,7 @@
   "profiles": {
     "default": {
       "on_sleep": ["brightness_save", "fan_sleep_pre"],
-      "on_resume": ["brightness_restore", "fan_sleep_post"],
+      "on_resume": ["brightness_restore", "fan_sleep_post", "touchpad_reassert"],
       "on_hibernate": ["brightness_save"],
       "presentation": {
         "restore_after_plasmashell_replace": true,
