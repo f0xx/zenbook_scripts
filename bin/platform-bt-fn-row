@@ -394,18 +394,153 @@ def _grab_exclusive(path: Path) -> int:
                 pass
 
 
-def _spawn_helper(argv: list[str]) -> None:
+def _seat_user() -> tuple[str | None, int | None]:
+    """Graphical seat0 username + uid (for kscreen helpers)."""
+    try:
+        out = subprocess.check_output(
+            ["loginctl", "list-sessions", "--no-legend"],
+            text=True,
+            stderr=subprocess.DEVNULL,
+        )
+    except (OSError, subprocess.CalledProcessError):
+        return None, None
+    for line in out.splitlines():
+        parts = line.split()
+        if len(parts) < 3:
+            continue
+        # SESSION UID USER SEAT ...
+        if "seat0" not in line:
+            continue
+        try:
+            uid = int(parts[1])
+        except ValueError:
+            continue
+        user = parts[2]
+        if uid > 0 and user:
+            return user, uid
+    return None, None
+
+
+def _session_env_for_uid(uid: int) -> dict[str, str]:
+    """Pull live session env from plasmashell/kwin (Gentoo often has no /run/user/UID/bus)."""
+    out: dict[str, str] = {}
+    runtime = f"/run/user/{uid}"
+    out["XDG_RUNTIME_DIR"] = runtime
+    bus = Path(runtime) / "bus"
+    if bus.exists():
+        out["DBUS_SESSION_BUS_ADDRESS"] = f"unix:path={bus}"
+    # Prefer environ from a live desktop process (correct /tmp/dbus-* address).
+    for proc_name in ("plasmashell", "kwin_wayland", "kwin_x11", "ksmserver"):
+        try:
+            pids = subprocess.check_output(
+                ["pgrep", "-u", str(uid), "-x", proc_name],
+                text=True,
+                stderr=subprocess.DEVNULL,
+            ).split()
+        except (OSError, subprocess.CalledProcessError):
+            continue
+        for pid in pids:
+            try:
+                raw = Path(f"/proc/{pid}/environ").read_bytes()
+            except OSError:
+                continue
+            for item in raw.split(b"\0"):
+                if b"=" not in item:
+                    continue
+                k, _, v = item.partition(b"=")
+                try:
+                    key = k.decode()
+                    val = v.decode()
+                except UnicodeDecodeError:
+                    continue
+                if key in (
+                    "DBUS_SESSION_BUS_ADDRESS",
+                    "WAYLAND_DISPLAY",
+                    "DISPLAY",
+                    "XDG_RUNTIME_DIR",
+                ):
+                    out[key] = val
+            if "DBUS_SESSION_BUS_ADDRESS" in out:
+                break
+        if "DBUS_SESSION_BUS_ADDRESS" in out:
+            break
+    if "WAYLAND_DISPLAY" not in out:
+        try:
+            for s in sorted(Path(runtime).glob("wayland-*")):
+                if s.is_socket():
+                    out["WAYLAND_DISPLAY"] = s.name
+                    break
+        except OSError:
+            pass
+    if "DISPLAY" not in out:
+        if Path("/tmp/.X11-unix/X1").exists():
+            out["DISPLAY"] = ":1"
+        elif Path("/tmp/.X11-unix/X0").exists():
+            out["DISPLAY"] = ":0"
+    return out
+
+
+def _spawn_helper(argv: list[str], *, as_seat_user: bool = False) -> None:
+    """Fire-and-forget helper. Never block the remap loop."""
+    env = os.environ.copy()
+    run_argv = list(argv)
+    if as_seat_user and os.geteuid() == 0:
+        user, uid = _seat_user()
+        if user and uid:
+            try:
+                import pwd
+
+                env["HOME"] = pwd.getpwnam(user).pw_dir
+            except KeyError:
+                env["HOME"] = f"/home/{user}"
+            env["USER"] = user
+            env["LOGNAME"] = user
+            env.update(_session_env_for_uid(uid))
+            # Prefer runuser — keeps env without sudo -E HOME=/root stalls
+            if shutil.which("runuser"):
+                run_argv = ["runuser", "-u", user, "--preserve-environment", "--", *argv]
+            else:
+                run_argv = ["sudo", "-n", "-u", user, "-E", "--", *argv]
     try:
         subprocess.Popen(
-            argv,
+            run_argv,
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             start_new_session=True,
+            env=env,
         )
-        _debug(f"helper: {' '.join(argv)}")
+        _debug(f"helper: {' '.join(run_argv)}")
+        if as_seat_user:
+            _debug(
+                f"helper env DBUS={env.get('DBUS_SESSION_BUS_ADDRESS', '')!r} "
+                f"WAYLAND={env.get('WAYLAND_DISPLAY', '')!r}"
+            )
     except OSError as e:
-        _debug(f"helper fail {argv}: {e}")
+        _debug(f"helper fail {run_argv}: {e}")
+
+
+def _rfkill_airplane_toggle() -> None:
+    """Toggle wifi+bluetooth soft-blocks together (Duo F10 / airplane pictogram)."""
+    try:
+        listed = subprocess.check_output(["rfkill", "list"], text=True, stderr=subprocess.DEVNULL)
+    except (OSError, subprocess.CalledProcessError) as e:
+        _debug(f"rfkill list: {e}")
+        return
+    any_unblocked = "Soft blocked: no" in listed
+    action = "block" if any_unblocked else "unblock"
+    for kind in ("wlan", "bluetooth"):
+        try:
+            subprocess.run(
+                ["rfkill", action, kind],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                check=False,
+            )
+        except OSError as e:
+            _debug(f"rfkill {action} {kind}: {e}")
+    _debug(f"rfkill airplane → {action}")
 
 
 def _side_effect_for_emitted(code: int, value: int) -> None:
@@ -416,7 +551,9 @@ def _side_effect_for_emitted(code: int, value: int) -> None:
         _spawn_helper([kb, "--mode", "bluetooth", "+1"])
     elif code == KEY_F15:
         swap = shutil.which("platform-screen-swap") or "/usr/bin/platform-screen-swap"
-        _spawn_helper([swap])
+        _spawn_helper([swap], as_seat_user=True)
+    elif code == KEY_RFKILL:
+        _rfkill_airplane_toggle()
 
 
 def _ensure_cmd_fifo() -> None:
@@ -477,6 +614,7 @@ def run_remap(_src_ignored: Path | None = None) -> int:
     signal.signal(signal.SIGTERM, _on_term)
     signal.signal(signal.SIGINT, _on_term)
     signal.signal(signal.SIGHUP, signal.SIG_IGN)
+    signal.signal(signal.SIGPIPE, signal.SIG_IGN)
 
     print("bt-fn-row: reconnect loop (safe grab)", flush=True)
     _debug("reconnect loop start")
@@ -977,6 +1115,7 @@ def cmd_start(foreground: bool = False) -> int:
         except Exception:
             pass
         signal.signal(signal.SIGHUP, signal.SIG_IGN)
+        signal.signal(signal.SIGPIPE, signal.SIG_IGN)
 
     _write_pidfile()
     atexit.register(_clear_pidfile)

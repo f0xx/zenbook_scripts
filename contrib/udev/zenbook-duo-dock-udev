@@ -1,12 +1,11 @@
 #!/bin/sh
 # Called from udev when UX8406 Primax keyboard USB appears/disappears.
-# Runs platform-duo-dock as the graphical seat user when possible.
+# kscreen as seat user; backlight save/restore as root (sysfs).
 
 BIN="${ZENBOOK_DUO_DOCK_BIN:-/usr/bin/platform-duo-dock}"
 [ -x "$BIN" ] || BIN="/usr/local/bin/platform-duo-dock"
 [ -x "$BIN" ] || exit 0
 
-# Prefer the user who owns the seat0 session
 uid=""
 if [ -n "${ZENBOOK_DUO_UID:-}" ]; then
 	uid="$ZENBOOK_DUO_UID"
@@ -16,16 +15,87 @@ fi
 [ -n "$uid" ] || uid="$(id -u)"
 
 export ZENBOOK_DUO_UID="$uid"
+export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/${uid}}"
 if [ -S "/run/user/${uid}/bus" ]; then
 	export DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/${uid}/bus"
-	export XDG_RUNTIME_DIR="/run/user/${uid}"
+fi
+# kscreen needs Wayland; udev/root has neither
+if [ -z "${WAYLAND_DISPLAY:-}" ]; then
+	for s in /run/user/"${uid}"/wayland-*; do
+		[ -S "$s" ] || continue
+		export WAYLAND_DISPLAY="${s##*/}"
+		break
+	done
+fi
+if [ -z "${DISPLAY:-}" ]; then
+	if [ -S /tmp/.X11-unix/X1 ]; then
+		export DISPLAY=:1
+	elif [ -S /tmp/.X11-unix/X0 ]; then
+		export DISPLAY=:0
+	fi
 fi
 
 action="${1:-auto}"
-if [ "$(id -u)" -eq 0 ] && [ -n "$uid" ] && [ "$uid" != 0 ]; then
+user=""
+if [ -n "$uid" ] && [ "$uid" != 0 ]; then
 	user="$(getent passwd "$uid" | cut -d: -f1)"
-	if [ -n "$user" ] && command -v sudo >/dev/null 2>&1; then
-		exec sudo -u "$user" -E "$BIN" "$action"
-	fi
 fi
-exec "$BIN" "$action"
+
+run_user() {
+	# Preserve session env; set HOME to the seat user (avoid root HOME stall).
+	if [ "$(id -u)" -eq 0 ] && [ -n "$user" ]; then
+		home="$(getent passwd "$user" | cut -d: -f6)"
+		[ -n "$home" ] || home="/home/${user}"
+		if command -v runuser >/dev/null 2>&1; then
+			env HOME="$home" USER="$user" LOGNAME="$user" \
+				DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS:-}" \
+				XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-}" \
+				WAYLAND_DISPLAY="${WAYLAND_DISPLAY:-}" \
+				DISPLAY="${DISPLAY:-}" \
+				PATH="${PATH:-/usr/bin:/bin}" \
+				runuser -u "$user" --preserve-environment -- "$BIN" "$@"
+		else
+			env HOME="$home" USER="$user" LOGNAME="$user" \
+				sudo -n -u "$user" -E -- "$BIN" "$@"
+		fi
+	else
+		"$BIN" "$@"
+	fi
+}
+
+LOG="${ZENBOOK_DUO_LOG:-/run/zenbook-duo-dock.log}"
+log() { echo "$(date -Iseconds) $*" >>"$LOG" 2>/dev/null || true; }
+
+# Brightness sysfs needs root; kscreen needs the session user.
+case "$action" in
+	docked)
+		log "docked begin uid=$(id -u) user=$user"
+		[ "$(id -u)" -eq 0 ] && "$BIN" save-brightness || true
+		run_user kscreen-docked
+		log "docked done"
+		;;
+	undocked)
+		log "undocked begin uid=$(id -u) user=$user"
+		# Layout first (enable+stack), then backlight — enable-only clones at 0,0.
+		run_user kscreen-undocked
+		sleep 0.5
+		if [ "$(id -u)" -eq 0 ]; then
+			"$BIN" restore-brightness || true
+			# Force panel backlight power on if sysfs exposes bl_power
+			for bl in /sys/class/backlight/card0-eDP-2-backlight /sys/class/backlight/asus_screenpad; do
+				[ -f "$bl/bl_power" ] && echo 0 >"$bl/bl_power" 2>/dev/null || true
+			done
+		fi
+		log "undocked done"
+		;;
+	auto)
+		if lsusb -d 0b05:1b2c >/dev/null 2>&1; then
+			exec "$0" docked
+		else
+			exec "$0" undocked
+		fi
+		;;
+	*)
+		run_user "$action"
+		;;
+esac
