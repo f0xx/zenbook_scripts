@@ -263,6 +263,8 @@ def install_kb_brightness_tree(script_dir: Path) -> None:
         (script_dir / "bin" / "platform-power", INSTALL_BIN_PLATFORM_POWER),
         (script_dir / "bin" / "platform-touchpad", INSTALL_BIN_PLATFORM_TOUCHPAD),
         (script_dir / "bin" / "platform-screen-swap", zb_paths.bin_dir() / "platform-screen-swap"),
+        (script_dir / "bin" / "platform-duo-dock", zb_paths.bin_dir() / "platform-duo-dock"),
+        (script_dir / "bin" / "platform-bt-fn-row", zb_paths.bin_dir() / "platform-bt-fn-row"),
         (script_dir / "bin" / "platform-metrics", zb_paths.bin_dir() / "platform-metrics"),
         (script_dir / "bin" / "kb-fan", INSTALL_BIN_FAN_LEGACY),
         (script_dir / "bin" / "kb-fan-control", INSTALL_BIN_FAN_CONTROL_LEGACY),
@@ -380,8 +382,21 @@ def install_udev_rules(script_dir: Path) -> None:
     _sudo(["cp", str(script_dir / "contrib" / "udev" / "99-zenbook-kb-hotkeys.rules"), str(UDEV_RULES)])
     _sudo(["cp", str(script_dir / "contrib" / "udev" / "zenbook-kb-hotkeys-udev"), str(UDEV_HELPER)])
     _sudo(["chmod", "a+x", str(UDEV_HELPER)])
+    dock_rules = script_dir / "contrib" / "udev" / "99-zenbook-duo-dock.rules"
+    dock_helper = script_dir / "contrib" / "udev" / "zenbook-duo-dock-udev"
+    if dock_rules.is_file() and dock_helper.is_file():
+        dock_dest = zb_paths.UDEV_RULES_DIR / "99-zenbook-duo-dock.rules"
+        helper_dest = INSTALL_LIBEXEC / "zenbook-duo-dock-udev"
+        # Rules reference /usr/libexec/… — rewrite if prefix differs
+        text = dock_rules.read_text(encoding="utf-8")
+        text = text.replace("/usr/libexec/zenbook-duo-dock-udev", str(helper_dest))
+        _root_run(["tee", str(dock_dest)], check=True, input_bytes=text.encode())
+        _sudo(["cp", str(dock_helper), str(helper_dest)])
+        _sudo(["chmod", "a+x", str(helper_dest)])
+        print(f"Installed {dock_dest}")
     _sudo(["udevadm", "control", "--reload-rules"])
     _sudo(["udevadm", "trigger", "--subsystem-match=input"])
+    _sudo(["udevadm", "trigger", "--subsystem-match=usb"])
     print(f"Installed {UDEV_RULES}")
 
 

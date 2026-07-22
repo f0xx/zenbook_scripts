@@ -1,0 +1,8 @@
+# Ensure BT Fn-row remapper is running when Primax Duo BT keyboard appears.
+# Do NOT restart — that kills the reconnect loop. start is a no-op if active.
+#
+#   sudo cp contrib/udev/99-zenbook-bt-fn-row.rules /etc/udev/rules.d/
+#   sudo udevadm control --reload
+
+ACTION=="add", SUBSYSTEM=="hid", ATTRS{idVendor}=="0b05", ATTRS{idProduct}=="1b2d", \
+  RUN+="/usr/bin/platform-bt-fn-row start"

@@ -756,6 +756,56 @@ class Pipeline:
             out = filt.process_frame(out)
         return out
 
+    def process_frame_traced(self, frame: list[Ev]) -> tuple[list[Ev], dict[str, Any]]:
+        """Like ``process_frame`` but return a JSON-friendly decision record."""
+        xy = None
+        x = y = None
+        for ev in frame:
+            if ev.type != EV_ABS:
+                continue
+            if ev.code in (ABS_MT_POSITION_X, ABS_X):
+                x = ev.value
+            elif ev.code in (ABS_MT_POSITION_Y, ABS_Y):
+                y = ev.value
+        if x is not None and y is not None:
+            xy = [int(x), int(y)]
+
+        typing_armed = bool(self.activity and self.activity.active())
+        stages: list[dict[str, Any]] = []
+        out = frame
+        dropped_by: str | None = None
+        for filt in self.filters:
+            before = len(out)
+            name = filt.stats.name
+            drops_before = filt.stats.dropped_frames
+            if not out:
+                break
+            out = filt.process_frame(out)
+            after = len(out)
+            dropped = after == 0 and before > 0
+            if dropped and dropped_by is None:
+                dropped_by = name
+            stages.append(
+                {
+                    "filter": name,
+                    "in_events": before,
+                    "out_events": after,
+                    "dropped": dropped,
+                    "drop_delta": int(filt.stats.dropped_frames - drops_before),
+                }
+            )
+
+        return out, {
+            "t": time.time(),
+            "typing_armed": typing_armed,
+            "xy": xy,
+            "in_events": len(frame),
+            "out_events": len(out),
+            "passed": bool(out),
+            "dropped_by": dropped_by,
+            "stages": stages,
+        }
+
     def process_events(self, events: Iterable[Ev]) -> list[Ev]:
         frame: list[Ev] = []
         result: list[Ev] = []
@@ -1260,7 +1310,11 @@ def knobs_from_filters(filters: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 def discover_keyboards(*, exclude: Sequence[Path] | None = None) -> list[Path]:
-    """Evdev nodes that look like keyboards (for typing-inhibit)."""
+    """Evdev nodes that look like keyboards (for typing-inhibit).
+
+    Includes USB/BT Primax Duo nodes (name contains ``keyboard`` / ``asus``) and
+    the laptop AT set. Callers should rescan — BT attach is often late.
+    """
     skip = {p.resolve() for p in (exclude or [])}
     found: list[Path] = []
     for event_dir in sorted(Path("/sys/class/input").glob("event*")):
@@ -1271,9 +1325,6 @@ def discover_keyboards(*, exclude: Sequence[Path] | None = None) -> list[Path]:
         low = name.lower()
         if "touchpad" in low or "trackpad" in low or "mouse" in low:
             continue
-        if "keyboard" not in low and "at translated" not in low:
-            # still accept devices with alphanumeric keys via capability check below
-            pass
         key_caps = event_dir / "device" / "capabilities" / "key"
         if not key_caps.is_file():
             continue
@@ -1287,12 +1338,80 @@ def discover_keyboards(*, exclude: Sequence[Path] | None = None) -> list[Path]:
                 continue
             if "keyboard" not in low:
                 continue
+        # Prefer Primax / Duo HID keyboards over WMI "Asus … hotkeys" (no typing)
+        if "hotkey" in low and "keyboard" not in low:
+            continue
         path = Path("/dev/input") / event_dir.name
         if path.resolve() in skip:
             continue
         if path.exists():
             found.append(path)
     return found
+
+
+def duo_keyboard_hid_health() -> dict[str, object]:
+    """Detect UX8406 Primax dock/BT binding problems (for probe / operators)."""
+    usb = False
+    bt_hid: list[dict[str, str]] = []
+    bt_key_events: list[str] = []
+    for line in Path("/sys/bus/usb/devices").glob("*"):
+        pass
+    try:
+        import subprocess
+
+        r = subprocess.run(
+            ["lsusb", "-d", "0b05:1b2c"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        usb = bool(r.stdout.strip())
+    except OSError:
+        usb = False
+
+    for d in sorted(Path("/sys/bus/hid/devices").glob("0005:0B05:1B2D.*")):
+        drv = "NONE"
+        if (d / "driver").exists():
+            drv = (d / "driver").resolve().name
+        rdesc = d / "report_descriptor"
+        rlen = rdesc.stat().st_size if rdesc.is_file() else 0
+        bt_hid.append({"id": d.name, "driver": drv, "rdesc_bytes": str(rlen)})
+
+    for event_dir in sorted(Path("/sys/class/input").glob("event*")):
+        name_path = event_dir / "device" / "name"
+        if not name_path.is_file():
+            continue
+        name = name_path.read_text(encoding="utf-8", errors="replace").strip()
+        low = name.lower()
+        if "zenbook duo keyboard" not in low:
+            continue
+        if "touchpad" in low or "mouse" in low:
+            continue
+        vendor = event_dir / "device" / "id" / "vendor"
+        product = event_dir / "device" / "id" / "product"
+        bustype = event_dir / "device" / "id" / "bustype"
+        if vendor.is_file() and product.is_file():
+            v = vendor.read_text().strip().lower()
+            p = product.read_text().strip().lower()
+            if v in ("0b05", "b05") and p in ("1b2d", "1b2c"):
+                bt_key_events.append(event_dir.name)
+        elif bustype.is_file() and bustype.read_text().strip() == "0005":
+            bt_key_events.append(event_dir.name)
+
+    orphan_bt = any(h["driver"] == "NONE" for h in bt_hid)
+    return {
+        "usb_pogo_1b2c": usb,
+        "bt_hid_ifaces": bt_hid,
+        "bt_keyboard_event_nodes": bt_key_events,
+        "bt_keyboard_unbound": orphan_bt,
+        "bt_keys_missing": bool(bt_hid) and not bt_key_events,
+        "hint": (
+            "hid-asus BT rdesc fixup failed — rebuild/sideload oot hid-asus "
+            "(skip BT Usage76) or reconnect after fix"
+            if (orphan_bt or (bt_hid and not bt_key_events))
+            else ""
+        ),
+    }
 
 
 def abs_bounds_for_device(path: Path) -> dict[str, int]:
@@ -1336,30 +1455,66 @@ def iter_touchpad_with_typing(
     grab: bool = False,
     stop_after_s: float | None = None,
     should_stop: Callable[[], bool] | None = None,
+    keyboard_rescan_s: float = 2.0,
 ) -> Iterator[Ev]:
-    """Yield touchpad events; update ``activity`` from keyboard key presses."""
-    kbd_paths = discover_keyboards(exclude=[touchpad]) if activity is not None else []
+    """Yield touchpad events; update ``activity`` from keyboard key presses.
+
+    Rescans keyboard nodes periodically so a late Bluetooth Duo keyboard is
+    picked up (and dead USB nodes after undock are dropped).
+    """
     fds: dict[int, tuple[Path, bool]] = {}  # fd -> (path, is_touchpad)
     grabbed = False
     t0 = time.monotonic()
+    last_scan = 0.0
+    open_kbd: set[Path] = set()
+
+    def _open_keyboards() -> None:
+        nonlocal last_scan
+        last_scan = time.monotonic()
+        want = set(discover_keyboards(exclude=[touchpad])) if activity is not None else set()
+        # Drop disappeared
+        for fd, (path, is_tp) in list(fds.items()):
+            if is_tp:
+                continue
+            if path not in want or not path.exists():
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
+                fds.pop(fd, None)
+                open_kbd.discard(path)
+        for kp in want:
+            if kp in open_kbd:
+                continue
+            try:
+                kfd = os.open(kp, os.O_RDONLY | os.O_NONBLOCK)
+            except OSError:
+                continue
+            fds[kfd] = (kp, False)
+            open_kbd.add(kp)
+
     try:
         tfd = os.open(touchpad, os.O_RDONLY | os.O_NONBLOCK)
         fds[tfd] = (touchpad, True)
         if grab:
             fcntl.ioctl(tfd, EVIOCGRAB, 1)
             grabbed = True
-        for kp in kbd_paths:
-            try:
-                kfd = os.open(kp, os.O_RDONLY | os.O_NONBLOCK)
-            except OSError:
-                continue
-            fds[kfd] = (kp, False)
+        _open_keyboards()
         bufs: dict[int, bytes] = {fd: b"" for fd in fds}
         while True:
             if should_stop and should_stop():
                 break
             if stop_after_s is not None and (time.monotonic() - t0) >= stop_after_s:
                 break
+            if activity is not None and (time.monotonic() - last_scan) >= keyboard_rescan_s:
+                before = set(fds)
+                _open_keyboards()
+                for fd in fds:
+                    if fd not in before:
+                        bufs[fd] = b""
+                for fd in list(bufs):
+                    if fd not in fds:
+                        bufs.pop(fd, None)
             r, _, _ = select.select(list(fds), [], [], 0.25)
             if not r:
                 continue
@@ -1367,10 +1522,30 @@ def iter_touchpad_with_typing(
                 path, is_tp = fds[fd]
                 try:
                     chunk = os.read(fd, INPUT_EVENT_SIZE * 64)
+                except OSError:
+                    if not is_tp:
+                        try:
+                            os.close(fd)
+                        except OSError:
+                            pass
+                        fds.pop(fd, None)
+                        open_kbd.discard(path)
+                        bufs.pop(fd, None)
+                    continue
                 except BlockingIOError:
                     continue
                 if not chunk:
+                    # EOF / device gone (common on BT undock)
+                    if not is_tp:
+                        try:
+                            os.close(fd)
+                        except OSError:
+                            pass
+                        fds.pop(fd, None)
+                        open_kbd.discard(path)
+                        bufs.pop(fd, None)
                     continue
+                bufs.setdefault(fd, b"")
                 bufs[fd] += chunk
                 while len(bufs[fd]) >= INPUT_EVENT_SIZE:
                     raw, bufs[fd] = (

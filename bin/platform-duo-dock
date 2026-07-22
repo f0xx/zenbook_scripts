@@ -1,0 +1,227 @@
+#!/usr/bin/env bash
+# UX8406 Duo: enable/disable the lower panel (eDP-2) based on keyboard dock state.
+#
+# Docked on pogo (USB 0b05:1b2c): lower screen off (keyboard covers it).
+# Undocked (BT / removed): lower screen on; restore saved backlight if any.
+#
+# Manual: platform-duo-dock status|docked|undocked|auto
+# udev:   contrib/udev/99-zenbook-duo-dock.rules
+#
+# Requires: kscreen-doctor. Primary stays eDP-1 (upper).
+# Backlight state: /var/lib/zenbook-scripts/duo-dock-lower.state
+
+set -euo pipefail
+
+LOWER="${ZENBOOK_DUO_LOWER:-eDP-2}"
+UPPER="${ZENBOOK_DUO_UPPER:-eDP-1}"
+STATE_DIR="${ZENBOOK_DUO_STATE_DIR:-/var/lib/zenbook-scripts}"
+STATE_FILE="${STATE_DIR}/duo-dock-lower.state"
+
+# sysfs backlight nodes for the lower panel (prefer DRM connector backlight)
+LOWER_BACKLIGHTS=(
+	"/sys/class/backlight/card0-eDP-2-backlight"
+	"/sys/class/backlight/asus_screenpad"
+)
+
+# Session env for kscreen (D-Bus + Wayland). Root callers should re-exec as user.
+_uid="${ZENBOOK_DUO_UID:-$(id -u)}"
+_runtime="/run/user/${_uid}"
+export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-$_runtime}"
+if [[ -z "${DBUS_SESSION_BUS_ADDRESS:-}" && -S "${_runtime}/bus" ]]; then
+	export DBUS_SESSION_BUS_ADDRESS="unix:path=${_runtime}/bus"
+fi
+if [[ -z "${WAYLAND_DISPLAY:-}" ]]; then
+	for _s in "${_runtime}"/wayland-*; do
+		[[ -S "$_s" ]] || continue
+		export WAYLAND_DISPLAY="${_s##*/}"
+		break
+	done
+fi
+if [[ -z "${DISPLAY:-}" ]]; then
+	if [[ -S /tmp/.X11-unix/X1 ]]; then
+		export DISPLAY=:1
+	elif [[ -S /tmp/.X11-unix/X0 ]]; then
+		export DISPLAY=:0
+	fi
+fi
+unset _uid _runtime _s
+
+have_kscreen() {
+	command -v kscreen-doctor >/dev/null 2>&1
+}
+
+usb_pogo_present() {
+	lsusb -d 0b05:1b2c >/dev/null 2>&1
+}
+
+cmd_status() {
+	echo "usb_pogo_1b2c: $(usb_pogo_present && echo yes || echo no)"
+	if have_kscreen; then
+		kscreen-doctor -o 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g' | \
+			awk -v u="$UPPER" -v l="$LOWER" '
+				$1=="Output:" && $3==u {cur=u}
+				$1=="Output:" && $3==l {cur=l}
+				cur!="" && ($1=="enabled"||$1=="disabled") {print cur": "$1; cur=""}
+			'
+	else
+		echo "kscreen-doctor: missing"
+	fi
+	for c in /sys/class/drm/card0-${LOWER}/enabled /sys/class/drm/card0-${UPPER}/enabled; do
+		[[ -f "$c" ]] && echo "drm $(basename "$(dirname "$c")"): $(cat "$c")"
+	done
+	for bl in "${LOWER_BACKLIGHTS[@]}"; do
+		if [[ -f "${bl}/brightness" ]]; then
+			echo "backlight $(basename "$bl"): $(cat "${bl}/brightness")/$(cat "${bl}/max_brightness")"
+		fi
+	done
+	if [[ -f "$STATE_FILE" ]]; then
+		echo "saved_state: $(tr '\n' ' ' <"$STATE_FILE")"
+	else
+		echo "saved_state: (none)"
+	fi
+}
+
+save_lower_backlight() {
+	if ! mkdir -p "$STATE_DIR" 2>/dev/null; then
+		echo "duo-dock: cannot mkdir $STATE_DIR (need root to save brightness)" >&2
+		return 0
+	fi
+	if ! : >"$STATE_FILE" 2>/dev/null; then
+		echo "duo-dock: cannot write $STATE_FILE (need root to save brightness)" >&2
+		return 0
+	fi
+	umask 022
+	local bl name val
+	for bl in "${LOWER_BACKLIGHTS[@]}"; do
+		[[ -f "${bl}/brightness" ]] || continue
+		name="$(basename "$bl")"
+		val="$(cat "${bl}/brightness" 2>/dev/null || true)"
+		[[ -n "$val" ]] || continue
+		echo "${name}=${val}" >>"$STATE_FILE"
+	done
+}
+
+restore_lower_backlight() {
+	[[ -f "$STATE_FILE" ]] || return 0
+	local line name val path
+	while IFS= read -r line || [[ -n "$line" ]]; do
+		[[ "$line" == *=* ]] || continue
+		name="${line%%=*}"
+		val="${line#*=}"
+		path="/sys/class/backlight/${name}/brightness"
+		if [[ -f "$path" && "$val" =~ ^[0-9]+$ ]]; then
+			if [[ -w "$path" ]]; then
+				echo "$val" >"$path"
+			elif [[ "$(id -u)" -eq 0 ]]; then
+				echo "$val" >"$path"
+			else
+				echo "duo-dock: cannot write $path (need root)" >&2
+			fi
+		fi
+	done <"$STATE_FILE"
+}
+
+# Logical height of upper panel (for stacked position). Fallback 1334 ≈ 1800/1.35.
+lower_stack_y() {
+	local h="" line
+	if have_kscreen; then
+		while IFS= read -r line; do
+			if [[ "$line" =~ ^Output:[[:space:]]+[0-9]+[[:space:]]+${UPPER} ]]; then
+				cur=1
+				continue
+			fi
+			if [[ "$line" =~ ^Output: ]]; then
+				cur=0
+				continue
+			fi
+			[[ "${cur:-0}" -eq 1 ]] || continue
+			if [[ "$line" =~ Geometry:[[:space:]]*-?[0-9]+,-?[0-9]+[[:space:]]+[0-9]+x([0-9]+) ]]; then
+				h="${BASH_REMATCH[1]}"
+				break
+			fi
+		done < <(kscreen-doctor -o 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g')
+	fi
+	[[ "$h" =~ ^[0-9]+$ && "$h" -gt 0 ]] || h=1334
+	echo "$h"
+}
+
+backlight_power_on() {
+	local bl
+	for bl in "${LOWER_BACKLIGHTS[@]}"; do
+		if [[ -f "${bl}/bl_power" ]]; then
+			if [[ -w "${bl}/bl_power" ]] || [[ "$(id -u)" -eq 0 ]]; then
+				echo 0 >"${bl}/bl_power" 2>/dev/null || true
+			fi
+		fi
+	done
+}
+
+kscreen_set_lower() {
+	local mode=$1
+	local y
+	have_kscreen || { echo "kscreen-doctor not found" >&2; return 1; }
+	case "$mode" in
+		on)
+			# enable-only → both at 0,0 (clone). Always re-stack.
+			y="$(lower_stack_y)"
+			kscreen-doctor \
+				"output.${UPPER}.enable" \
+				"output.${LOWER}.enable" \
+				"output.${UPPER}.position.0,0" \
+				"output.${LOWER}.position.0,${y}" \
+				"output.${UPPER}.priority.1" \
+				"output.${LOWER}.priority.2"
+			;;
+		off) kscreen-doctor "output.${LOWER}.disable" ;;
+		*) return 1 ;;
+	esac
+}
+
+cmd_docked() {
+	save_lower_backlight
+	kscreen_set_lower off
+	echo "duo-dock: docked → ${LOWER} disable (saved backlight → ${STATE_FILE})"
+}
+
+cmd_undocked() {
+	kscreen_set_lower on
+	sleep 0.5
+	backlight_power_on
+	restore_lower_backlight
+	echo "duo-dock: undocked → ${LOWER} enable+stack (restored backlight if saved)"
+}
+
+cmd_auto() {
+	if usb_pogo_present; then
+		cmd_docked
+	else
+		cmd_undocked
+	fi
+}
+
+# Split entrypoints for udev (root brightness + user kscreen)
+cmd_save_brightness() { save_lower_backlight; echo "duo-dock: saved → ${STATE_FILE}"; }
+cmd_restore_brightness() { restore_lower_backlight; echo "duo-dock: restored from ${STATE_FILE}"; }
+cmd_kscreen_docked() { kscreen_set_lower off; echo "duo-dock: kscreen ${LOWER} disable"; }
+cmd_kscreen_undocked() {
+	kscreen_set_lower on
+	echo "duo-dock: kscreen ${LOWER} enable+stack"
+}
+
+usage() {
+	echo "Usage: $0 status|docked|undocked|auto|" >&2
+	echo "         save-brightness|restore-brightness|kscreen-docked|kscreen-undocked" >&2
+	exit 2
+}
+
+case "${1:-}" in
+	status) cmd_status ;;
+	docked) cmd_docked ;;
+	undocked) cmd_undocked ;;
+	auto) cmd_auto ;;
+	save-brightness) cmd_save_brightness ;;
+	restore-brightness) cmd_restore_brightness ;;
+	kscreen-docked) cmd_kscreen_docked ;;
+	kscreen-undocked) cmd_kscreen_undocked ;;
+	*) usage ;;
+esac

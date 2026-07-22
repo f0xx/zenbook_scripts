@@ -184,6 +184,69 @@ def cmd_monitor(args: argparse.Namespace) -> int:
     )
 
 
+def cmd_capture(args: argparse.Namespace) -> int:
+    """Write one JSON object per SYN frame (JSONL) for offline jq analysis."""
+    cfg = _load(args)
+    info = resolve_touchpad(args.device, cfg)
+    pipe = _pipe_for(args, info)
+    out_path = Path(args.output)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    stop = False
+
+    def _stop(*_a: object) -> None:
+        nonlocal stop
+        stop = True
+
+    signal.signal(signal.SIGINT, _stop)
+    signal.signal(signal.SIGTERM, _stop)
+
+    meta = {
+        "t": __import__("time").time(),
+        "kind": "meta",
+        "device": str(info.path),
+        "key": info.key,
+        "name": info.name,
+        "pipeline": pipe.summary(),
+    }
+    n_in = n_pass = n_drop = 0
+    frame: list = []
+    print(f"capture → {out_path}  {info.path}  Ctrl-C to stop", flush=True)
+    with out_path.open("w", encoding="utf-8") as fh:
+        fh.write(json.dumps(meta) + "\n")
+        fh.flush()
+        for ev in iter_touchpad_with_typing(
+            info.path,
+            activity=getattr(pipe, "activity", None),
+            grab=False,
+            stop_after_s=args.seconds,
+            should_stop=lambda: stop,
+        ):
+            frame.append(ev)
+            if ev.type == 0 and ev.code == 0:  # SYN_REPORT
+                n_in += 1
+                _out, rec = pipe.process_frame_traced(frame)
+                frame = []
+                if rec.get("passed"):
+                    n_pass += 1
+                else:
+                    n_drop += 1
+                fh.write(json.dumps(rec) + "\n")
+                if args.flush_every and n_in % args.flush_every == 0:
+                    fh.flush()
+                if not args.quiet and rec.get("dropped_by"):
+                    print(
+                        f"drop by {rec['dropped_by']} xy={rec.get('xy')} "
+                        f"typing={rec.get('typing_armed')}",
+                        flush=True,
+                    )
+    print(
+        f"done frames={n_in} passed={n_pass} dropped={n_drop}  {pipe.summary()}",
+        flush=True,
+    )
+    print(f"analyze: contrib/scripts/touchpad-capture-analyze.sh {out_path}", flush=True)
+    return 0
+
+
 def cmd_run(args: argparse.Namespace) -> int:
     cfg = _load(args)
     info = resolve_touchpad(args.device, cfg)
@@ -282,6 +345,37 @@ def main(argv: list[str] | None = None) -> int:
     p_mon.add_argument("--max-delta", type=int, default=None)
     p_mon.add_argument("-q", "--quiet", action="store_true")
 
+    p_cap = sub.add_parser(
+        "capture",
+        help="write JSONL frame decisions (for jq offline analysis)",
+    )
+    p_cap.add_argument(
+        "--config",
+        default=None,
+        help=f"JSON config (default {DEFAULT_CONFIG})",
+    )
+    p_cap.add_argument(
+        "--device",
+        default=None,
+        help="auto | /dev/input/eventN | stable key | name substring",
+    )
+    p_cap.add_argument(
+        "-o",
+        "--output",
+        required=True,
+        help="JSONL output path (one object per SYN frame)",
+    )
+    p_cap.add_argument("--seconds", type=float, default=None)
+    p_cap.add_argument("--delay-ms", type=float, default=None)
+    p_cap.add_argument("--max-delta", type=int, default=None)
+    p_cap.add_argument(
+        "--flush-every",
+        type=int,
+        default=50,
+        help="fflush every N frames (0=only at end)",
+    )
+    p_cap.add_argument("-q", "--quiet", action="store_true")
+
     p_run = sub.add_parser("run", help="live filter via EVIOCGRAB + uinput")
     p_run.add_argument(
         "--config",
@@ -321,6 +415,8 @@ def main(argv: list[str] | None = None) -> int:
             return cmd_sim(args)
         if args.cmd == "monitor":
             return cmd_monitor(args)
+        if args.cmd == "capture":
+            return cmd_capture(args)
         if args.cmd == "run":
             return cmd_run(args)
     except (OSError, PermissionError, ValueError, FileNotFoundError) as exc:

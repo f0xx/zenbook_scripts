@@ -5,9 +5,32 @@ based on [Keep a Changelog](https://keepachangelog.com/). Version tags follow
 Gentoo-friendly naming where needed (`v0.0.1_hf1` → PV `0.0.1_p1`,
 `v0.0.2_pre1` → PV `0.0.2_pre1`).
 
-## [Unreleased]
+## [Unreleased] — toward **0.0.3_pre1** (Plasma KCM + session)
 
-(nothing yet)
+Branch: `feature/plasma-kcm-powerdevil`. Design:
+[`README.plasma.md`](README.plasma.md). **UX581 lightbar not in this RC** (no
+hardware). Typing-inhibit polish continues in parallel on the operator machine.
+
+### Added
+
+- **`platform-session`:** per-user `session.json` orchestrator for sleep/resume/
+  hibernate actions; presentation inhibit outside plasmashell; optional QSG check.
+- **`kcm_zenbook_platform`:** Plasma 6 System Settings module (Overview / Duo /
+  Sleep·Resume / About) — install via `plasma/kcm/build.sh`.
+- **Packaging scaffolds:** Gentoo `USE=plasma`; Debian `packaging/debian/`;
+  Alpine `packaging/alpine/` (APK smoke-tested on cast04).
+
+### Fixed (UX8406 Bluetooth / Duo layout)
+
+- **BT keyboard dead keys:** oot `hid-asus` no longer applies the broken
+  Usage(76h) rdesc fixup on `0b05:1b2d` (probe used to fail → touchpad only).
+- **Typing-inhibit:** rescan keyboard nodes so late BT attach is seen.
+- **`platform-duo-dock`:** enable/disable lower `eDP-2` on USB pogo add/remove;
+  save/restore backlight; restack after enable (avoid kscreen 0,0 clone).
+- **`platform-bt-fn-row`:** userspace Mode B → policy-7-ish Fn-row; RFKILL;
+  session D-Bus from plasmashell environ for helpers.
+- **`platform-screen-swap`:** layout + window exchange (KWin); Fn+F8.
+- **`platform-probe`:** Duo keyboard (Bluetooth) health line.
 
 ## [0.0.2] — 2026-07-21
 

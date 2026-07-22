@@ -1,0 +1,28 @@
+Source: zenbook-scripts
+Section: utils
+Priority: optional
+Maintainer: f0xx <noreply@users.noreply.github.com>
+Build-Depends: debhelper-compat (= 12)
+Standards-Version: 4.6.2
+Rules-Requires-Root: no
+Homepage: https://github.com/f0xx/zenbook_scripts
+Vcs-Browser: https://github.com/f0xx/zenbook_scripts
+Vcs-Git: https://github.com/f0xx/zenbook_scripts.git
+
+Package: zenbook-scripts
+Architecture: all
+Depends: ${misc:Depends},
+         python3 (>= 3.8),
+         dmidecode
+Recommends: python3-usb,
+            systemd | elogind,
+            acpid
+Description: ASUS ZenBook Duo keyboard and platform utilities
+ CLI tools for ASUS ZenBook Duo / Pro Duo laptops: keyboard brightness,
+ hotkeys, platform profile, ScreenPad, fan control, and sleep/resume hooks.
+ .
+ This package installs userspace scripts only. The optional out-of-tree
+ hid-asus kernel module is not built here; see kernel/README.md upstream.
+ .
+ Plasma 6 System Settings integration (KCM) is not included in this binary;
+ build plasma/kcm separately on Ubuntu 24.04+ (see packaging/debian/README.md).

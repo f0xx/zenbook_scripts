@@ -22,14 +22,15 @@ Status legend: **done** · **now** · **next** · **later**
 | Touchpad palm filter MVP | **done** | per-device profiles + Qt6 tuner; UX8406 primary |
 | Touchpad typing-inhibit + soft-accel | **done** | shipped in **0.0.2** |
 | Package / announce **0.0.2** | **done** | tag + published release + Gentoo Manifest/ebuild |
-| Plasma resume hooks + sleep policies | **next** | per-user save/restore profiles |
-| Ubuntu `.deb` + packaging checks | **later** | after 0.0.2; Ubuntu access / install verification |
-| Alpine `apk` + packaging rules | **later** | after 0.0.2; Alpine install checks |
+| Plasma KCM + PowerDevil / session | **now** (RC draft) | `platform-session` + KCM MVP + packaging scaffolds; tag `v0.0.3_pre1` |
+| Ubuntu `.deb` + packaging checks | **later** | Ubuntu access / install verification |
+| Alpine `apk` + packaging rules | **later** | Alpine install checks |
 | UX5400 WM/DE annoyance (TBD) | **later** | palm OK; separate Plasma/WM issue — describe when ready |
-| UX581 lightbar (HID `0b05:0124`) | **later** | no hardware on hand; side branch when accessible |
+| UX8406 dual-eDP touch jump (Plasma/Wayland) | **later** | touch on lower panel warps cursor to primary — likely KWin, not our filter |
+| Touchpad GUI calibrate (capture → knobs) | **now** | MVP Calibrate… in tuner; deepen for BT palm parasites |
+| UX581 lightbar (HID `0b05:0124`) | **later** | **blocked on hardware**; side branch `zenbook_ux581` — **not in 0.0.3_pre1** |
 | UX5400 AccelSpeed polish | **later** | same pipeline; lower priority than UX8406 |
 | Generic non-ASUS fan backends | **later** | thinkpad/hp/dell hwmon profiles |
-| Full Plasma KCModule | **later** | optional; tray first |
 
 ### Field check — UX5400EA (`feature/epp-rapl-touchpad`)
 
@@ -55,15 +56,15 @@ platform-touchpad-gui
 sudo platform-touchpad run --device '<stable-key>'
 ```
 
-## After **0.0.2** (prep next)
+## After **0.0.2** — next RC (`feature/plasma-kcm-powerdevil`)
 
 | # | Track | Intent |
 |---|--------|--------|
-| 3.1 | **Plasma resume / sleep policy** | Resume watcher; sleep/hibernate/resume **configurable** policies; save/restore per **user profiles**. Presentation-mode inhibit survives `plasmashell --replace` (hold outside plasmashell). See operator note on Plasma 6.6 QSG leaks. |
-| 3.2 | **Ubuntu / Debian** | Ship `.deb`; Ubuntu access; packaging + installation checks (not just from-source README). |
+| 3.1 | **Plasma KCM + PowerDevil / session** | **One shot:** System Settings KCModule + resume watcher; sleep/hibernate/resume **configurable** per-user profiles; presentation-mode inhibit held **outside** plasmashell so `plasmashell --replace` does not drop it. Design: [`README.plasma.md`](README.plasma.md). |
+| 3.2 | **Ubuntu / Debian** | Ship `.deb`; Ubuntu access; packaging + installation checks. |
 | 3.3 | **Alpine** | `apk` recipe; Alpine install checks; packaging rules for musl / OpenRC-native layout. |
-| 3.4 | **UX5400 WM/DE** | Palm path looks fine; separate annoying behaviour (Plasma vs whole WM/DE) — details TBD by hardware owner. |
-| 3.5 | **UX581 lightbar** | Still **no hardware on hand**. Blind research OK on side branch (`zenbook_ux581`); install + test when device returns. Path: ACPI ALED / HID `0b05:0124` feature report `0x20` — not Aura USB. |
+| 3.4 | **UX5400 WM/DE** | Palm path looks fine; separate annoying behaviour — details TBD. |
+| 3.5 | **UX581 lightbar** | Still **no hardware on hand**. Side branch `zenbook_ux581`; test when device returns. |
 
 ## Gentoo USE mapping
 
@@ -108,7 +109,8 @@ platform-probe ──────────────► install decisions (
                     │         └─ per-device touchpad.json v2
                     │
                     └─► (done) announced 0.0.2
-                              └─► (next) Plasma resume · .deb · apk · UX581
+                              └─► (now) Plasma KCM + session/PowerDevil
+                              └─► (later) .deb · apk · UX581
 
 screenpad* / zenbook-screenpad (oneshot)     UX5400 only
 screenpad-sync (daemon)                      optional brightness mirror

@@ -1,0 +1,21 @@
+# UX8406 Duo — lower eDP on/off when Primax keyboard docks on pogo pins.
+#
+# USB 0b05:1b2c add  → docked  → disable eDP-2 (under keyboard)
+# USB 0b05:1b2c remove → undocked → enable eDP-2 + restack
+#
+# Install:
+#   sudo cp bin/platform-duo-dock /usr/bin/
+#   sudo cp contrib/udev/zenbook-duo-dock-udev /usr/libexec/
+#   sudo chmod +x /usr/bin/platform-duo-dock /usr/libexec/zenbook-duo-dock-udev
+#   sudo cp contrib/udev/99-zenbook-duo-dock.rules /etc/udev/rules.d/
+#   sudo udevadm control --reload-rules
+
+ACTION=="add", SUBSYSTEM=="usb", ATTR{idVendor}=="0b05", ATTR{idProduct}=="1b2c", \
+  RUN+="/usr/libexec/zenbook-duo-dock-udev docked"
+
+# On remove, ATTR* is gone — match ENV from usb_id / PRODUCT (b05/1b2c/...).
+ACTION=="remove", SUBSYSTEM=="usb", ENV{ID_VENDOR_ID}=="0b05", ENV{ID_MODEL_ID}=="1b2c", \
+  RUN+="/usr/libexec/zenbook-duo-dock-udev undocked"
+
+ACTION=="remove", SUBSYSTEM=="usb", ENV{PRODUCT}=="b05/1b2c/*", \
+  RUN+="/usr/libexec/zenbook-duo-dock-udev undocked"
