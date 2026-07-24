@@ -1,0 +1,71 @@
+#!/usr/bin/env bash
+# Restore ACPI platform_profile (+ optional fan pwm mode) after boot/hibernate.
+# Intended for systemd/OpenRC oneshot. No-op when no saved state exists.
+
+set -euo pipefail
+
+zenbook_kb_find_root() {
+	local here candidate
+
+	here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+	if [[ -f "${here}/../lib/platform_profile.sh" ]]; then
+		echo "$(cd "${here}/.." && pwd)"
+		return 0
+	fi
+
+	for candidate in \
+		/usr/share/zenbook-scripts \
+		/usr/local/share/zenbook-scripts \
+		"${here}/.." \
+		"${here}"; do
+		[[ -d "${candidate}" ]] || continue
+		candidate="$(cd "${candidate}" && pwd)"
+		if [[ -f "${candidate}/lib/platform_profile.sh" ]]; then
+			echo "${candidate}"
+			return 0
+		fi
+	done
+
+	echo "zenbook-scripts lib/platform_profile.sh not found" >&2
+	return 1
+}
+
+SCRIPT_DIR="$(zenbook_kb_find_root)"
+# shellcheck source=lib/platform_profile.sh
+source "${SCRIPT_DIR}/lib/platform_profile.sh"
+# shellcheck source=lib/fan.sh
+source "${SCRIPT_DIR}/lib/fan.sh"
+
+MODE="${PLATFORM_PROFILE_BOOT_MODE:-restore}"  # restore|skip
+
+if [[ "${MODE}" == "skip" ]]; then
+	echo "platform-profile-boot: skip"
+	exit 0
+fi
+
+restored=0
+if zenbook_platform_profile_present; then
+	if want="$(zenbook_platform_profile_state_read 2>/dev/null)"; then
+		if zenbook_platform_profile_restore; then
+			echo "platform-profile-boot: profile=${want}"
+			restored=1
+		fi
+	else
+		echo "platform-profile-boot: no saved platform_profile"
+	fi
+else
+	echo "platform-profile-boot: platform_profile sysfs absent — skip"
+fi
+
+if zenbook_fan_present 2>/dev/null; then
+	if pwm="$(zenbook_fan_pwm_state_read 2>/dev/null)"; then
+		if zenbook_fan_pwm_restore; then
+			echo "platform-profile-boot: pwm=${pwm}"
+			restored=1
+		fi
+	fi
+fi
+
+if (( restored == 0 )); then
+	echo "platform-profile-boot: nothing restored"
+fi

@@ -3,7 +3,7 @@
 Install paths and operator docs: [`DEPLOY.md`](../DEPLOY.md).
 This tree holds **maintainer / overlay recipes** per distro.
 
-There is **no public Gentoo overlay** and **no `.deb` package** yet.
+There is **no public Gentoo overlay**, **no published `.deb`**, and **no Alpine repo package** yet.
 Copy recipes into your own overlay or install from a release tarball / git checkout.
 
 ## Layout
@@ -17,7 +17,8 @@ Copy recipes into your own overlay or install from a release tarball / git check
 | [`gentoo/files/`](gentoo/files/) | Conditional UX8406 patches + README (no prebuilt `.ko`) |
 | [`gentoo/Manifest`](gentoo/Manifest) | Distfile digests for `0.0.1_hf1` + `0.0.2_pre1` + `0.0.2` |
 | [`gentoo/metadata.xml`](gentoo/metadata.xml) | USE flag / upstream metadata |
-| [`debian/README.md`](debian/README.md) | Debian/Ubuntu from-source install (no `.deb` yet) |
+| [`debian/`](debian/) | **debhelper scaffold** — CLI-first `.deb` (not published) |
+| [`alpine/APKBUILD`](alpine/APKBUILD) | Alpine abuild recipe (not published) |
 
 ### Release `v0.0.2`
 
@@ -274,18 +275,39 @@ rewrites packaged unit/helper scripts to `/usr` and does **not** run
 | `screenpad` | off | ScreenPad CLI + udev + services (UX5400) |
 | `kernel` | on | Build oot `hid-asus` from sources + OpenRC sideload (fail-closed; `ZENBOOK_KERNEL_FORCE=1` for risky KV) |
 | `qt6` | off | `configure_gui.py` + `platform-tray` (PySide6) |
+| `plasma` | off | `platform-session`, sleep hook, `session.json.example`, Plasma docs (KCM via `plasma/kcm/build.sh`) |
 | `zenbook_ux8406` | on | Install `conf.d/UX8406*` profiles |
 
 **Always** (RDEPEND): `sys-apps/dmidecode` (UX8406 `fn_row_policy=7` auto-set). Metrics use Python **stdlib sqlite3** (no extra dep).
 
 ## Debian / Ubuntu
 
-No `.deb` or PPA yet — see [`debian/README.md`](debian/README.md) for a from-source path (`configure.py` + optional kernel module).
+**Draft `.deb` scaffold** (not published): [`debian/`](debian/) — symlink to repo root and
+`dpkg-buildpackage -us -uc -b`. CLI-first on **Focal 20.04+** (`python3 >= 3.8`); Plasma KCM
+optional on **24.04+** via `plasma/kcm/build.sh`. See [`debian/README.md`](debian/README.md).
+
+```bash
+cd /path/to/zenbook_scripts
+ln -snf packaging/debian debian
+sudo apt install -y debhelper-compat devscripts
+dpkg-buildpackage -us -uc -b
+```
+
+## Alpine
+
+**Draft APKBUILD** (not published): [`alpine/APKBUILD`](alpine/APKBUILD). Reuses
+`debian/install.sh` in `package()`. See [`alpine/README.md`](alpine/README.md).
+
+```sh
+cd packaging/alpine
+abuild -r -P "$HOME/packages"
+```
 
 ## Planned
 
 - Official public Gentoo overlay
-- `debian/` debhelper + DKMS
+- Published `.deb` / PPA and Alpine aports submission
+- DKMS for `hid-asus`
 - Arch `PKGBUILD`, Nix flake
 
 ## Upstream

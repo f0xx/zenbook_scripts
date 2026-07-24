@@ -280,6 +280,8 @@ to extra users.
 |-------|----------------|
 | CLI | `/usr/local/bin/screenpad`, `screenpad-boot`, `screenpad-sync`, `kb-platform-profile` |
 | Last brightness | `/var/lib/zenbook-scripts/screenpad-brightness` |
+| Last platform_profile | `/var/lib/zenbook-scripts/platform-profile` |
+| Last fan pwm mode | `/var/lib/zenbook-scripts/fan-pwm-enable` |
 | udev | `/etc/udev/rules.d/99-zenbook-screenpad.rules` (`video` group write) |
 | Boot oneshot | OpenRC `zenbook-screenpad` / systemd `zenbook-screenpad.service` |
 | Brightness sync | OpenRC `zenbook-screenpad-sync` / systemd `zenbook-screenpad-sync.service` |

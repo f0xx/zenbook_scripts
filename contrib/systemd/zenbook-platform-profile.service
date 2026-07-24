@@ -1,0 +1,15 @@
+[Unit]
+Description=Zenbook platform_profile / fan PWM boot restore
+Documentation=https://github.com/f0xx/zenbook_scripts
+After=systemd-modules-load.service
+Before=display-manager.service
+
+[Service]
+Type=oneshot
+Environment=PLATFORM_PROFILE_BOOT_MODE=restore
+# Prefer /usr/bin (packaged); fall back to /usr/local/bin (configure.py).
+ExecStart=/bin/sh -c 'for c in /usr/bin/platform-profile-boot /usr/local/bin/platform-profile-boot; do [ -x "$c" ] && exec "$c"; done; exit 0'
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

@@ -7,13 +7,17 @@
 #   kb-calibrate-hotkeys              Full F1–F10 + Fn+ walkthrough
 #   kb-calibrate-hotkeys --quick      F1–F4 only (good first pass)
 #   kb-calibrate-hotkeys --dual-fn-lock --quick   # fn-lock A+B → union conf
+#   kb-calibrate-hotkeys --fn-row-matrix --transport bluetooth --quick
+#       Meta×Fn×F matrix vs policy=7 (stops platform-bt-fn-row for raw capture)
+#   kb-calibrate-hotkeys --fn-row-matrix --keep-remapper --transport bluetooth
+#       Same matrix with remapper left on (verify invert)
 #
 # Stop the hotkey listener first:
 #   sudo rc-service zenbook-kb-hotkeys stop
 #
 # Output: ~/.config/zenbook-scripts/calibration/<board>.json
 #         ~/.config/zenbook-scripts/calibration/<board>-suggested.conf
-
+#         ~/.config/zenbook-scripts/calibration/<board>-fn-row-*.md  (matrix mode)
 set -euo pipefail
 
 zenbook_kb_find_root() {
@@ -24,11 +28,15 @@ zenbook_kb_find_root() {
         echo "$(cd "${here}/.." && pwd)"
         return 0
     fi
+    if [[ -f /usr/share/zenbook-scripts/zenbook_kb/calibrate.py ]]; then
+        echo /usr/share/zenbook-scripts
+        return 0
+    fi
     if [[ -f /usr/local/share/zenbook-scripts/zenbook_kb/calibrate.py ]]; then
         echo /usr/local/share/zenbook-scripts
         return 0
     fi
-    echo "zenbook_kb/calibrate.py not found" >&2
+    echo "zenbook_kb/calibrate.py not found (tried repo, /usr/share, /usr/local/share)" >&2
     return 1
 }
 

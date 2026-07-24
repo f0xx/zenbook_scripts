@@ -1,0 +1,3 @@
+# restore = apply /var/lib/zenbook-scripts/platform-profile (+ fan-pwm-enable)
+# skip    = no-op at boot
+PLATFORM_PROFILE_BOOT_MODE="restore"

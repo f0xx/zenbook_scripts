@@ -12,6 +12,7 @@ On startup the live toggle reflects whether that process is already running.
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import signal
@@ -82,6 +83,7 @@ from zenbook_kb.touchpad import (  # noqa: E402
     load_config,
     normalize_config,
     normalize_soft_accel_mode,
+    pick_default_device,
     save_config,
     upsert_device_profile,
 )
@@ -343,11 +345,13 @@ class TouchpadTuner(QMainWindow):
         self.btn_monitor = QPushButton("Start monitor")
         self.btn_live = QPushButton("Start live filter")
         self.btn_stop = QPushButton("Stop monitor")
+        self.btn_calibrate = QPushButton("Calibrate…")
         self.btn_save = QPushButton("Save config")
         self.btn_reset = QPushButton("Reset stats")
         btns.addWidget(self.btn_monitor)
         btns.addWidget(self.btn_live)
         btns.addWidget(self.btn_stop)
+        btns.addWidget(self.btn_calibrate)
         btns.addWidget(self.btn_save)
         btns.addWidget(self.btn_reset)
         layout.addLayout(btns)
@@ -370,6 +374,7 @@ class TouchpadTuner(QMainWindow):
         self.btn_monitor.clicked.connect(self.start_monitor)
         self.btn_live.clicked.connect(self.toggle_live)
         self.btn_stop.clicked.connect(self.stop_monitor)
+        self.btn_calibrate.clicked.connect(self.run_calibrate)
         self.btn_save.clicked.connect(lambda: self.save_config(silent=False))
         self.btn_reset.clicked.connect(self.reset_stats)
 
@@ -378,12 +383,40 @@ class TouchpadTuner(QMainWindow):
         self._timer.timeout.connect(self._refresh_stats)
         self._timer.start()
 
-        if self._pads:
+        # Prefer detachable keyboard touchpad (USB/BT) over chassis ELAN pads.
+        start = self._preferred_pad()
+        if start is not None:
+            idx = next(
+                (i for i, p in enumerate(self._pads) if p.key == start.key),
+                0,
+            )
+            self.device_box.blockSignals(True)
+            self.device_box.setCurrentIndex(idx)
+            self.device_box.blockSignals(False)
+            self._load_knobs_for(start, persist_previous=False)
+        elif self._pads:
             self._load_knobs_for(self._pads[0], persist_previous=False)
 
         # Adopt any already-running live filter (e.g. previous GUI session).
         self._adopt_existing_live()
         self._sync_live_button()
+
+    def _preferred_pad(self) -> TouchpadInfo | None:
+        """Match CLI auto: cfg default_device, else ``*Keyboard Touchpad*``."""
+        if not self._pads:
+            return None
+        pref = (self._cfg or {}).get("default_device") or "auto"
+        if pref and pref not in ("auto", ""):
+            for pad in self._pads:
+                if pad.key == pref:
+                    return pad
+        path = pick_default_device(self._pads)
+        if path is None:
+            return self._pads[0]
+        for pad in self._pads:
+            if pad.path == path:
+                return pad
+        return self._pads[0]
 
     def _current_info(self) -> TouchpadInfo | None:
         data = self.device_box.currentData()
@@ -633,6 +666,136 @@ class TouchpadTuner(QMainWindow):
         self._rebuild_pipe()
         self._worker = MonitorWorker(info.path, self._pipe, self._shared)
         self._worker.start()
+
+    def run_calibrate(self) -> None:
+        """Capture ~20s of real motion while typing; suggest knobs from drop rates."""
+        import tempfile
+        import time as _time
+
+        cli = _which_touchpad_cli()
+        if not cli:
+            QMessageBox.warning(self, "Missing CLI", "platform-touchpad not found.")
+            return
+        info = self._current_info()
+        if info is None:
+            QMessageBox.warning(self, "No device", "No touchpad selected.")
+            return
+
+        seconds = 20
+        reply = QMessageBox.question(
+            self,
+            "Calibrate palm filters",
+            f"For the next {seconds}s, type normally and rest palms lightly on the "
+            f"pad as you would when working.\n\n"
+            f"Device: {info.name}\n\n"
+            f"Start capture?",
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        self.stop_monitor()
+        out = Path(tempfile.gettempdir()) / f"zenbook-tp-calibrate-{int(_time.time())}.jsonl"
+        cmd = [
+            cli,
+            "capture",
+            "--config",
+            str(self._cfg_path),
+            "--device",
+            info.key,
+            "--seconds",
+            str(seconds),
+            "-o",
+            str(out),
+            "-q",
+        ]
+        QMessageBox.information(
+            self,
+            "Capturing…",
+            f"Capture running ({seconds}s).\nType and rest palms on the pad.\n\n"
+            f"Log: {out}",
+        )
+        try:
+            proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
+        except OSError as exc:
+            QMessageBox.warning(self, "Calibrate failed", str(exc))
+            return
+        if proc.returncode != 0:
+            QMessageBox.warning(
+                self,
+                "Calibrate failed",
+                (proc.stderr or proc.stdout or f"exit {proc.returncode}")[:800],
+            )
+            return
+
+        frames = drops = outlier = delay = typing_armed = 0
+        by: dict[str, int] = {}
+        try:
+            for line in out.read_text(encoding="utf-8").splitlines():
+                if not line.strip():
+                    continue
+                rec = json.loads(line)
+                if rec.get("kind") == "meta":
+                    continue
+                frames += 1
+                if rec.get("typing_armed"):
+                    typing_armed += 1
+                if not rec.get("passed"):
+                    drops += 1
+                    reason = str(rec.get("dropped_by") or "unknown")
+                    by[reason] = by.get(reason, 0) + 1
+                    if "outlier" in reason:
+                        outlier += 1
+                    if "exec_delay" in reason or "delay" in reason:
+                        delay += 1
+        except (OSError, json.JSONDecodeError) as exc:
+            QMessageBox.warning(self, "Calibrate parse", str(exc))
+            return
+
+        if frames == 0:
+            QMessageBox.warning(self, "Calibrate", "No frames captured.")
+            return
+
+        drop_pct = 100.0 * drops / frames
+        # Heuristics: too many outlier drops → raise max_delta; too many delay drops → shorten delay
+        sug_delta = int(self.delta_spin.value())
+        sug_delay = int(self.delay_spin.value())
+        sug_win = int(self.typing_spin.value())
+        notes: list[str] = []
+        if outlier >= max(5, frames * 0.05):
+            sug_delta = min(5000, max(sug_delta + 400, int(sug_delta * 1.4)))
+            notes.append(f"Many outlier drops ({outlier}) → raise max_delta to {sug_delta}")
+        if delay >= max(5, frames * 0.08):
+            sug_delay = max(5, sug_delay - 10)
+            notes.append(f"Many exec_delay drops ({delay}) → lower delay to {sug_delay} ms")
+        if typing_armed > frames * 0.7 and drop_pct > 40:
+            sug_win = max(100, sug_win - 100)
+            notes.append(
+                f"Armed most of the time with high drop rate → shorten typing window to {sug_win} ms"
+            )
+        if not notes:
+            notes.append("Drop rate looks moderate — keep current knobs or retune manually.")
+
+        summary = (
+            f"frames={frames} dropped={drops} ({drop_pct:.1f}%) "
+            f"typing_armed={typing_armed}\n"
+            f"by filter: {by or '{}'}\n\n"
+            + "\n".join(f"• {n}" for n in notes)
+            + f"\n\nApply suggestions?\n  max_delta={sug_delta}  delay={sug_delay} ms  "
+            f"typing_window={sug_win} ms"
+        )
+        apply = QMessageBox.question(self, "Calibrate results", summary)
+        if apply != QMessageBox.StandardButton.Yes:
+            return
+        self.delta_spin.setValue(sug_delta)
+        self.delay_spin.setValue(sug_delay)
+        self.typing_spin.setValue(sug_win)
+        self._rebuild_pipe()
+        self.save_config(silent=True)
+        QMessageBox.information(
+            self,
+            "Calibrate",
+            f"Knobs applied and saved for this device.\nJSONL kept at:\n{out}",
+        )
 
     def stop_monitor(self) -> None:
         if self._worker is not None:

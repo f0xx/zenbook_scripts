@@ -113,6 +113,15 @@ _fan_hook() {
         fi
     done
     if [[ -z "${hook}" ]]; then
+        # No fan-control hook installed — still restore saved platform_profile.
+        if [[ "${verb}" == "post" || "${verb}" == "lid-open" ]]; then
+            for c in /usr/bin/platform-fan /usr/local/bin/platform-fan; do
+                if [[ -x "${c}" ]]; then
+                    "${c}" restore >/dev/null 2>&1 || true
+                    break
+                fi
+            done
+        fi
         return 0
     fi
     "${hook}" "${verb}" >/dev/null 2>&1 || true

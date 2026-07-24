@@ -1,0 +1,23 @@
+{
+    "KPlugin": {
+        "Authors": [
+            {
+                "Email": "",
+                "Name": "zenbook_scripts contributors"
+            }
+        ],
+        "Description": "ASUS ZenBook platform tools: probe, Duo dock, sleep/resume policies",
+        "FormFactors": [
+            "desktop",
+            "tablet"
+        ],
+        "Icon": "computer-laptop",
+        "License": "GPL",
+        "Name": "ZenBook Platform",
+        "Version": "0.0.3",
+        "Website": "https://github.com/f0xx/zenbook_scripts"
+    },
+    "X-KDE-Keywords": "zenbook,asus,duo,dock,plasmashell,sleep,resume,presentation,platform",
+    "X-KDE-System-Settings-Parent-Category": "display",
+    "X-KDE-Weight": 60
+}

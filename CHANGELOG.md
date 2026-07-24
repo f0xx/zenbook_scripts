@@ -5,9 +5,43 @@ based on [Keep a Changelog](https://keepachangelog.com/). Version tags follow
 Gentoo-friendly naming where needed (`v0.0.1_hf1` → PV `0.0.1_p1`,
 `v0.0.2_pre1` → PV `0.0.2_pre1`).
 
-## [Unreleased]
+## [0.0.3] — 2026-07-24
 
-(nothing yet)
+Tag: [`v0.0.3`](https://github.com/f0xx/zenbook_scripts/releases/tag/v0.0.3).
+Gentoo PV: `0.0.3`. Draft precursor: `v0.0.3_pre1`.
+
+### Added
+
+- **`platform-session`:** per-user `session.json` orchestrator for sleep/resume/
+  hibernate; presentation inhibit outside plasmashell; optional QSG check.
+- **`kcm_zenbook_platform`:** Plasma 6 System Settings module (Overview / Duo /
+  Sleep·Resume / About) — install via `plasma/kcm/build.sh` (KF6/Qt6; Gentoo
+  primary — Ubuntu 24.04 Noble has no KF6 in archive).
+- **`platform-profile` persistence:** last explicit CLI profile/PWM saved under
+  `/var/lib/zenbook-scripts/`; `platform-profile-boot` + OpenRC/systemd oneshot
+  restore after reboot/hibernate; resume hooks restore before adaptive
+  fan-control re-evaluates (daemon writes sysfs only).
+- **Packaging:** Gentoo `USE=plasma`; Debian CLI `.deb` (smoke-built on Ubuntu
+  24.04 Server); Alpine APK (smoke-tested on cast04).
+
+### Fixed (UX8406 Bluetooth / Duo layout)
+
+- **BT keyboard dead keys:** oot `hid-asus` no longer applies the broken
+  Usage(76h) rdesc fixup on `0b05:1b2d` (probe used to fail → touchpad only).
+- **Typing-inhibit:** rescan keyboard nodes so late BT attach is seen.
+- **`platform-duo-dock`:** enable/disable lower `eDP-2` on USB pogo add/remove;
+  save/restore backlight; restack after enable (avoid kscreen 0,0 clone).
+- **`platform-bt-fn-row`:** userspace Mode B → policy-7-ish Fn-row; RFKILL;
+  session D-Bus from plasmashell environ for helpers.
+- **`platform-screen-swap`:** layout + window exchange (KWin); Fn+F8.
+- **`platform-probe`:** Duo keyboard (Bluetooth) health line.
+- **Debian packaging:** resolve `debian/` → `packaging/debian` symlink for
+  `REPO_ROOT`; drop duplicate `debhelper-compat` / `debian/compat`.
+
+### Out of scope
+
+- **UX581 lightbar** — no hardware; stays on `zenbook_ux581`.
+- Typing-inhibit palm polish (USB/BT) — continues in parallel.
 
 ## [0.0.2] — 2026-07-21
 
@@ -54,11 +88,3 @@ Gentoo PV: `0.0.2_pre1`.
 - `platform-probe`, `platform-power` (EPP/RAPL), Qt6 `platform-tray`.
 - Touchpad palm-filter MVP + per-device `touchpad.json` v2.
 - UX5400 field validation for fan/tray; ScreenPad oneshot stop fix.
-
-## [0.0.1_p1] — 2026-07-19
-
-Hotfix release. Tag: [`v0.0.1_hf1`](https://github.com/f0xx/zenbook_scripts/releases/tag/v0.0.1_hf1)
-(Gentoo PV `0.0.1_p1` — `_hf` is not a legal PMS suffix).
-
-- UX8406 oot `hid-asus` docked Fn-row / backlight path.
-- Hotkeys, brightness sleep/lid hooks, packaging baseline.

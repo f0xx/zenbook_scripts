@@ -7,7 +7,15 @@ kb-platform-profile get
 kb-platform-profile list          # quiet balanced performance
 kb-platform-profile set balanced
 kb-platform-profile cycle         # quiet → balanced → performance → …
+kb-platform-profile save|saved|restore
 ```
+
+**Persistence:** explicit `set`/`cycle` writes
+`/var/lib/zenbook-scripts/platform-profile`. Boot oneshot
+`platform-profile-boot` / `zenbook-platform-profile` restores after reboot or
+hibernate. Resume hooks restore before adaptive fan-control re-evaluates.
+Adaptive `platform-fan-control` writes sysfs only (does not overwrite saved
+choice). Optional PWM: `/var/lib/zenbook-scripts/fan-pwm-enable`.
 
 ## `platform-fan` — implemented (was `kb-fan`)
 
@@ -168,6 +176,8 @@ ramps toward `gain` on larger per-frame deltas (`pivot`, default 40).
 platform-touchpad list                 # shows stable key=
 platform-touchpad status
 platform-touchpad selftest
+platform-touchpad capture -o /tmp/tp.jsonl --seconds 30
+# /usr/share/zenbook-scripts/contrib/scripts/touchpad-capture-analyze.sh /tmp/tp.jsonl
 platform-touchpad-gui                  # USE=qt6 / PySide6; also from platform-tray
 ```
 
@@ -220,6 +230,21 @@ Example: `contrib/modprobe/zenbook-hid-asus.conf` → `/etc/modprobe.d/`
 - `contrib/acpi/` — acpid lid/sleep events (fallback when acpid owns lid)
 - `bin/kb-brightness-lid-watch` + `contrib/openrc/zenbook-kb-lid` — **elogind** `LidClosed` (UX8406MA default)
 - `bin/snapshot-plan-state` — labelled config backups before milestones
+
+---
+
+## Plasma KCM + PowerDevil / session — in progress
+
+Branch: **`feature/plasma-kcm-powerdevil`**. Full design: [`README.plasma.md`](README.plasma.md).
+
+One shot for next RC:
+
+1. **KCModule** — System Settings UI (Overview / Touchpad / Thermal link / Sleep·Resume)
+2. **`platform-session`** — per-user `session.json` profiles; sleep/hibernate/resume actions
+3. **Presentation inhibit** held outside plasmashell (survives `--replace`)
+4. Optional QSG-thread watch (default off)
+
+Scaffold: `plasma/session.json.example`. Tray remains the quick thermal surface.
 
 ---
 

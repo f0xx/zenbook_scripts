@@ -13,7 +13,7 @@ LICENSE="GPL-2+"
 SLOT="0"
 KEYWORDS=""
 
-IUSE="+fan_control +hotkeys +kernel qt6 screenpad +zenbook_ux8406"
+IUSE="+fan_control +hotkeys +kernel plasma qt6 screenpad +zenbook_ux8406"
 REQUIRED_USE="kernel? ( zenbook_ux8406 )"
 
 RDEPEND="
@@ -29,6 +29,9 @@ RDEPEND="
 		virtual/udev
 	)
 	qt6? ( dev-python/pyside:6 )
+	plasma? (
+		sys-auth/elogind
+	)
 "
 # Build oot hid-asus against /usr/src/linux (gentoo-sources, …).
 # Avoid virtual/dist-kernel — it pulls gentoo-kernel and USE conflicts.
@@ -198,6 +201,7 @@ src_install() {
 
 	# User-facing CLIs
 	dobin configure.py configure.sh bin/kb-brightness bin/kb-platform-profile bin/platform-fan bin/platform-probe bin/platform-power bin/platform-touchpad bin/platform-metrics
+	dobin bin/platform-profile-boot
 	dobin bin/kb-fan
 	if use fan_control; then
 		dobin bin/platform-fan-control bin/kb-fan-control
@@ -213,6 +217,13 @@ src_install() {
 			bin/kb-calibrate-hotkeys \
 			bin/snapshot-plan-state
 	fi
+	if use hotkeys || use plasma; then
+		dobin \
+			bin/platform-session \
+			bin/platform-bt-fn-row \
+			bin/platform-duo-dock \
+			bin/platform-screen-swap
+	fi
 	if use fan_control; then
 		newbin contrib/openrc/zenbook-fan-control-hook.sh zenbook-fan-control-hook
 	fi
@@ -220,6 +231,21 @@ src_install() {
 		dobin configure_gui.py
 		dobin bin/platform-tray
 		dobin bin/platform-touchpad-gui
+	fi
+
+	if use plasma; then
+		insinto "${ZENBOOK_LIBEXEC}"
+		newins contrib/openrc/zenbook-platform-session-hook.sh zenbook-platform-session-hook
+		fperms 0755 "${ZENBOOK_LIBEXEC}/zenbook-platform-session-hook"
+
+		insinto /usr/lib/systemd/system-sleep
+		newins contrib/systemd/zenbook-platform-session zenbook-platform-session
+		fperms 0755 /usr/lib/systemd/system-sleep/zenbook-platform-session
+
+		insinto "${ZENBOOK_SHARE}/plasma"
+		doins plasma/session.json.example
+
+		dodoc README.plasma.md plasma/README.md
 	fi
 
 	if use hotkeys; then
@@ -251,6 +277,10 @@ src_install() {
 		newinitd contrib/openrc/zenbook-platform-fan-control zenbook-platform-fan-control
 		newconfd contrib/openrc/conf.d/zenbook-platform-fan-control zenbook-platform-fan-control
 		dosym zenbook-platform-fan-control /etc/init.d/zenbook-kb-fan-control
+		newinitd contrib/openrc/zenbook-platform-profile zenbook-platform-profile
+		newconfd contrib/openrc/conf.d/zenbook-platform-profile zenbook-platform-profile
+		insinto /etc/systemd/system
+		doins contrib/systemd/zenbook-platform-profile.service
 	fi
 
 	if use screenpad; then
@@ -312,6 +342,7 @@ pkg_postinst() {
 		elog "  sudo rc-update add zenbook-platform-fan-control default"
 		elog "  sudo rc-service zenbook-platform-fan-control start"
 		elog "  platform-probe && platform-fan-control check"
+		elog "  sudo rc-update add zenbook-platform-profile default  # persist platform_profile"
 		elog "UX8406: configure/install sets fn_row_policy=7 via dmidecode/sysfs."
 	fi
 
@@ -326,5 +357,15 @@ pkg_postinst() {
 	elif ! use kernel; then
 		elog "USE=-kernel: oot hid-asus not built. Docked UX8406 HID/backlight/fn-row"
 		elog "features are not guaranteed with mainline hid-asus alone."
+	fi
+
+	if use plasma; then
+		elog "Plasma session (USE=plasma):"
+		elog "  cp ${ZENBOOK_SHARE}/plasma/session.json.example \\"
+		elog "     ~/.config/zenbook-scripts/session.json"
+		elog "  Enable sleep hook: link or copy zenbook-platform-session to"
+		elog "  /usr/lib/systemd/system-sleep/ (installed when USE=plasma)."
+		elog "  KCModule (System Settings): build separately —"
+		elog "  cd plasma/kcm && ./build.sh --system (needs KF6/Qt6 dev packages)."
 	fi
 }

@@ -1,0 +1,47 @@
+#!/bin/sh
+# systemd sleep hook — install to /usr/lib/systemd/system-sleep/zenbook-platform-session
+# (alongside zenbook-kb-brightness; disable redundant hooks when session.json orchestrates all actions)
+#
+# Calls platform-session as the configured session user (ZENBOOK_SESSION_USER / command_user).
+
+set -eu
+
+SESSION_BIN=""
+for c in /usr/bin/platform-session /usr/local/bin/platform-session; do
+	if [ -x "${c}" ]; then
+		SESSION_BIN="${c}"
+		break
+	fi
+done
+if [ -z "${SESSION_BIN}" ]; then
+	exit 0
+fi
+
+_run() {
+	"${SESSION_BIN}" "$@" || true
+}
+
+case "$1/$2" in
+	pre/*)
+		case "$2" in
+		hibernate|hybrid-sleep|suspend-then-hibernate)
+			_run run hibernate
+			;;
+		*)
+			_run run sleep
+			;;
+		esac
+		;;
+	post/*)
+		case "$2" in
+		hibernate|hybrid-sleep|suspend-then-hibernate)
+			_run run hibernate-resume
+			;;
+		*)
+			_run run resume
+			;;
+		esac
+		;;
+esac
+
+exit 0

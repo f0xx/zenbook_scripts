@@ -1,42 +1,249 @@
 #!/usr/bin/env bash
-# Swap top/bottom (or left/right) positions of the two built-in Duo panels.
-# Used by Fn+F8 → KEY_F15 (hid-asus vendor 0x9c).
+# Swap top/bottom of the two built-in Duo panels (Fn+F8 → KEY_F15).
 #
-# Requires: kscreen-doctor (Plasma kscreen).
+# 1) Move normal windows eDP-1 ↔ eDP-2 (KWin) — apps stick to Output otherwise.
+# 2) Toggle stacked layout + priority (kscreen-doctor) — wallpapers / panes.
+#
+# KWin 6: window.output is read-only; maximizeMode often sticks for CSD apps.
+# We place by frameGeometry onto the other output (works when not stuck-max).
+#
+# Requires: kscreen-doctor, qdbus6. Root → seat0 user.
 
 set -euo pipefail
+
+UPPER="${ZENBOOK_DUO_UPPER:-eDP-1}"
+LOWER="${ZENBOOK_DUO_LOWER:-eDP-2}"
+
+seat_session_env() {
+	local uid="${1:-$(id -u)}"
+	local runtime="/run/user/${uid}"
+	export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-$runtime}"
+
+	# Prefer live plasmashell/kwin environ — Gentoo often has no $runtime/bus
+	# and ~/.dbus/session-bus/* can be stale (wrong /tmp/dbus-*).
+	_dbus_sock=""
+	if [[ -n "${DBUS_SESSION_BUS_ADDRESS:-}" ]]; then
+		_dbus_sock="${DBUS_SESSION_BUS_ADDRESS#unix:path=}"
+		_dbus_sock="${_dbus_sock%%,*}"
+	fi
+	if [[ -z "${_dbus_sock}" || ! -S "${_dbus_sock}" ]]; then
+		local pid key val
+		for proc in plasmashell kwin_wayland kwin_x11; do
+			pid="$(pgrep -u "$uid" -x "$proc" 2>/dev/null | head -1 || true)"
+			[[ -n "$pid" ]] || continue
+			[[ -r "/proc/${pid}/environ" ]] || continue
+			while IFS= read -r -d '' item; do
+				key="${item%%=*}"
+				val="${item#*=}"
+				case "$key" in
+					DBUS_SESSION_BUS_ADDRESS|WAYLAND_DISPLAY|DISPLAY|XDG_RUNTIME_DIR)
+						export "$key=$val"
+						;;
+				esac
+			done <"/proc/${pid}/environ"
+			[[ -n "${DBUS_SESSION_BUS_ADDRESS:-}" ]] && break
+		done
+	fi
+	unset _dbus_sock
+
+	if [[ -z "${DBUS_SESSION_BUS_ADDRESS:-}" && -S "${runtime}/bus" ]]; then
+		export DBUS_SESSION_BUS_ADDRESS="unix:path=${runtime}/bus"
+	fi
+	if [[ -z "${WAYLAND_DISPLAY:-}" ]]; then
+		local s
+		for s in "${runtime}"/wayland-*; do
+			[[ -S "$s" ]] || continue
+			export WAYLAND_DISPLAY="${s##*/}"
+			break
+		done
+	fi
+	if [[ -z "${DISPLAY:-}" ]]; then
+		if [[ -S /tmp/.X11-unix/X1 ]]; then
+			export DISPLAY=:1
+		elif [[ -S /tmp/.X11-unix/X0 ]]; then
+			export DISPLAY=:0
+		fi
+	fi
+}
+
+if [[ "$(id -u)" -eq 0 ]]; then
+	uid=""
+	user=""
+	if command -v loginctl >/dev/null 2>&1; then
+		read -r _uid_user < <(loginctl list-sessions --no-legend 2>/dev/null | awk '/seat0/ {print $2" "$3; exit}') || true
+		uid="${_uid_user%% *}"
+		user="${_uid_user#* }"
+		[[ "$uid" == "$user" ]] && user=""
+	fi
+	if [[ -n "${uid:-}" && "${uid}" != 0 && -n "${user:-}" ]]; then
+		export ZENBOOK_DUO_UID="$uid"
+		seat_session_env "$uid"
+		export HOME="$(getent passwd "$user" | cut -d: -f6)"
+		export USER="$user"
+		export LOGNAME="$user"
+		[[ -n "$HOME" ]] || export HOME="/home/${user}"
+		exec runuser -u "$user" --preserve-environment -- "$0" "$@"
+	fi
+fi
 
 if ! command -v kscreen-doctor >/dev/null 2>&1; then
 	echo "kscreen-doctor not found" >&2
 	exit 1
 fi
 
-# OpenRC hotkeys runs as the desktop user but often without a session bus.
-if [[ -z "${DBUS_SESSION_BUS_ADDRESS:-}" ]]; then
-	uid="$(id -u)"
-	if [[ -S "/run/user/${uid}/bus" ]]; then
-		export DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/${uid}/bus"
-	fi
+seat_session_env "$(id -u)"
+
+qdbus_bin=""
+if command -v qdbus6 >/dev/null 2>&1; then
+	qdbus_bin=qdbus6
+elif command -v qdbus >/dev/null 2>&1; then
+	qdbus_bin=qdbus
 fi
 
+# --- KWin: exchange windows between UPPER and LOWER (before layout flip) ---
+swap_windows_between_outputs() {
+	[[ -n "$qdbus_bin" ]] || {
+		echo "screen-swap: qdbus6 missing — apps not moved" >&2
+		return 0
+	}
+
+	local plugin="zenbook-screen-swap-$$"
+	local tmp
+	tmp="$(mktemp /tmp/zenbook-screen-swap-XXXXXX.js)"
+
+	cat >"$tmp" <<EOF
+(function() {
+    var upperName = "${UPPER}";
+    var lowerName = "${LOWER}";
+
+    function findOut(name) {
+        var s = workspace.screens;
+        for (var i = 0; i < s.length; ++i) {
+            if (s[i].name === name)
+                return s[i];
+        }
+        return null;
+    }
+
+    var upper = findOut(upperName);
+    var lower = findOut(lowerName);
+    if (!upper || !lower)
+        return;
+
+    var plan = [];
+    var wins = workspace.windowList();
+    for (var i = 0; i < wins.length; ++i) {
+        var win = wins[i];
+        if (!win.normalWindow || win.deleted)
+            continue;
+        if (!win.moveableAcrossScreens || !win.output)
+            continue;
+        if (String(win.resourceClass).indexOf("xwaylandvideobridge") >= 0)
+            continue;
+
+        var srcName = win.output.name;
+        var dst = null;
+        if (srcName === upperName)
+            dst = lower;
+        else if (srcName === lowerName)
+            dst = upper;
+        else
+            continue;
+
+        var sg = win.output.geometry;
+        var fg = win.frameGeometry;
+        plan.push({
+            win: win,
+            srcName: srcName,
+            dst: dst,
+            wasMax: (win.maximizeMode === 3),
+            relX: fg.x - sg.x,
+            relY: fg.y - sg.y,
+            w: fg.width,
+            h: fg.height
+        });
+    }
+
+    for (var i = 0; i < plan.length; ++i) {
+        var p = plan[i];
+        var win = p.win;
+        var dst = p.dst;
+        if (win.deleted)
+            continue;
+
+        workspace.activeWindow = win;
+        try { workspace.raiseWindow(win); } catch (e) {}
+
+        // Unmaximize so geometry is honored (CSD apps may ignore this).
+        if (p.wasMax) {
+            try { workspace.slotWindowMaximize(); } catch (e) {}
+            try { win.setMaximize(false, false); } catch (e) {}
+        }
+        try { if (win.tile) win.tile = null; } catch (e) {}
+
+        var dg = dst.geometry;
+        var nx = Math.round(dg.x + Math.max(0, Math.min(p.relX, dg.width - 100)));
+        var ny = Math.round(dg.y + Math.max(0, Math.min(p.relY, dg.height - 100)));
+        var nw = Math.round(Math.min(p.w, dg.width));
+        var nh = Math.round(Math.min(p.h, dg.height));
+
+        // Spatial slot toward destination (best for restored windows).
+        workspace.activeWindow = win;
+        try {
+            if (dg.y > win.output.geometry.y)
+                workspace.slotWindowToBelowScreen();
+            else if (dg.y < win.output.geometry.y)
+                workspace.slotWindowToAboveScreen();
+            else
+                workspace.slotWindowToNextScreen();
+        } catch (e) {}
+
+        // Always force geometry onto destination (slots alone are unreliable).
+        try {
+            win.frameGeometry = { x: nx, y: ny, width: nw, height: nh };
+        } catch (e) {}
+
+        if (p.wasMax) {
+            workspace.activeWindow = win;
+            try { workspace.slotWindowMaximize(); } catch (e) {}
+            try { win.setMaximize(true, true); } catch (e) {}
+        }
+    }
+})();
+EOF
+
+	local id
+	id="$("$qdbus_bin" org.kde.KWin /Scripting org.kde.kwin.Scripting.loadScript "$tmp" "$plugin" 2>/dev/null || true)"
+	if [[ -z "${id:-}" || ! "$id" =~ ^[0-9]+$ ]]; then
+		rm -f "$tmp"
+		echo "screen-swap: KWin loadScript failed — apps not moved" >&2
+		return 0
+	fi
+	"$qdbus_bin" org.kde.KWin "/Scripting/Script${id}" org.kde.kwin.Script.run >/dev/null 2>&1 || true
+	"$qdbus_bin" org.kde.KWin /Scripting org.kde.kwin.Scripting.unloadScript "$plugin" >/dev/null 2>&1 || true
+	rm -f "$tmp"
+	echo "screen-swap: windows exchanged ${UPPER} ↔ ${LOWER}"
+}
+
+# --- kscreen layout toggle ---
 mapfile -t lines < <(kscreen-doctor -o 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g')
 
-declare -a names=()
-declare -a xs=()
-declare -a ys=()
-declare -a enabled=()
+declare -A x_of=() y_of=() h_of=() en_of=() prio_of=()
 
 cur=""
 cur_x=0
 cur_y=0
+cur_h=0
 cur_en=0
+cur_prio=0
 
 flush() {
 	if [[ -n "${cur}" ]]; then
-		names+=("${cur}")
-		xs+=("${cur_x}")
-		ys+=("${cur_y}")
-		enabled+=("${cur_en}")
+		x_of["$cur"]=$cur_x
+		y_of["$cur"]=$cur_y
+		h_of["$cur"]=$cur_h
+		en_of["$cur"]=$cur_en
+		prio_of["$cur"]=$cur_prio
 	fi
 }
 
@@ -46,7 +253,9 @@ for line in "${lines[@]}"; do
 		cur="${BASH_REMATCH[1]}"
 		cur_x=0
 		cur_y=0
+		cur_h=0
 		cur_en=0
+		cur_prio=0
 		continue
 	fi
 	[[ -z "${cur}" ]] && continue
@@ -54,47 +263,61 @@ for line in "${lines[@]}"; do
 		cur_en=1
 	elif [[ "${line}" =~ ^[[:space:]]*disabled[[:space:]]*$ ]]; then
 		cur_en=0
-	elif [[ "${line}" =~ Geometry:[[:space:]]*(-?[0-9]+),(-?[0-9]+) ]]; then
+	elif [[ "${line}" =~ priority[[:space:]]+([0-9]+) ]]; then
+		cur_prio="${BASH_REMATCH[1]}"
+	elif [[ "${line}" =~ Geometry:[[:space:]]*(-?[0-9]+),(-?[0-9]+)[[:space:]]+([0-9]+)x([0-9]+) ]]; then
 		cur_x="${BASH_REMATCH[1]}"
 		cur_y="${BASH_REMATCH[2]}"
+		cur_h="${BASH_REMATCH[4]}"
 	fi
 done
 flush
 
-# Prefer two enabled panels; else enable both connected eDPs and place vertically.
-idx_a=-1
-idx_b=-1
-for i in "${!names[@]}"; do
-	[[ "${names[$i]}" == eDP-* ]] || continue
-	if (( idx_a < 0 )); then
-		idx_a=$i
-	elif (( idx_b < 0 )); then
-		idx_b=$i
-		break
-	fi
-done
-
-if (( idx_a < 0 || idx_b < 0 )); then
-	echo "need two eDP outputs (found: ${names[*]:-none})" >&2
+if [[ -z "${x_of[$UPPER]+x}" || -z "${x_of[$LOWER]+x}" ]]; then
+	echo "need ${UPPER} and ${LOWER} (found: ${!x_of[*]:-none})" >&2
 	exit 1
 fi
 
-a="${names[$idx_a]}"
-b="${names[$idx_b]}"
-ax="${xs[$idx_a]}"
-ay="${ys[$idx_a]}"
-bx="${xs[$idx_b]}"
-by="${ys[$idx_b]}"
+h="${h_of[$UPPER]}"
+(( h > 0 )) || h="${h_of[$LOWER]}"
+(( h > 0 )) || h=1334
 
-args=()
-if (( enabled[idx_a] == 0 )); then
-	args+=("output.${a}.enable")
+uy=${y_of[$UPPER]:-0}
+ly=${y_of[$LOWER]:-0}
+flipped=0
+if (( ly < uy )); then
+	flipped=1
+elif (( ly == uy )); then
+	flipped=0
+elif (( ${prio_of[$LOWER]:-2} == 1 && ${prio_of[$UPPER]:-1} != 1 )); then
+	flipped=1
 fi
-if (( enabled[idx_b] == 0 )); then
-	args+=("output.${b}.enable")
+
+# Apps first (stable output geometries), then pane/wallpaper flip.
+swap_windows_between_outputs
+sleep 0.15
+
+args=(
+	"output.${UPPER}.enable"
+	"output.${LOWER}.enable"
+)
+
+if (( flipped )); then
+	args+=(
+		"output.${UPPER}.position.0,0"
+		"output.${LOWER}.position.0,${h}"
+		"output.${UPPER}.priority.1"
+		"output.${LOWER}.priority.2"
+	)
+	echo "screen-swap: flipped → normal (${UPPER} top)"
+else
+	args+=(
+		"output.${LOWER}.position.0,0"
+		"output.${UPPER}.position.0,${h}"
+		"output.${LOWER}.priority.1"
+		"output.${UPPER}.priority.2"
+	)
+	echo "screen-swap: normal → flipped (${LOWER} top)"
 fi
 
-# Swap positions (Windows Duo "screen flip" / up-down swap).
-args+=("output.${a}.position.${bx},${by}" "output.${b}.position.${ax},${ay}")
-
-exec kscreen-doctor "${args[@]}"
+kscreen-doctor "${args[@]}"

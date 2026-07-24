@@ -1,0 +1,737 @@
+#!/usr/bin/env python3
+"""Per-user sleep/resume orchestrator for zenbook_scripts (Plasma session policy).
+
+Loads ~/.config/zenbook-scripts/session.json and runs profile action lists on
+sleep, resume, and hibernate. Holds presentation idle-inhibit outside plasmashell.
+
+Examples:
+  platform-session status
+  platform-session init
+  platform-session show
+  platform-session run sleep
+  platform-session run resume
+  platform-session action brightness_save
+  platform-session presentation on
+  platform-session plasmashell check --apply
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import pwd
+import shlex
+import shutil
+import signal
+import subprocess
+import sys
+from pathlib import Path
+from typing import Any
+
+_SCRIPT_DIR = Path(__file__).resolve().parent
+_REPO_ROOT = _SCRIPT_DIR.parent
+
+LOG_TAG = "zenbook-platform-session"
+TOUCHPAD_PIDFILE = Path("/run/zenbook-platform-touchpad.pid")
+
+ACTIONS = frozenset(
+    {
+        "brightness_save",
+        "brightness_restore",
+        "fan_sleep_pre",
+        "fan_sleep_post",
+        "touchpad_reassert",
+    }
+)
+
+
+def _log(msg: str, *, level: str = "info") -> None:
+    line = f"{level}: {msg}" if level != "info" else msg
+    print(line, file=sys.stderr)
+    if shutil.which("logger"):
+        try:
+            subprocess.run(
+                ["logger", "-t", LOG_TAG, "-p", f"user.{level}", msg],
+                check=False,
+                capture_output=True,
+            )
+        except OSError:
+            pass
+
+
+def resolve_session_user() -> str | None:
+    for key in ("ZENBOOK_SESSION_USER", "ZENBOOK_CALIB_USER"):
+        val = os.environ.get(key, "").strip()
+        if val:
+            return val.split(":")[0]
+    sudo_user = os.environ.get("SUDO_USER", "").strip()
+    if sudo_user:
+        return sudo_user
+    if os.getuid() == 0:
+        conf = Path("/etc/conf.d/zenbook-kb-hotkeys")
+        if conf.is_file():
+            for line in conf.read_text(encoding="utf-8", errors="replace").splitlines():
+                line = line.strip()
+                if line.startswith("command_user="):
+                    val = line.split("=", 1)[1].strip().strip('"').strip("'")
+                    if val:
+                        return val.split(":")[0]
+    try:
+        return pwd.getpwuid(os.getuid()).pw_name
+    except KeyError:
+        return os.environ.get("USER") or None
+
+
+def session_user_home(user: str | None = None) -> Path:
+    user = user or resolve_session_user()
+    if not user:
+        return Path.home()
+    return Path(pwd.getpwnam(user).pw_dir)
+
+
+def user_runtime_dir(user: str | None = None) -> Path | None:
+    user = user or resolve_session_user()
+    if not user:
+        return None
+    try:
+        uid = pwd.getpwnam(user).pw_uid
+    except KeyError:
+        return None
+    path = Path(f"/run/user/{uid}")
+    return path if path.is_dir() else None
+
+
+def config_path() -> Path:
+    user = resolve_session_user()
+    home = session_user_home(user)
+    if os.getuid() == 0 and user and user != "root":
+        return home / ".config" / "zenbook-scripts" / "session.json"
+    xdg = os.environ.get("XDG_CONFIG_HOME", "").strip()
+    base = Path(xdg) if xdg else home / ".config"
+    return base / "zenbook-scripts" / "session.json"
+
+
+def cache_base_dir() -> Path:
+    user = resolve_session_user()
+    home = session_user_home(user)
+    runtime = user_runtime_dir(user)
+    if runtime and os.access(runtime, os.W_OK):
+        return runtime / "zenbook-scripts"
+    if os.getuid() == 0 and user and user != "root":
+        return home / ".cache" / "zenbook-scripts"
+    xdg = os.environ.get("XDG_CACHE_HOME", "").strip()
+    base = Path(xdg) if xdg else home / ".cache"
+    return base / "zenbook-scripts"
+
+
+def presentation_inhibit_pidfile() -> Path:
+    return cache_base_dir() / "presentation.inhibit.pid"
+
+
+def presentation_marker_path() -> Path:
+    return cache_base_dir() / "presentation.was_on"
+
+
+def example_config_path() -> Path | None:
+    candidates = (
+        Path("/usr/share/zenbook-scripts/plasma/session.json.example"),
+        Path("/usr/local/share/zenbook-scripts/plasma/session.json.example"),
+        _REPO_ROOT / "plasma" / "session.json.example",
+    )
+    for path in candidates:
+        if path.is_file():
+            return path
+    return None
+
+
+def resolve_binary(name: str) -> Path | None:
+    for directory in (Path("/usr/bin"), Path("/usr/local/bin"), _SCRIPT_DIR):
+        candidate = directory / name
+        if candidate.is_file() and os.access(candidate, os.X_OK):
+            return candidate
+    return None
+
+
+def _read_pidfile(path: Path) -> int | None:
+    try:
+        raw = path.read_text(encoding="utf-8").strip()
+        pid = int(raw.split()[0])
+    except (OSError, ValueError, IndexError):
+        return None
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return None
+    except PermissionError:
+        return pid
+    except OSError:
+        return None
+    return pid
+
+
+def _user_session_env(user: str | None = None) -> dict[str, str]:
+    env = os.environ.copy()
+    user = user or resolve_session_user()
+    if not user:
+        return env
+    try:
+        uid = pwd.getpwnam(user).pw_uid
+    except KeyError:
+        return env
+    env["HOME"] = str(session_user_home(user))
+    env["USER"] = user
+    env["LOGNAME"] = user
+    env["ZENBOOK_SESSION_USER"] = user
+    env["ZENBOOK_CALIB_USER"] = user
+    runtime = Path(f"/run/user/{uid}")
+    if runtime.is_dir():
+        env["XDG_RUNTIME_DIR"] = str(runtime)
+    for pid in _plasmashell_pids(user):
+        try:
+            raw = Path(f"/proc/{pid}/environ").read_bytes()
+        except OSError:
+            continue
+        for pair in raw.split(b"\0"):
+            if b"=" not in pair:
+                continue
+            key, value = pair.split(b"=", 1)
+            k = key.decode(errors="replace")
+            if k in (
+                "WAYLAND_DISPLAY",
+                "DISPLAY",
+                "DBUS_SESSION_BUS_ADDRESS",
+                "XDG_CURRENT_DESKTOP",
+                "KDE_FULL_SESSION",
+            ):
+                env[k] = value.decode(errors="replace")
+        break
+    return env
+
+
+def run_as_session_user(
+    argv: list[str],
+    *,
+    env: dict[str, str] | None = None,
+    check: bool = False,
+) -> subprocess.CompletedProcess[str]:
+    user = resolve_session_user()
+    merged = _user_session_env(user)
+    if env:
+        merged.update(env)
+    if os.getuid() == 0 and user and user != "root":
+        if shutil.which("runuser"):
+            cmd = ["runuser", "-u", user, "--"] + argv
+            return subprocess.run(
+                cmd,
+                env=merged,
+                text=True,
+                capture_output=True,
+                check=check,
+            )
+        if shutil.which("su"):
+            joined = " ".join(shlex.quote(part) for part in argv)
+            cmd = ["su", "-", user, "-c", joined]
+            return subprocess.run(
+                cmd,
+                env=merged,
+                text=True,
+                capture_output=True,
+                check=check,
+            )
+        _log(f"running as root; cannot drop privileges to {user}", level="warning")
+    return subprocess.run(
+        argv,
+        env=merged,
+        text=True,
+        capture_output=True,
+        check=check,
+    )
+
+
+def load_config(*, create_missing: bool = False) -> dict[str, Any]:
+    path = config_path()
+    if not path.is_file():
+        if create_missing:
+            init_config(force=False)
+        if not path.is_file():
+            return default_config()
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        _log(f"invalid config {path}: {exc}", level="err")
+        return default_config()
+    if not isinstance(data, dict):
+        _log(f"invalid config {path}: root must be object", level="err")
+        return default_config()
+    return data
+
+
+def default_config() -> dict[str, Any]:
+    return {
+        "version": 1,
+        "active_profile": "default",
+        "profiles": {
+            "default": default_profile(),
+        },
+    }
+
+
+def default_profile() -> dict[str, Any]:
+    return {
+        "on_sleep": ["brightness_save", "fan_sleep_pre"],
+        "on_resume": ["brightness_restore", "fan_sleep_post", "touchpad_reassert"],
+        "on_hibernate": ["brightness_save"],
+        "presentation": {
+            "restore_after_plasmashell_replace": True,
+            "inhibit_backend": "auto",
+        },
+        "plasmashell": {
+            "watch_qsg_threads": False,
+            "auto_replace": False,
+            "qsg_thread_threshold": 32,
+        },
+    }
+
+
+def active_profile(config: dict[str, Any]) -> dict[str, Any]:
+    name = config.get("active_profile") or "default"
+    profiles = config.get("profiles") or {}
+    if not isinstance(profiles, dict):
+        profiles = {}
+    profile = profiles.get(name)
+    if isinstance(profile, dict) and profile:
+        return profile
+    return default_profile()
+
+
+def init_config(*, force: bool = False) -> int:
+    path = config_path()
+    if path.exists() and not force:
+        _log(f"{path} already exists (use --force to overwrite)")
+        return 0
+    example = example_config_path()
+    if example is None:
+        payload = default_config()
+        text = json.dumps(payload, indent=2) + "\n"
+    else:
+        text = example.read_text(encoding="utf-8")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+    user = resolve_session_user()
+    if os.getuid() == 0 and user and user != "root":
+        try:
+            pw = pwd.getpwnam(user)
+            os.chown(path, pw.pw_uid, pw.pw_gid)
+        except OSError as exc:
+            _log(f"could not chown {path} to {user}: {exc}", level="warning")
+    _log(f"wrote {path}")
+    return 0
+
+
+def _run_bin(name: str, args: list[str]) -> bool:
+    binary = resolve_binary(name)
+    if binary is None:
+        _log(f"{name} not found; skipping", level="warning")
+        return False
+    result = run_as_session_user([str(binary), *args])
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or "").strip()
+        _log(f"{name} {' '.join(args)} failed (exit {result.returncode}): {detail}", level="warning")
+        return False
+    if result.stdout.strip():
+        print(result.stdout.strip())
+    return True
+
+
+def run_action(name: str) -> bool:
+    if name not in ACTIONS:
+        _log(f"unknown action: {name}", level="err")
+        return False
+
+    if name == "brightness_save":
+        if resolve_binary("kb-brightness-sleep"):
+            return _run_bin("kb-brightness-sleep", ["save"]) or _run_bin(
+                "kb-brightness-sleep", ["pre"]
+            )
+        return False
+
+    if name == "brightness_restore":
+        if resolve_binary("kb-brightness-sleep"):
+            return _run_bin("kb-brightness-sleep", ["restore"]) or _run_bin(
+                "kb-brightness-sleep", ["post"]
+            )
+        return False
+
+    if name == "fan_sleep_pre":
+        return _run_bin("platform-fan-control", ["event", "sleep_pre"])
+
+    if name == "fan_sleep_post":
+        return _run_bin("platform-fan-control", ["event", "sleep_post"])
+
+    if name == "touchpad_reassert":
+        pid = _read_pidfile(TOUCHPAD_PIDFILE)
+        if pid is None:
+            _log("touchpad_reassert: no live platform-touchpad pidfile; no-op")
+            return True
+        try:
+            os.kill(pid, signal.SIGHUP)
+            _log(f"touchpad_reassert: sent SIGHUP to pid {pid}")
+        except OSError as exc:
+            _log(f"touchpad_reassert: SIGHUP to pid {pid} failed: {exc}", level="warning")
+            return False
+        return True
+
+    return False
+
+
+def run_actions(actions: list[str], *, phase: str) -> int:
+    if not actions:
+        _log(f"{phase}: no actions configured")
+        return 0
+    rc = 0
+    for action in actions:
+        if not isinstance(action, str):
+            continue
+        _log(f"{phase}: action {action}")
+        if not run_action(action):
+            rc = 1
+    return rc
+
+
+def cmd_status() -> int:
+    path = config_path()
+    config = load_config()
+    profile_name = config.get("active_profile") or "default"
+    profile = active_profile(config)
+    presentation = profile.get("presentation") or {}
+    plasmashell = profile.get("plasmashell") or {}
+    inhibit_pid = _read_pidfile(presentation_inhibit_pidfile())
+    marker = presentation_marker_path().is_file()
+
+    print(f"config: {path}")
+    print(f"exists: {'yes' if path.is_file() else 'no'}")
+    print(f"session_user: {resolve_session_user() or '?'}")
+    print(f"active_profile: {profile_name}")
+    print(
+        "presentation.restore_after_plasmashell_replace: "
+        f"{presentation.get('restore_after_plasmashell_replace', True)}"
+    )
+    print(f"presentation.inhibit_backend: {presentation.get('inhibit_backend', 'auto')}")
+    print(f"presentation marker (was_on): {'yes' if marker else 'no'}")
+    print(f"presentation inhibit held: {'yes' if inhibit_pid else 'no'}")
+    if inhibit_pid:
+        print(f"presentation inhibit pid: {inhibit_pid}")
+    print(f"plasmashell.watch_qsg_threads: {plasmashell.get('watch_qsg_threads', False)}")
+    print(f"plasmashell.auto_replace: {plasmashell.get('auto_replace', False)}")
+    print(f"plasmashell.qsg_thread_threshold: {plasmashell.get('qsg_thread_threshold', 32)}")
+    return 0
+
+
+def cmd_show() -> int:
+    config = load_config()
+    profile = active_profile(config)
+    print(json.dumps(profile, indent=2))
+    return 0
+
+
+def cmd_run(phase: str) -> int:
+    config = load_config()
+    profile = active_profile(config)
+    if phase == "sleep":
+        actions = profile.get("on_sleep") or []
+    elif phase == "resume":
+        actions = profile.get("on_resume") or []
+    elif phase == "hibernate":
+        actions = profile.get("on_hibernate") or profile.get("on_sleep") or []
+    elif phase == "hibernate-resume":
+        actions = profile.get("on_hibernate_resume") or profile.get("on_resume") or []
+    else:
+        _log(f"unknown run phase: {phase}", level="err")
+        return 2
+    return run_actions(list(actions), phase=phase)
+
+
+def _presentation_backend(profile: dict[str, Any]) -> str:
+    presentation = profile.get("presentation") or {}
+    backend = str(presentation.get("inhibit_backend") or "auto").lower()
+    if backend == "auto":
+        if shutil.which("systemd-inhibit"):
+            return "systemd-inhibit"
+        if shutil.which("kde-inhibit"):
+            return "kde-inhibit"
+        return "none"
+    return backend
+
+
+def _stop_inhibit() -> None:
+    pidfile = presentation_inhibit_pidfile()
+    pid = _read_pidfile(pidfile)
+    if pid is not None:
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except OSError:
+            pass
+    try:
+        pidfile.unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
+def _start_inhibit(profile: dict[str, Any]) -> int:
+    backend = _presentation_backend(profile)
+    if backend == "none":
+        _log(
+            "presentation inhibit unavailable: install systemd-inhibit or kde-inhibit",
+            level="err",
+        )
+        return 1
+
+    _stop_inhibit()
+    cache_base_dir().mkdir(parents=True, exist_ok=True)
+    pidfile = presentation_inhibit_pidfile()
+
+    if backend == "systemd-inhibit":
+        cmd = [
+            "systemd-inhibit",
+            "--what=idle",
+            "--who=zenbook-platform-session",
+            "--why=presentation",
+            "--mode=block",
+            "sleep",
+            "infinity",
+        ]
+    else:
+        cmd = ["kde-inhibit", "--idle", "sleep", "infinity"]
+
+    proc = subprocess.Popen(
+        cmd,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        env=_user_session_env(),
+        start_new_session=True,
+    )
+    pidfile.write_text(f"{proc.pid}\n", encoding="utf-8")
+    presentation_marker_path().write_text("1\n", encoding="utf-8")
+    _log(f"presentation inhibit started ({backend}, pid {proc.pid})")
+    return 0
+
+
+def cmd_presentation(args: argparse.Namespace) -> int:
+    config = load_config()
+    profile = active_profile(config)
+    verb = args.verb
+
+    if verb == "status":
+        pid = _read_pidfile(presentation_inhibit_pidfile())
+        marker = presentation_marker_path().is_file()
+        print(f"inhibit_held: {'yes' if pid else 'no'}")
+        if pid:
+            print(f"inhibit_pid: {pid}")
+        print(f"was_on_marker: {'yes' if marker else 'no'}")
+        print(f"backend: {_presentation_backend(profile)}")
+        return 0
+
+    if verb == "on":
+        return _start_inhibit(profile)
+
+    if verb == "off":
+        _stop_inhibit()
+        try:
+            presentation_marker_path().unlink(missing_ok=True)
+        except OSError:
+            pass
+        _log("presentation inhibit released")
+        return 0
+
+    if verb == "restore":
+        presentation = profile.get("presentation") or {}
+        if not presentation.get("restore_after_plasmashell_replace", True):
+            _log("presentation restore disabled in profile")
+            return 0
+        if not presentation_marker_path().is_file():
+            _log("presentation restore skipped (marker not set)")
+            return 0
+        if _read_pidfile(presentation_inhibit_pidfile()):
+            _log("presentation inhibit already held")
+            return 0
+        return _start_inhibit(profile)
+
+    _log(f"unknown presentation verb: {verb}", level="err")
+    return 2
+
+
+def _plasmashell_pids(user: str | None = None) -> list[int]:
+    user = user or resolve_session_user()
+    if not user:
+        return []
+    try:
+        uid = pwd.getpwnam(user).pw_uid
+    except KeyError:
+        return []
+    pids: list[int] = []
+    proc_root = Path("/proc")
+    if not proc_root.is_dir():
+        return []
+    for entry in proc_root.iterdir():
+        if not entry.name.isdigit():
+            continue
+        try:
+            status = (entry / "status").read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        name = ""
+        real_uid = None
+        for line in status.splitlines():
+            if line.startswith("Name:"):
+                name = line.split(":", 1)[1].strip()
+            elif line.startswith("Uid:"):
+                parts = line.split()
+                if len(parts) >= 2:
+                    real_uid = int(parts[1])
+        if name == "plasmashell" and real_uid == uid:
+            pids.append(int(entry.name))
+    return sorted(pids)
+
+
+def _qsg_thread_names() -> tuple[str, ...]:
+    return ("QSGRenderThread", "gdrv", "traceq", "mesa")
+
+
+def count_qsg_threads(pid: int) -> int:
+    task_dir = Path(f"/proc/{pid}/task")
+    if not task_dir.is_dir():
+        return 0
+    count = 0
+    needles = _qsg_thread_names()
+    for tid_path in task_dir.iterdir():
+        try:
+            comm = (tid_path / "comm").read_text(encoding="utf-8", errors="replace").strip("\n")
+        except OSError:
+            continue
+        lowered = comm.lower()
+        if any(n.lower() in lowered for n in needles):
+            count += 1
+    return count
+
+
+def cmd_plasmashell(args: argparse.Namespace) -> int:
+    config = load_config()
+    profile = active_profile(config)
+    plasmashell_cfg = profile.get("plasmashell") or {}
+    watch = bool(plasmashell_cfg.get("watch_qsg_threads", False))
+    threshold = int(plasmashell_cfg.get("qsg_thread_threshold", 32))
+    auto_replace = bool(plasmashell_cfg.get("auto_replace", False))
+
+    user = resolve_session_user()
+    pids = _plasmashell_pids(user)
+    if not pids:
+        print("plasmashell: not running for session user")
+        return 1
+
+    total = 0
+    for pid in pids:
+        n = count_qsg_threads(pid)
+        total += n
+        print(f"plasmashell pid {pid}: qsg_related_threads={n}")
+
+    print(f"total_qsg_related_threads={total}")
+    print(f"watch_qsg_threads={watch}")
+    print(f"qsg_thread_threshold={threshold}")
+    print(f"auto_replace={auto_replace}")
+
+    if not watch:
+        print("watch disabled in profile (report only)")
+        return 0
+
+    if total < threshold:
+        print("below threshold; no action")
+        return 0
+
+    print(f"above threshold ({total} >= {threshold})")
+    if not auto_replace:
+        print("auto_replace disabled; suggest: plasmashell --replace")
+        return 0
+    if not args.apply:
+        print("auto_replace enabled but --apply not passed; no change")
+        return 0
+
+    binary = shutil.which("plasmashell")
+    if not binary:
+        _log("plasmashell binary not found", level="err")
+        return 1
+    result = run_as_session_user([binary, "--replace"])
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or "").strip()
+        _log(f"plasmashell --replace failed: {detail}", level="err")
+        return result.returncode
+    _log("plasmashell --replace completed")
+    return 0
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    sub = parser.add_subparsers(dest="cmd", required=True)
+
+    sub.add_parser("status", help="show config path and session flags")
+    sub.add_parser("show", help="pretty-print active profile JSON")
+    init_p = sub.add_parser("init", help="write default session.json if missing")
+    init_p.add_argument(
+        "--force",
+        action="store_true",
+        help="overwrite existing session.json",
+    )
+
+    run_p = sub.add_parser("run", help="execute a profile action list")
+    run_p.add_argument(
+        "phase",
+        choices=("sleep", "resume", "hibernate", "hibernate-resume"),
+        help="sleep/resume/hibernate phase",
+    )
+
+    action_p = sub.add_parser("action", help="run one named action")
+    action_p.add_argument("name", choices=sorted(ACTIONS))
+
+    pres_p = sub.add_parser("presentation", help="presentation idle inhibit")
+    pres_p.add_argument("verb", choices=("status", "on", "off", "restore"))
+
+    shell_p = sub.add_parser("plasmashell", help="plasmashell QSG thread helper")
+    shell_sub = shell_p.add_subparsers(dest="plasmashell_cmd", required=True)
+    check_p = shell_sub.add_parser("check", help="count QSG-related threads")
+    check_p.add_argument(
+        "--apply",
+        action="store_true",
+        help="run plasmashell --replace when profile auto_replace is true",
+    )
+
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+
+    if args.cmd == "status":
+        return cmd_status()
+    if args.cmd == "show":
+        return cmd_show()
+    if args.cmd == "init":
+        return init_config(force=args.force)
+    if args.cmd == "run":
+        return cmd_run(args.phase)
+    if args.cmd == "action":
+        return 0 if run_action(args.name) else 1
+    if args.cmd == "presentation":
+        return cmd_presentation(args)
+    if args.cmd == "plasmashell":
+        if args.plasmashell_cmd == "check":
+            return cmd_plasmashell(args)
+    parser.error("unhandled command")
+    return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

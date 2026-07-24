@@ -17,9 +17,16 @@
 SUBSYSTEM=="input", KERNEL=="event*", ATTRS{idVendor}=="0b05", ATTRS{idProduct}=="1b2[cd]", \
   ATTR{name}=="Primax Electronics Ltd. ASUS Zenbook Duo Keyboard", \
   GROUP="input", MODE="0660"
+SUBSYSTEM=="input", KERNEL=="event*", ATTRS{idVendor}=="0b05", ATTRS{idProduct}=="1b2[cd]", \
+  ATTR{name}=="ASUS Zenbook Duo Keyboard", \
+  GROUP="input", MODE="0660"
 
 # When the hotkey-capable input node appears, (re)start the listener service.
 SUBSYSTEM=="input", KERNEL=="event*", ACTION=="add", \
   ATTRS{idVendor}=="0b05", ATTRS{idProduct}=="1b2[cd]", \
   ATTR{name}=="Primax Electronics Ltd. ASUS Zenbook Duo Keyboard", \
+  RUN+="/usr/local/libexec/zenbook-kb-hotkeys-udev start"
+SUBSYSTEM=="input", KERNEL=="event*", ACTION=="add", \
+  ATTRS{idVendor}=="0b05", ATTRS{idProduct}=="1b2[cd]", \
+  ATTR{name}=="ASUS Zenbook Duo Keyboard", \
   RUN+="/usr/local/libexec/zenbook-kb-hotkeys-udev start"

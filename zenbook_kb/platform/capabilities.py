@@ -373,6 +373,59 @@ def probe_touchpad_sensitivity() -> Feature:
     )
 
 
+def probe_duo_keyboard_bt() -> Feature:
+    """UX8406 Primax BT keyboard bind health (keys missing when rdesc fixup fails)."""
+    product = (product_name() or "") + " " + (board_name() or "")
+    if "UX8406" not in product.upper():
+        return Feature(
+            "duo_kb_bt",
+            "Duo keyboard (Bluetooth)",
+            False,
+            "not UX8406",
+        )
+    try:
+        from zenbook_kb.touchpad import duo_keyboard_hid_health
+
+        h = duo_keyboard_hid_health()
+    except Exception as exc:  # noqa: BLE001
+        return Feature("duo_kb_bt", "Duo keyboard (Bluetooth)", False, str(exc))
+
+    if h.get("usb_pogo_1b2c"):
+        return Feature(
+            "duo_kb_bt",
+            "Duo keyboard (Bluetooth)",
+            True,
+            "USB pogo present (BT path idle)",
+            backend="usb-1b2c",
+        )
+    ifaces = h.get("bt_hid_ifaces") or []
+    if not ifaces:
+        return Feature(
+            "duo_kb_bt",
+            "Duo keyboard (Bluetooth)",
+            False,
+            "no BT HID 0b05:1b2d",
+            install_hint="pair/connect ASUS Zenbook Duo Keyboard",
+        )
+    if h.get("bt_keys_missing") or h.get("bt_keyboard_unbound"):
+        return Feature(
+            "duo_kb_bt",
+            "Duo keyboard (Bluetooth)",
+            False,
+            h.get("hint") or "BT HID bound but no keyboard event node",
+            backend="bluetooth",
+            install_hint="sideload oot hid-asus (BT Usage76 skip) then reconnect BT",
+        )
+    nodes = h.get("bt_keyboard_event_nodes") or []
+    return Feature(
+        "duo_kb_bt",
+        "Duo keyboard (Bluetooth)",
+        True,
+        f"keyboard nodes: {', '.join(nodes)}",
+        backend="bluetooth",
+    )
+
+
 def build_report() -> ProbeReport:
     product = product_name() or "unknown"
     board = board_name() or "unknown"
@@ -390,6 +443,7 @@ def build_report() -> ProbeReport:
         probe_ac(),
         probe_touchpad(),
         probe_touchpad_sensitivity(),
+        probe_duo_keyboard_bt(),
     ]
     use: list[str] = []
     skip: list[str] = []

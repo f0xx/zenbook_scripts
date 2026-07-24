@@ -8,7 +8,9 @@
 #   platform-fan auto                # firmware automatic PWM (pwm1_enable=2)
 #   platform-fan full|max            # force full-on fans (pwm1_enable=0)
 #   platform-fan profile …           # alias → kb-platform-profile / platform_profile
+#   platform-fan restore             # restore saved platform_profile + pwm
 #
+# Desired profile/pwm live under /var/lib/zenbook-scripts/ (survive reboot).
 # Custom temp→PWM curves are not exposed on these models.
 
 set -euo pipefail
@@ -46,7 +48,7 @@ source "${SCRIPT_DIR}/lib/fan.sh"
 source "${SCRIPT_DIR}/lib/platform_profile.sh"
 
 usage() {
-	sed -n '2,13p' "$0"
+	sed -n '2,14p' "$0"
 }
 
 if [[ $# -lt 1 ]]; then
@@ -122,6 +124,14 @@ case "${CMD}" in
 	quiet | balanced | performance)
 		# Convenience: platform-fan quiet
 		zenbook_platform_profile_set "${CMD}"
+		zenbook_fan_status
+		;;
+	restore | boot)
+		# Re-apply last user/CLI choice after reboot, hibernate, or resume.
+		if zenbook_platform_profile_present 2>/dev/null; then
+			zenbook_platform_profile_restore || true
+		fi
+		zenbook_fan_pwm_restore || true
 		zenbook_fan_status
 		;;
 	*)

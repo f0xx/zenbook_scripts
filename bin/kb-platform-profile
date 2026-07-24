@@ -6,7 +6,11 @@
 #   kb-platform-profile list
 #   kb-platform-profile set <quiet|balanced|performance|...>
 #   kb-platform-profile cycle
+#   kb-platform-profile save          # persist current sysfs value
+#   kb-platform-profile restore       # apply saved value (boot/resume)
+#   kb-platform-profile saved         # print saved value
 #
+# Desired profile is stored in /var/lib/zenbook-scripts/platform-profile.
 # Custom fan PWM curves are not available on UX5400EA / UX8406 (WMI fan_curve
 # methods return ENODEV). Use these profiles instead.
 
@@ -43,7 +47,7 @@ SCRIPT_DIR="$(zenbook_kb_find_root)"
 source "${SCRIPT_DIR}/lib/platform_profile.sh"
 
 usage() {
-	sed -n '2,10p' "$0"
+	sed -n '2,14p' "$0"
 }
 
 if [[ $# -lt 1 ]]; then
@@ -79,6 +83,19 @@ case "${CMD}" in
 		;;
 	cycle|next)
 		zenbook_platform_profile_cycle
+		;;
+	save)
+		zenbook_platform_profile_state_write "$(zenbook_platform_profile_get)"
+		zenbook_platform_profile_state_read
+		;;
+	saved|state)
+		if ! zenbook_platform_profile_state_read; then
+			echo "(none)" >&2
+			exit 1
+		fi
+		;;
+	restore|boot)
+		zenbook_platform_profile_restore
 		;;
 	*)
 		# Allow: kb-platform-profile balanced
