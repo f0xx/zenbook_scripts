@@ -114,7 +114,49 @@ zenbook_fan_pwm_enable_set() {
 	esac
 
 	hwmon="$(zenbook_fan_find_hwmon)" || return 1
-	zenbook_fan_sysfs_write "${hwmon}/pwm1_enable" "${mode}"
+	zenbook_fan_sysfs_write "${hwmon}/pwm1_enable" "${mode}" || return 1
+	# Persist explicit CLI pwm mode (fan-control sets ZENBOOK_FAN_PWM_PERSIST=0).
+	if [[ "${ZENBOOK_FAN_PWM_PERSIST:-1}" != "0" ]]; then
+		zenbook_fan_pwm_state_write "${mode}" || true
+	fi
+}
+
+zenbook_fan_pwm_state_write() {
+	local value="$1"
+	local file="${ZENBOOK_FAN_PWM_STATE:-/var/lib/zenbook-scripts/fan-pwm-enable}"
+	local dir
+
+	# Prefer shared state dir helper when platform_profile.sh is sourced.
+	if declare -F zenbook_platform_profile_state_dir >/dev/null 2>&1; then
+		dir="$(zenbook_platform_profile_state_dir)" || return 1
+		file="${dir}/fan-pwm-enable"
+	else
+		dir="$(dirname "${file}")"
+		if [[ ! -d "${dir}" ]]; then
+			mkdir -p "${dir}" 2>/dev/null || {
+				command -v sudo >/dev/null 2>&1 && sudo -n mkdir -p "${dir}" 2>/dev/null || return 1
+			}
+		fi
+	fi
+	if [[ -w "${file}" ]] || { [[ ! -e "${file}" && -w "${dir}" ]]; }; then
+		printf '%s\n' "${value}" >"${file}" && return 0
+	fi
+	if command -v sudo >/dev/null 2>&1; then
+		printf '%s\n' "${value}" | sudo -n tee "${file}" >/dev/null 2>&1
+	fi
+}
+
+zenbook_fan_pwm_state_read() {
+	local file="${ZENBOOK_FAN_PWM_STATE:-/var/lib/zenbook-scripts/fan-pwm-enable}"
+	[[ -r "${file}" ]] || return 1
+	tr -d '[:space:]' <"${file}"
+}
+
+zenbook_fan_pwm_restore() {
+	local want
+	want="$(zenbook_fan_pwm_state_read 2>/dev/null || true)"
+	[[ -n "${want}" ]] || return 0
+	ZENBOOK_FAN_PWM_PERSIST=0 zenbook_fan_pwm_enable_set "${want}"
 }
 
 zenbook_fan_pwm_mode_name() {

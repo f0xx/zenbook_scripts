@@ -22,9 +22,9 @@ Status legend: **done** · **now** · **next** · **later**
 | Touchpad palm filter MVP | **done** | per-device profiles + Qt6 tuner; UX8406 primary |
 | Touchpad typing-inhibit + soft-accel | **done** | shipped in **0.0.2** |
 | Package / announce **0.0.2** | **done** | tag + published release + Gentoo Manifest/ebuild |
-| Plasma KCM + PowerDevil / session | **now** (RC draft) | `platform-session` + KCM MVP + packaging scaffolds; tag `v0.0.3_pre1` |
-| Ubuntu `.deb` + packaging checks | **later** | Ubuntu access / install verification |
-| Alpine `apk` + packaging rules | **later** | Alpine install checks |
+| Plasma KCM + PowerDevil / session | **done** (0.0.3) | `platform-session` + KCM MVP; tag `v0.0.3` |
+| Ubuntu `.deb` + packaging checks | **done** (CLI) | Smoke-built on Ubuntu 24.04 Server (augury1); KF6/KCM not in Noble |
+| Alpine `apk` + packaging rules | **done** (smoke) | APK built on cast04; promote with 0.0.3 |
 | UX5400 WM/DE annoyance (TBD) | **later** | palm OK; separate Plasma/WM issue — describe when ready |
 | UX8406 dual-eDP touch jump (Plasma/Wayland) | **later** | touch on lower panel warps cursor to primary — likely KWin, not our filter |
 | Touchpad GUI calibrate (capture → knobs) | **now** | MVP Calibrate… in tuner; deepen for BT palm parasites |
@@ -60,7 +60,7 @@ sudo platform-touchpad run --device '<stable-key>'
 
 | # | Track | Intent |
 |---|--------|--------|
-| 3.1 | **Plasma KCM + PowerDevil / session** | **One shot:** System Settings KCModule + resume watcher; sleep/hibernate/resume **configurable** per-user profiles; presentation-mode inhibit held **outside** plasmashell so `plasmashell --replace` does not drop it. Design: [`README.plasma.md`](README.plasma.md). |
+| 3.1 | **Plasma KCM + PowerDevil / session** | **Shipped in 0.0.3.** Original intent: System Settings KCModule + resume watcher; sleep/hibernate/resume **configurable** per-user profiles; presentation-mode inhibit held **outside** plasmashell so `plasmashell --replace` does not drop it. Design: [`README.plasma.md`](README.plasma.md). |
 | 3.2 | **Ubuntu / Debian** | Ship `.deb`; Ubuntu access; packaging + installation checks. |
 | 3.3 | **Alpine** | `apk` recipe; Alpine install checks; packaging rules for musl / OpenRC-native layout. |
 | 3.4 | **UX5400 WM/DE** | Palm path looks fine; separate annoying behaviour — details TBD. |

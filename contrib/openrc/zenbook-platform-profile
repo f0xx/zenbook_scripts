@@ -1,0 +1,45 @@
+#!/sbin/openrc-run
+# Restore ACPI platform_profile / fan PWM after boot (UX5400 / UX8406).
+# Oneshot: runs platform-profile-boot and exits.
+
+name="zenbook-platform-profile"
+description="Zenbook platform_profile boot restore"
+
+: "${command:=/usr/bin/platform-profile-boot}"
+: "${command_background:=no}"
+
+depend() {
+	need localmount
+	after modules
+	before display-manager xdm
+}
+
+start_pre() {
+	if [ ! -x "${command}" ]; then
+		for c in /usr/bin/platform-profile-boot /usr/local/bin/platform-profile-boot; do
+			if [ -x "${c}" ]; then
+				command="${c}"
+				break
+			fi
+		done
+	fi
+	if [ ! -x "${command}" ]; then
+		eerror "platform-profile-boot not found"
+		return 1
+	fi
+}
+
+start() {
+	ebegin "Restoring platform_profile / fan PWM"
+	if [ -f /etc/conf.d/zenbook-platform-profile ]; then
+		# shellcheck disable=SC1091
+		. /etc/conf.d/zenbook-platform-profile
+	fi
+	export PLATFORM_PROFILE_BOOT_MODE="${PLATFORM_PROFILE_BOOT_MODE:-restore}"
+	"${command}"
+	eend $?
+}
+
+stop() {
+	return 0
+}

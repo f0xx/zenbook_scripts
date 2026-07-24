@@ -277,35 +277,36 @@ def apply_profile(cfg: dict[str, Any], name: str) -> None:
 
     pp = prof.get("platform_profile")
     if pp:
-        bins = _bin_candidates("kb-platform-profile")
-        if bins:
-            _run_cli([str(bins[0]), "set", str(pp)])
-        elif PLATFORM_PROFILE.is_file():
+        # Write sysfs directly so adaptive/sleep events do not persist over the
+        # user's last explicit CLI choice (/var/lib/.../platform-profile).
+        if PLATFORM_PROFILE.is_file():
             _write_sysfs(PLATFORM_PROFILE, f"{pp}\n")
         else:
-            raise FileNotFoundError(str(PLATFORM_PROFILE))
+            bins = _bin_candidates("kb-platform-profile")
+            if bins:
+                _run_cli([str(bins[0]), "set", str(pp)])
+            else:
+                raise FileNotFoundError(str(PLATFORM_PROFILE))
 
     pwm = prof.get("pwm")
     if pwm is not None:
         bins = _bin_candidates("platform-fan", "kb-fan")
         if pwm in ("full", "max", "on", 0, "0"):
-            if bins:
+            hw = find_asus_hwmon()
+            if hw:
+                _write_sysfs(hw / "pwm1_enable", "0")
+            elif bins:
                 _run_cli([str(bins[0]), "full"])
             else:
-                hw = find_asus_hwmon()
-                if not hw:
-                    log.warning("asus hwmon missing; skip pwm=full")
-                else:
-                    _write_sysfs(hw / "pwm1_enable", "0")
+                log.warning("asus hwmon missing; skip pwm=full")
         elif pwm in ("auto", 2, "2"):
-            if bins:
+            hw = find_asus_hwmon()
+            if hw:
+                _write_sysfs(hw / "pwm1_enable", "2")
+            elif bins:
                 _run_cli([str(bins[0]), "auto"])
             else:
-                hw = find_asus_hwmon()
-                if not hw:
-                    log.warning("asus hwmon missing; skip pwm=auto")
-                else:
-                    _write_sysfs(hw / "pwm1_enable", "2")
+                log.warning("asus hwmon missing; skip pwm=auto")
         elif pwm in ("manual", 1, "1"):
             raise RuntimeError("pwm=manual/curves not supported on this model")
         else:

@@ -5,7 +5,9 @@
 set -eu
 
 PKGROOT="${1:?usage: install.sh <debian/zenbook-scripts>}"
-SCRIPT_DIR="$(CDPATH= cd "$(dirname "$0")" && pwd)"
+# Resolve through the packaging/debian → debian symlink so REPO_ROOT is the
+# git checkout, not its parent (logical `debian/../..` would be wrong).
+SCRIPT_DIR="$(CDPATH= cd -P "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(CDPATH= cd "${SCRIPT_DIR}/../.." && pwd)"
 
 PREFIX="${PKGROOT}/usr"
@@ -91,7 +93,8 @@ done
 for unit in contrib/systemd/zenbook-kb-hotkeys.service \
 	contrib/systemd/zenbook-screenpad.service \
 	contrib/systemd/zenbook-screenpad-sync.service \
-	contrib/systemd/zenbook-platform-touchpad.service; do
+	contrib/systemd/zenbook-platform-touchpad.service \
+	contrib/systemd/zenbook-platform-profile.service; do
 	[ -f "${REPO_ROOT}/${unit}" ] || continue
 	install -m 644 "${REPO_ROOT}/${unit}" \
 		"${PKGROOT}/etc/systemd/system/$(basename "${unit}")"
@@ -124,6 +127,7 @@ for rc in contrib/openrc/zenbook-kb-hotkeys \
 	contrib/openrc/zenbook-kb-lid \
 	contrib/openrc/zenbook-kb-hid-asus \
 	contrib/openrc/zenbook-platform-fan-control \
+	contrib/openrc/zenbook-platform-profile \
 	contrib/openrc/zenbook-screenpad \
 	contrib/openrc/zenbook-screenpad-sync \
 	contrib/openrc/zenbook-bt-fn-row; do

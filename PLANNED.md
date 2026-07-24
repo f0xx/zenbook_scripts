@@ -7,7 +7,15 @@ kb-platform-profile get
 kb-platform-profile list          # quiet balanced performance
 kb-platform-profile set balanced
 kb-platform-profile cycle         # quiet → balanced → performance → …
+kb-platform-profile save|saved|restore
 ```
+
+**Persistence:** explicit `set`/`cycle` writes
+`/var/lib/zenbook-scripts/platform-profile`. Boot oneshot
+`platform-profile-boot` / `zenbook-platform-profile` restores after reboot or
+hibernate. Resume hooks restore before adaptive fan-control re-evaluates.
+Adaptive `platform-fan-control` writes sysfs only (does not overwrite saved
+choice). Optional PWM: `/var/lib/zenbook-scripts/fan-pwm-enable`.
 
 ## `platform-fan` — implemented (was `kb-fan`)
 

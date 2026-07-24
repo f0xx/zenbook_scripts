@@ -98,6 +98,7 @@ def refresh_install_paths(prefix: str | Path | None = None) -> Path:
     INSTALL_BIN_SCREENPAD_SYNC = b / "screenpad-sync"
     INSTALL_BIN_SCREENPAD_BOOT = b / "screenpad-boot"
     INSTALL_BIN_PLATFORM_PROFILE = b / "kb-platform-profile"
+    INSTALL_BIN_PLATFORM_PROFILE_BOOT = b / "platform-profile-boot"
     INSTALL_BIN_FAN = b / "platform-fan"
     INSTALL_BIN_FAN_LEGACY = b / "kb-fan"
     INSTALL_BIN_FAN_CONTROL = b / "platform-fan-control"
@@ -129,7 +130,10 @@ def refresh_install_paths(prefix: str | Path | None = None) -> Path:
     SYSTEMD_UNIT = zb_paths.SYSTEMD_DIR / "zenbook-kb-hotkeys.service"
     SYSTEMD_SCREENPAD_UNIT = zb_paths.SYSTEMD_DIR / "zenbook-screenpad.service"
     SYSTEMD_SCREENPAD_SYNC_UNIT = zb_paths.SYSTEMD_DIR / "zenbook-screenpad-sync.service"
+    SYSTEMD_PLATFORM_PROFILE_UNIT = zb_paths.SYSTEMD_DIR / "zenbook-platform-profile.service"
     SYSTEMD_TOUCHPAD_UNIT = zb_paths.SYSTEMD_DIR / "zenbook-platform-touchpad.service"
+    OPENRC_PLATFORM_PROFILE_INIT = zb_paths.INITD_DIR / "zenbook-platform-profile"
+    OPENRC_PLATFORM_PROFILE_CONF = zb_paths.CONFD_DIR / "zenbook-platform-profile"
     SYSTEMD_SLEEP_HOOK = zb_paths.SYSTEMD_SLEEP_DIR / "zenbook-kb-brightness"
     ACPI_EVENTS_DIR = zb_paths.ACPI_EVENTS_DIR
     ACPI_SLEEP_EVENT = ACPI_EVENTS_DIR / "zenbook-kbd-sleep"
@@ -257,6 +261,7 @@ def install_kb_brightness_tree(script_dir: Path) -> None:
         (script_dir / "bin" / "screenpad-sync", INSTALL_BIN_SCREENPAD_SYNC),
         (script_dir / "bin" / "screenpad-boot", INSTALL_BIN_SCREENPAD_BOOT),
         (script_dir / "bin" / "kb-platform-profile", INSTALL_BIN_PLATFORM_PROFILE),
+        (script_dir / "bin" / "platform-profile-boot", INSTALL_BIN_PLATFORM_PROFILE_BOOT),
         (script_dir / "bin" / "platform-fan", INSTALL_BIN_FAN),
         (script_dir / "bin" / "platform-fan-control", INSTALL_BIN_FAN_CONTROL),
         (script_dir / "bin" / "platform-probe", INSTALL_BIN_PLATFORM_PROBE),
@@ -910,6 +915,67 @@ def install_systemd_screenpad(script_dir: Path, *, with_sync: bool = True) -> No
         print(f"Installed {SYSTEMD_SCREENPAD_SYNC_UNIT}")
 
 
+def install_openrc_platform_profile(script_dir: Path, *, enable_service: bool = True) -> None:
+    """OpenRC oneshot: restore saved platform_profile / pwm after boot."""
+    src = script_dir / "contrib" / "openrc" / "zenbook-platform-profile"
+    conf = script_dir / "contrib" / "openrc" / "conf.d" / "zenbook-platform-profile"
+    if not src.is_file():
+        return
+    _sudo(["mkdir", "-p", "/var/lib/zenbook-scripts"])
+    _sudo(["chmod", "0775", "/var/lib/zenbook-scripts"])
+    _sudo(["cp", str(src), str(OPENRC_PLATFORM_PROFILE_INIT)])
+    _sudo(["chmod", "a+x", str(OPENRC_PLATFORM_PROFILE_INIT)])
+    if conf.is_file():
+        _sudo(["cp", str(conf), str(OPENRC_PLATFORM_PROFILE_CONF)])
+    if enable_service:
+        _root_run(
+            ["rc-update", "add", "zenbook-platform-profile", "default"],
+            check=False,
+            timeout=30,
+        )
+        _root_run(
+            ["rc-service", "zenbook-platform-profile", "start"],
+            check=False,
+            timeout=30,
+        )
+    print(f"Installed OpenRC service {OPENRC_PLATFORM_PROFILE_INIT}")
+
+
+def install_systemd_platform_profile(script_dir: Path) -> None:
+    """systemd oneshot: restore saved platform_profile / pwm after boot."""
+    src = script_dir / "contrib" / "systemd" / "zenbook-platform-profile.service"
+    if not src.is_file():
+        return
+    _sudo(["mkdir", "-p", "/var/lib/zenbook-scripts"])
+    _sudo(["chmod", "0775", "/var/lib/zenbook-scripts"])
+    _sudo(["cp", str(src), str(SYSTEMD_PLATFORM_PROFILE_UNIT)])
+    _sudo(["systemctl", "daemon-reload"])
+    _sudo(["systemctl", "enable", "--now", "zenbook-platform-profile.service"])
+    print(f"Installed {SYSTEMD_PLATFORM_PROFILE_UNIT}")
+
+
+def install_platform_profile_persist(
+    script_dir: Path,
+    *,
+    init_system: str | None = None,
+) -> None:
+    """Install platform-profile-boot + init oneshot (reboot/hibernate restore)."""
+    init = init_system or detect_init_system()
+    boot = script_dir / "bin" / "platform-profile-boot"
+    if boot.is_file():
+        _sudo(["cp", str(boot), str(INSTALL_BIN_PLATFORM_PROFILE_BOOT)])
+        _sudo(["chmod", "a+x", str(INSTALL_BIN_PLATFORM_PROFILE_BOOT)])
+    if init == "systemd":
+        install_systemd_platform_profile(script_dir)
+    else:
+        install_openrc_platform_profile(script_dir)
+    print(
+        "platform_profile persist: "
+        f"{INSTALL_BIN_PLATFORM_PROFILE} set|restore; "
+        f"state /var/lib/zenbook-scripts/platform-profile"
+    )
+
+
 def install_screenpad_support(
     script_dir: Path,
     *,
@@ -925,6 +991,7 @@ def install_screenpad_support(
         install_systemd_screenpad(script_dir, with_sync=with_sync)
     else:
         install_openrc_screenpad(script_dir, with_sync=with_sync)
+    install_platform_profile_persist(script_dir, init_system=init)
     print(f"Installed {INSTALL_BIN_SCREENPAD}, {INSTALL_BIN_PLATFORM_PROFILE}")
     return init
 
@@ -999,10 +1066,12 @@ def install_all(
             install_systemd_screenpad(script_dir, with_sync=with_screenpad_sync)
         else:
             install_openrc_screenpad(script_dir, with_sync=with_screenpad_sync)
+        install_platform_profile_persist(script_dir, init_system=init_preview)
         print(f"ScreenPad tools: {INSTALL_BIN_SCREENPAD}")
     elif has_platform_profile():
-        # Still install CLI + sudoers for platform profile on other ASUS boards.
+        # Still install CLI + sudoers + boot restore for platform profile.
         install_sudoers_ux5400()
+        install_platform_profile_persist(script_dir)
         print(f"Platform profile CLI: {INSTALL_BIN_PLATFORM_PROFILE}")
 
     if with_fan_control is None:

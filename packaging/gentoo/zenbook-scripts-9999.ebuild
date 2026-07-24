@@ -201,6 +201,7 @@ src_install() {
 
 	# User-facing CLIs
 	dobin configure.py configure.sh bin/kb-brightness bin/kb-platform-profile bin/platform-fan bin/platform-probe bin/platform-power bin/platform-touchpad bin/platform-metrics
+	dobin bin/platform-profile-boot
 	dobin bin/kb-fan
 	if use fan_control; then
 		dobin bin/platform-fan-control bin/kb-fan-control
@@ -276,6 +277,10 @@ src_install() {
 		newinitd contrib/openrc/zenbook-platform-fan-control zenbook-platform-fan-control
 		newconfd contrib/openrc/conf.d/zenbook-platform-fan-control zenbook-platform-fan-control
 		dosym zenbook-platform-fan-control /etc/init.d/zenbook-kb-fan-control
+		newinitd contrib/openrc/zenbook-platform-profile zenbook-platform-profile
+		newconfd contrib/openrc/conf.d/zenbook-platform-profile zenbook-platform-profile
+		insinto /etc/systemd/system
+		doins contrib/systemd/zenbook-platform-profile.service
 	fi
 
 	if use screenpad; then
@@ -337,6 +342,7 @@ pkg_postinst() {
 		elog "  sudo rc-update add zenbook-platform-fan-control default"
 		elog "  sudo rc-service zenbook-platform-fan-control start"
 		elog "  platform-probe && platform-fan-control check"
+		elog "  sudo rc-update add zenbook-platform-profile default  # persist platform_profile"
 		elog "UX8406: configure/install sets fn_row_policy=7 via dmidecode/sysfs."
 	fi
 

@@ -43,6 +43,7 @@ def run_root(
     input_bytes: bytes | None = None,
     allow_ask: bool | None = None,
     capture: bool = False,
+    env: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess[bytes]:
     cmd = [*sudo_prefix(allow_ask=allow_ask), *argv]
     return subprocess.run(
@@ -51,6 +52,7 @@ def run_root(
         timeout=timeout,
         input=input_bytes,
         capture_output=capture,
+        env=env,
     )
 
 
