@@ -67,7 +67,7 @@ LEGACY_BIN_NAMES = (
     "platform-power",
     "platform-touchpad",
     "platform-touchpad-gui",
-    "platform-metrics",
+    "platform-touch-cal",
     "platform-tray",
     "zenbook-fan-control-hook",
     "screenpad",

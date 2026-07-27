@@ -1,0 +1,339 @@
+#!/usr/bin/env python3
+"""Fullscreen dual-eDP touch calibrator / jump diagnoser (PySide6).
+
+Principles from ``xinput-val``:
+  - fullscreen targets per output (all screens at once)
+  - TL → TR → BR → BL corners on the *active* screen
+  - live touch/pointer dots
+  - affine / bbox fit → JSON report (Xorg matrix for reference only)
+
+On Plasma Wayland the goal is to **prove** lower-panel touch warping to the
+primary (seat routing). Jump = event delivered to window A while global
+coordinates (or expected touch panel) disagree.
+
+Keys: Esc/q quit · Tab/n next active screen · g report · r reset corners
+"""
+
+from __future__ import annotations
+
+import json
+import sys
+import time
+from pathlib import Path
+
+_ROOT = Path(__file__).resolve().parent.parent
+for _share in (_ROOT, Path("/usr/share/zenbook-scripts"), Path("/usr/local/share/zenbook-scripts")):
+    if (_share / "zenbook_kb" / "touch_calibrate.py").is_file():
+        sys.path.insert(0, str(_share))
+        break
+
+try:
+    from PySide6.QtCore import QEvent, QPointF, Qt
+    from PySide6.QtGui import QColor, QFont, QGuiApplication, QPainter, QPen
+    from PySide6.QtWidgets import QApplication, QWidget
+except ImportError:
+    print(
+        "PySide6 required (Gentoo: USE=qt6 / emerge dev-python/pyside:6).",
+        file=sys.stderr,
+    )
+    raise SystemExit(1)
+
+from zenbook_kb.touch_calibrate import (  # noqa: E402
+    CalSession,
+    ScreenGeom,
+    TouchHit,
+    diagnose_hit,
+)
+
+
+class CalPanel(QWidget):
+    """One fullscreen surface; all panels stay open for cross-screen jump detect."""
+
+    def __init__(
+        self,
+        app_ctl: "TouchCalApp",
+        geom: ScreenGeom,
+        session: CalSession,
+        all_geoms: list[ScreenGeom],
+    ):
+        super().__init__()
+        self.app_ctl = app_ctl
+        self.geom = geom
+        self.session = session
+        self.all_geoms = all_geoms
+        self.setWindowTitle(f"platform-touch-cal — {geom.name}")
+        self.setAttribute(Qt.WidgetAttribute.WA_AcceptTouchEvents, True)
+        self.setMouseTracking(True)
+        self._dots: list[tuple[float, float, str]] = []
+        self._cursor = QPointF(0, 0)
+
+    def _ingest(self, global_x: float, global_y: float, local_x: float, local_y: float, source: str) -> None:
+        hit = TouchHit(
+            global_x=global_x,
+            global_y=global_y,
+            screen_name=self.geom.name,
+            source=source,
+            stamp_ms=int(time.time() * 1000),
+        )
+        self.app_ctl.on_hit(hit, receiver=self, local=(local_x, local_y))
+
+    def mousePressEvent(self, event) -> None:  # noqa: N802
+        gp = event.globalPosition()
+        lp = event.position()
+        self._ingest(gp.x(), gp.y(), lp.x(), lp.y(), "mouse")
+
+    def mouseMoveEvent(self, event) -> None:  # noqa: N802
+        self._cursor = event.position()
+        self.update()
+
+    def event(self, event):  # noqa: N802
+        if event.type() in (QEvent.Type.TouchBegin, QEvent.Type.TouchUpdate):
+            for point in event.points():
+                # Prefer scene/global if Qt fills them; fall back to mapToGlobal.
+                try:
+                    gp = point.globalPosition()
+                    gx, gy = gp.x(), gp.y()
+                except Exception:  # noqa: BLE001
+                    lp = point.position()
+                    g = self.mapToGlobal(lp.toPoint())
+                    gx, gy = float(g.x()), float(g.y())
+                lp = point.position()
+                if event.type() == QEvent.Type.TouchBegin:
+                    self._ingest(gx, gy, lp.x(), lp.y(), "touch")
+                else:
+                    self._cursor = lp
+                    self.update()
+            return True
+        return super().event(event)
+
+    def keyPressEvent(self, event) -> None:  # noqa: N802
+        key = event.key()
+        if key in (Qt.Key.Key_Escape, Qt.Key.Key_Q):
+            self.app_ctl.app.quit()
+        elif key == Qt.Key.Key_G:
+            self.app_ctl.emit_report()
+        elif key == Qt.Key.Key_R:
+            self.app_ctl.reset_active()
+        elif key in (Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_N, Qt.Key.Key_Tab):
+            self.app_ctl.next_screen()
+        else:
+            super().keyPressEvent(event)
+
+    def add_dot(self, lx: float, ly: float, kind: str) -> None:
+        self._dots.append((lx, ly, kind))
+        if len(self._dots) > 200:
+            self._dots = self._dots[-200:]
+        self.update()
+
+    def paintEvent(self, _event) -> None:  # noqa: N802
+        p = QPainter(self)
+        active = self.app_ctl.active_name() == self.geom.name
+        p.fillRect(self.rect(), QColor(18, 28, 22) if active else QColor(18, 18, 22))
+        w, h = self.width(), self.height()
+
+        p.setPen(QPen(QColor(255, 200, 40) if active else QColor(80, 80, 100), 3 if active else 2))
+        p.drawRect(4, 4, w - 8, h - 8)
+
+        if active:
+            targets_local = [
+                (t[0] - self.geom.x, t[1] - self.geom.y) for t in self.session.targets()
+            ]
+            labels = ("1 TL", "2 TR", "3 BR", "4 BL")
+            n_done = len(self.session.observed)
+            for i, ((tx, ty), lab) in enumerate(zip(targets_local, labels)):
+                done = i < n_done
+                is_active = i == n_done
+                if done:
+                    color = QColor(80, 200, 120)
+                elif is_active:
+                    color = QColor(255, 200, 40)
+                else:
+                    color = QColor(90, 90, 110)
+                p.setBrush(color)
+                p.setPen(QPen(Qt.GlobalColor.white, 2 if is_active else 1))
+                r = 28 if is_active else 18
+                p.drawEllipse(QPointF(tx, ty), r, r)
+                p.setPen(QColor(240, 240, 240))
+                p.setFont(QFont("Sans", 12, QFont.Weight.Bold if is_active else QFont.Weight.Normal))
+                p.drawText(int(tx + r + 6), int(ty + 4), lab)
+
+        for lx, ly, kind in self._dots:
+            p.setBrush(QColor(220, 60, 80) if kind == "jump" else QColor(120, 160, 255))
+            p.setPen(Qt.PenStyle.NoPen)
+            p.drawEllipse(QPointF(lx, ly), 6, 6)
+
+        p.setPen(QColor(220, 220, 230))
+        p.setFont(QFont("Sans", 14))
+        primary = "  PRIMARY" if self.geom.primary else ""
+        role = "ACTIVE — touch the yellow corners" if active else "idle (still receives events)"
+        lines = [
+            f"{self.geom.name}  {self.geom.w}x{self.geom.h}+{self.geom.x}+{self.geom.y}{primary}",
+            role,
+            self.app_ctl.status_line(),
+            "Esc/q quit · Tab next · g report · r reset",
+            "Red = jump (receiver ≠ geom / ≠ active panel). Blue = ok.",
+        ]
+        y = 36
+        for line in lines:
+            p.drawText(24, y, line)
+            y += 22
+
+
+class TouchCalApp:
+    def __init__(self) -> None:
+        self.app = QApplication(sys.argv)
+        self.app.setApplicationName("platform-touch-cal")
+        screens = QGuiApplication.screens()
+        if not screens:
+            print("No QScreens available.", file=sys.stderr)
+            raise SystemExit(2)
+
+        self.geoms: list[ScreenGeom] = []
+        for qs in screens:
+            g = qs.geometry()
+            self.geoms.append(
+                ScreenGeom(
+                    name=qs.name(),
+                    x=g.x(),
+                    y=g.y(),
+                    w=g.width(),
+                    h=g.height(),
+                    primary=qs is QGuiApplication.primaryScreen(),
+                )
+            )
+
+        print("Screens:", flush=True)
+        for s in self.geoms:
+            print(f"  {s.name}: {s.w}x{s.h}+{s.x}+{s.y} primary={s.primary}", flush=True)
+
+        self._index = 0
+        # Prefer starting on a non-primary (lower) panel when dual-eDP.
+        for i, s in enumerate(self.geoms):
+            if not s.primary:
+                self._index = i
+                break
+
+        self._sessions: dict[str, CalSession] = {
+            s.name: CalSession(screen=s) for s in self.geoms
+        }
+        self._panels: list[CalPanel] = []
+        self._status = "Touch the ACTIVE (green border) panel corners TL→TR→BR→BL."
+        self._jump_total = 0
+
+        for i, geom in enumerate(self.geoms):
+            qs = screens[i]
+            panel = CalPanel(self, geom, self._sessions[geom.name], self.geoms)
+            panel.move(geom.x, geom.y)
+            panel.resize(geom.w, geom.h)
+            panel.setScreen(qs)
+            panel.showFullScreen()
+            self._panels.append(panel)
+
+        self._repaint_all()
+
+    def active_name(self) -> str:
+        return self.geoms[self._index].name
+
+    def status_line(self) -> str:
+        return self._status
+
+    def _repaint_all(self) -> None:
+        for p in self._panels:
+            p.update()
+
+    def next_screen(self) -> None:
+        self._index = (self._index + 1) % len(self.geoms)
+        self._status = f"Active → {self.active_name()}. Touch that panel's yellow corners."
+        print(f"ACTIVE {self.active_name()}", flush=True)
+        self._repaint_all()
+
+    def reset_active(self) -> None:
+        sess = self._sessions[self.active_name()]
+        sess.observed.clear()
+        self._status = f"Corners reset on {self.active_name()}."
+        self._repaint_all()
+
+    def on_hit(self, hit: TouchHit, *, receiver: CalPanel, local: tuple[float, float]) -> None:
+        # Geometry mismatch (receiver window vs coords).
+        geom_v = diagnose_hit(self.geoms, hit)
+        # Expected-panel mismatch: user should touch ACTIVE screen.
+        expected = self.active_name()
+        expected_jump = hit.screen_name != expected
+        jump = geom_v.jump or expected_jump
+        if expected_jump and not geom_v.jump:
+            detail = (
+                f"touch expected on '{expected}' but event delivered to '{hit.screen_name}' "
+                f"at ({hit.global_x:.1f},{hit.global_y:.1f}) — classic dual-eDP warp"
+            )
+        else:
+            detail = geom_v.detail
+
+        # Always attribute hits to the active calibration session for corner capture
+        # only when receiver is the active panel and not a jump.
+        active_sess = self._sessions[expected]
+        active_sess.add_hit(hit, self.geoms)
+        if jump:
+            self._jump_total += 1
+
+        kind = "jump" if jump else "ok"
+        receiver.add_dot(local[0], local[1], kind)
+
+        if hit.screen_name == expected and not jump and len(active_sess.observed) < 4:
+            n = active_sess.record_corner(hit.global_x, hit.global_y)
+            self._status = f"Corner {n}/4 on {expected} — {detail}"
+            print(f"CALIB {n} {expected} ({hit.global_x:.1f},{hit.global_y:.1f}) {detail}", flush=True)
+            if n == 4:
+                self._status += "  Press g for report."
+        else:
+            self._status = detail
+            print(
+                f"HIT recv={hit.screen_name} expect={expected} "
+                f"({hit.global_x:.1f},{hit.global_y:.1f}) jump={jump} {detail}",
+                flush=True,
+            )
+        self._repaint_all()
+
+    def emit_report(self) -> None:
+        reports = []
+        for name, sess in self._sessions.items():
+            solved = sess.solve()
+            if solved:
+                reports.append(solved)
+            else:
+                reports.append(
+                    {
+                        "screen": name,
+                        "corners_done": len(sess.observed),
+                        "jump_count": sum(1 for j in sess.jumps if j.jump),
+                        "hits": len(sess.hits),
+                    }
+                )
+        payload = {
+            "total_expected_panel_or_geom_jumps": self._jump_total,
+            "screens": reports,
+            "note": (
+                "Plasma Wayland: high jump_count with recv≠expect on lower panel "
+                "indicates KWin/seat touch routing, not a fixable Xorg matrix."
+            ),
+        }
+        text = json.dumps(payload, indent=2)
+        print("\n# ---- platform-touch-cal report ----", flush=True)
+        print(text, flush=True)
+        out = Path.home() / ".config" / "zenbook-scripts" / "touch-cal-last.json"
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(text + "\n")
+        print(f"# wrote {out}", flush=True)
+        self._status = f"Report → {out}"
+        self._repaint_all()
+
+    def run(self) -> int:
+        return self.app.exec()
+
+
+def main(argv: list[str] | None = None) -> int:
+    _ = argv
+    return TouchCalApp().run()
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

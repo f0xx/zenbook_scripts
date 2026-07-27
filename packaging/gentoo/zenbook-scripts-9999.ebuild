@@ -262,6 +262,7 @@ src_install() {
 		dobin configure_gui.py
 		dobin bin/platform-tray
 		dobin bin/platform-touchpad-gui
+		dobin bin/platform-touch-cal
 	fi
 
 	if use plasma; then

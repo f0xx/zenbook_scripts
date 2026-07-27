@@ -12,6 +12,7 @@ Deep dives for contributors. Root `README.*.md` stays operator-facing.
 | [daemons/README.md](daemons/README.md) | Atlas + per-daemon pages |
 | [duo/bt-fn-row.md](duo/bt-fn-row.md) | BT Mode B remapper, grab safety, D-Bus |
 | [duo/dock-and-swap.md](duo/dock-and-swap.md) | Dock eDP-2 + screen-swap / KWin |
+| [duo/touch-jump.md](duo/touch-jump.md) | Dual-eDP touch jump + `platform-touch-cal` |
 | [session/plasma-session.md](session/plasma-session.md) | `session.json`, inhibit, KCM |
 | [touchpad/pipeline.md](touchpad/pipeline.md) | typing-inhibit → soft_accel |
 | [touchpad/calibrate.md](touchpad/calibrate.md) | Calibrate deepen plan (0.0.4) |

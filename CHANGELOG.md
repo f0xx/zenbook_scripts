@@ -19,9 +19,12 @@ Gentoo-friendly naming where needed (`v0.0.1_hf1` → PV `0.0.1_p1`,
 
 ### Added
 
+- **`platform-touch-cal`:** fullscreen dual-eDP touch calibrator / jump
+  diagnoser (xinput-val principles; PySide6; `USE=qt6`). Proves lower→primary
+  warp; does not claim a compositor fix.
 - `zenbook_kb.dmi.is_duo_chassis()` / `has_duo_pogo_usb()`; unit tests.
 - Contributor `docs/` research library seed (Fn-row, daemons, Duo, session,
-  touchpad).
+  touchpad, touch-jump).
 
 ## [0.0.3] — 2026-07-24
 

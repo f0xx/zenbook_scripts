@@ -28,7 +28,7 @@ Status legend: **done** · **now** · **next** · **later**
 | Contributor research library | **done** (seed) | [`docs/`](docs/README.md) — Fn-row RE, daemon atlas, Duo/session/touchpad |
 | Gentoo KCM via `USE=plasma` | **done** (tree) | emerge builds/installs KCM; Displays tab gated |
 | Touchpad GUI calibrate (capture → knobs) | **now** | MVP Calibrate… in tuner; deepen for BT palm parasites |
-| UX8406 dual-eDP touch jump (Plasma/Wayland) | **next** | touch on lower panel warps cursor to primary — likely KWin |
+| UX8406 dual-eDP touch jump (Plasma/Wayland) | **now** | `platform-touch-cal` diagnoses; compositor fix TBD |
 | UX5400 WM/DE annoyance (TBD) | **later** | palm OK; separate Plasma/WM issue — describe when ready |
 | UX581 lightbar (HID `0b05:0124`) | **later** | **blocked on hardware**; side branch `zenbook_ux581` |
 | UX5400 AccelSpeed polish | **later** | same pipeline; lower priority than UX8406 |
@@ -42,7 +42,7 @@ Status legend: **done** · **now** · **next** · **later**
 | 4.0 | **KCM in emerge + Displays gate** | **Done (tree).** `USE=plasma` builds KCM; tab gated by Duo/ScreenPad. |
 | 4.1 | **Touchpad Calibrate deepen** | BT palm parasites; capture→knobs; UX8406 primary. |
 | 4.2 | **`docs/` research library** | **Seeded.** Expand as RE continues; see [`docs/README.md`](docs/README.md). |
-| 4.3 | **Dual-eDP touch jump** | Observe/fix KWin/Wayland cursor warp from lower panel touch. |
+| 4.3 | **Dual-eDP touch jump** | **Diagnoser shipped** (`platform-touch-cal`). Fix = KWin/field; claim only after jump≈0. |
 | 4.4 | **UX5400 WM/DE** | When described by operator. |
 | 4.5 | **UX581 lightbar** | Hardware-gated; `zenbook_ux581`. |
 
