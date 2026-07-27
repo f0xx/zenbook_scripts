@@ -59,6 +59,11 @@ def is_ux8406() -> bool:
     return "UX8406" in _dmi_blob()
 
 
+def is_ux581() -> bool:
+    blob = _dmi_blob()
+    return "UX581" in blob or "UX582" in blob
+
+
 def is_duo_chassis() -> bool:
     """True for Zenbook Duo dual-eDP chassis (detachable KB + lower panel).
 

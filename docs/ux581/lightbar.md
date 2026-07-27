@@ -1,6 +1,8 @@
-# UX581 / UX582 lightbar (research stub)
+# UX581 / UX582 lightbar
 
-**Status:** blocked on hardware. Side branch: `zenbook_ux581`.
+**Status:** sidebranch `zenbook_ux581`. Unit tests for report builders only —
+no live HID tests without hardware.
+
 Sold as UX582; DMI often UX581 (e.g. UX581GV/LV).
 
 ## What we know
@@ -13,19 +15,29 @@ Sold as UX582; DMI often UX581 (e.g. UX581GV/LV).
 | Linux stock | `asus::lightbar` WMI on/off only (useless for colour) |
 | OpenRGB / rogauracore | Wrong protocol (Aura Core USB `0x5A` `0xBA`…) |
 
-## Working poke (historical)
+## Helper: `platform-lightbar`
 
-Disable BIOS Fast Boot; `hidapitester` on `0b05:0124`; feature report **`0x20`**
-(32 bytes). Partial map: reg1=anim (1–20), reg2=2 infinite loop, reg3=repeat,
-reg4=brightness, reg5=LED count; **reg6 bricks device**. Related:
-andykarpov/expertbook-led. Research thread:
+```bash
+./bin/platform-lightbar status          # DMI + device presence
+./bin/platform-lightbar list            # hidraw nodes
+./bin/platform-lightbar set --anim 1    # dry-run (prints hex + hidapitester line)
+./bin/platform-lightbar set --anim 16 --brightness 200 --apply   # live write
+```
+
+Feature report **`0x20`** (32-byte payload). Partial map: anim, loop, repeat,
+brightness, LED count. **Register index 6 is blocked** (bricks device).
+
+Related: [andykarpov/expertbook-led](https://github.com/andykarpov/expertbook-led),
 [s-light/ASUS-ZenBook-Pro-Duo-UX581GV#3](https://github.com/s-light/ASUS-ZenBook-Pro-Duo-UX581GV/issues/3).
 
 ## When device returns
 
-1. Confirm DMI + `lsusb -d 0b05:0124`
-2. Try expertbook-led / hidapitester
-3. Add repo helper for feature reports
+1. Confirm DMI + `lsusb -d 0b05:0124` / `platform-lightbar list`
+2. BIOS Fast Boot **off**
+3. Dry-run then `--apply` known-good anim values; expand colour map from sniff
 4. Optional OpenRGB upstream later
 
-Not in 0.0.3 / 0.0.4 feature gate until hardware is available.
+## See also
+
+- [`../../README.ux581.md`](../../README.ux581.md)
+- `zenbook_kb/lightbar.py`, `tests/test_lightbar.py`

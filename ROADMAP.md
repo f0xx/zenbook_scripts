@@ -30,7 +30,7 @@ Status legend: **done** · **now** · **next** · **later**
 | Touchpad GUI calibrate (capture → knobs) | **now** | MVP Calibrate… in tuner; deepen for BT palm parasites |
 | UX8406 dual-eDP touch jump (Plasma/Wayland) | **now** | `platform-touch-cal` diagnoses; compositor fix TBD |
 | UX5400 WM/DE annoyance (TBD) | **later** | palm OK; separate Plasma/WM issue — describe when ready |
-| UX581 lightbar (HID `0b05:0124`) | **later** | **blocked on hardware**; side branch `zenbook_ux581` |
+| UX581 lightbar (HID `0b05:0124`) | **later** | Sidebranch `zenbook_ux581`: `platform-lightbar` scaffold; no HW tests |
 | UX5400 AccelSpeed polish | **later** | same pipeline; lower priority than UX8406 |
 | Generic non-ASUS fan backends | **later** | thinkpad/hp/dell hwmon profiles |
 | Ubuntu KF6 / KCM `.deb` | **later** | needs 26.04+ or Kubuntu KF6 stack |

@@ -103,12 +103,22 @@ Optional Windows dual-boot capture:
 1. Install USBPcap / similar while Armoury / ASUSOptimization drives rainbow modes.
 2. Or use [OpenRGB SMBus sniffer](https://gitlab.com/OpenRGBDevelopers/Tools/openrgb-smbus-sniffer-tool) only if traffic is truly on a free SMBus (UX581 path is I²C-HID; HID capture is more relevant).
 
+## Helper in this branch
+
+```bash
+./bin/platform-lightbar status
+./bin/platform-lightbar set --anim 1          # dry-run
+./bin/platform-lightbar set --anim 16 --apply # live (needs 0b05:0124)
+```
+
+Report builders + brick-register guard are unit-tested (`tests/test_lightbar.py`).
+No live HID tests until hardware is present. Deep dive:
+[`docs/ux581/lightbar.md`](docs/ux581/lightbar.md).
+
 ## Likely implementation direction (this repo)
 
 1. Confirm DMI + `0b05:0124` on the real unit (UX581 vs UX582LR naming).
-2. Add a small `zenbook_kb` / `bin/` helper: open hidraw for `0b05:0124`, send
-   feature `0x20` / `0x5a` with documented mode tables as they are reverse
-   engineered.
+2. Expand `zenbook_kb/lightbar.py` mode/colour tables from sniff / expertbook-led.
 3. Do **not** expect OpenRGB/rogauracore to grow support without upstream work;
    optionally contribute a controller there once the report map is solid.
 4. Keep keyboard backlight / hotkeys separate (Aura Core or WMI, as on other
