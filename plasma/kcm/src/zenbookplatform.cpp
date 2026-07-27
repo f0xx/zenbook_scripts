@@ -20,8 +20,46 @@
 #endif
 
 #ifndef ZENBOOK_KCM_VERSION
-#define ZENBOOK_KCM_VERSION "0.0.3"
+#define ZENBOOK_KCM_VERSION "0.0.4"
 #endif
+
+namespace {
+
+QString readSysfsTrimmed(const QString &path)
+{
+    QFile f(path);
+    if (!f.open(QIODevice::ReadOnly)) {
+        return {};
+    }
+    return QString::fromUtf8(f.readAll()).trimmed();
+}
+
+bool dmiLooksLikeDuo(const QString &blob)
+{
+    const QString u = blob.toUpper();
+    return u.contains(QLatin1String("UX8406")) || u.contains(QLatin1String("UX8402"))
+        || u.contains(QLatin1String("UX581")) || u.contains(QLatin1String("UX582"));
+}
+
+bool usbPogoPresent()
+{
+    const QDir usb(QStringLiteral("/sys/bus/usb/devices"));
+    if (!usb.exists()) {
+        return false;
+    }
+    const QStringList entries = usb.entryList(QDir::Dirs | QDir::NoDotAndDotDot);
+    for (const QString &name : entries) {
+        const QString base = usb.absoluteFilePath(name);
+        const QString vid = readSysfsTrimmed(base + QStringLiteral("/idVendor")).toLower();
+        const QString pid = readSysfsTrimmed(base + QStringLiteral("/idProduct")).toLower();
+        if (vid == QLatin1String("0b05") && pid == QLatin1String("1b2c")) {
+            return true;
+        }
+    }
+    return false;
+}
+
+} // namespace
 
 K_PLUGIN_CLASS_WITH_JSON(ZenbookPlatform, "kcm_zenbook_platform.json")
 
@@ -33,9 +71,26 @@ ZenbookPlatform::ZenbookPlatform(QObject *parent, const KPluginMetaData &data)
     m_process = new QProcess(this);
     connect(m_process, &QProcess::finished, this, &ZenbookPlatform::onProcessFinished);
 
+    detectHardware();
     loadSession();
     refreshProbe();
-    refreshDuoStatus();
+    if (m_hasDuoDock) {
+        refreshDuoStatus();
+    }
+    if (m_hasScreenpad) {
+        refreshScreenpadStatus();
+    }
+}
+
+void ZenbookPlatform::detectHardware()
+{
+    const QString product = readSysfsTrimmed(QStringLiteral("/sys/class/dmi/id/product_name"));
+    const QString board = readSysfsTrimmed(QStringLiteral("/sys/class/dmi/id/board_name"));
+    m_dmiProduct = product.isEmpty() ? QStringLiteral("unknown") : product;
+    const QString blob = product + QLatin1Char(' ') + board;
+
+    m_hasScreenpad = QFile::exists(QStringLiteral("/sys/class/backlight/asus_screenpad"));
+    m_hasDuoDock = dmiLooksLikeDuo(blob) || usbPogoPresent();
 }
 
 QString ZenbookPlatform::sessionConfigPath() const
@@ -52,10 +107,7 @@ QString ZenbookPlatform::version() const
 
 QString ZenbookPlatform::documentationUrl() const
 {
-    // Public docs only — never bake a local checkout path into the UI.
-    // Lives on feature/plasma-kcm-powerdevil until the next RC merges to main.
-    return QStringLiteral(
-        "https://github.com/f0xx/zenbook_scripts/blob/feature/plasma-kcm-powerdevil/README.plasma.md");
+    return QStringLiteral("https://github.com/f0xx/zenbook_scripts/blob/main/README.plasma.md");
 }
 
 QString ZenbookPlatform::resolveScript(const QString &name) const
@@ -116,6 +168,8 @@ void ZenbookPlatform::runScript(const QString &name, const QStringList &args, co
         m_outputTarget = OutputTarget::Probe;
     } else if (name == QLatin1String("platform-duo-dock") && args.value(0) == QLatin1String("status")) {
         m_outputTarget = OutputTarget::DuoStatus;
+    } else if (name == QLatin1String("screenpad") && args.value(0) == QLatin1String("status")) {
+        m_outputTarget = OutputTarget::ScreenpadStatus;
     } else {
         m_outputTarget = OutputTarget::Command;
     }
@@ -153,14 +207,21 @@ void ZenbookPlatform::onProcessFinished(int exitCode, QProcess::ExitStatus statu
         m_duoStatusText = combined.trimmed();
         Q_EMIT duoStatusTextChanged();
         break;
+    case OutputTarget::ScreenpadStatus:
+        m_screenpadStatusText = combined.trimmed();
+        Q_EMIT screenpadStatusTextChanged();
+        break;
     case OutputTarget::Command:
         m_lastCommandOutput = combined.trimmed();
         Q_EMIT lastCommandOutputChanged();
         break;
     }
 
-    if (m_outputTarget == OutputTarget::Command && m_process->program().endsWith(QLatin1String("platform-duo-dock"))) {
+    const QString prog = m_process->program();
+    if (m_outputTarget == OutputTarget::Command && prog.endsWith(QLatin1String("platform-duo-dock"))) {
         refreshDuoStatus();
+    } else if (m_outputTarget == OutputTarget::Command && prog.endsWith(QLatin1String("screenpad"))) {
+        refreshScreenpadStatus();
     }
 }
 
@@ -187,6 +248,26 @@ void ZenbookPlatform::runDuoUndocked()
 void ZenbookPlatform::runScreenSwap()
 {
     runScript(QStringLiteral("platform-screen-swap"), {}, QStringLiteral("lastCommandOutput"));
+}
+
+void ZenbookPlatform::refreshScreenpadStatus()
+{
+    runScript(QStringLiteral("screenpad"), {QStringLiteral("status")}, QStringLiteral("screenpadStatusText"));
+}
+
+void ZenbookPlatform::runScreenpadOn()
+{
+    runScript(QStringLiteral("screenpad"), {QStringLiteral("on")}, QStringLiteral("lastCommandOutput"));
+}
+
+void ZenbookPlatform::runScreenpadOff()
+{
+    runScript(QStringLiteral("screenpad"), {QStringLiteral("off")}, QStringLiteral("lastCommandOutput"));
+}
+
+void ZenbookPlatform::runScreenpadSync()
+{
+    runScript(QStringLiteral("screenpad"), {QStringLiteral("sync")}, QStringLiteral("lastCommandOutput"));
 }
 
 QJsonObject ZenbookPlatform::defaultProfileObject() const

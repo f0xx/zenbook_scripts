@@ -14,7 +14,14 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
-from zenbook_kb.dmi import board_name, has_platform_profile, has_screenpad_sysfs, product_name
+from zenbook_kb.dmi import (
+    board_name,
+    has_duo_pogo_usb,
+    has_platform_profile,
+    has_screenpad_sysfs,
+    is_duo_chassis,
+    product_name,
+)
 
 
 @dataclass
@@ -373,15 +380,46 @@ def probe_touchpad_sensitivity() -> Feature:
     )
 
 
+def probe_duo_dock() -> Feature:
+    """Dual-eDP Duo dock helpers (platform-duo-dock / screen-swap)."""
+    if is_duo_chassis():
+        detail = "Duo chassis (DMI)"
+        if has_duo_pogo_usb():
+            detail += "; USB pogo 0b05:1b2c present"
+        return Feature(
+            "duo_dock",
+            "Duo dock / dual eDP",
+            True,
+            detail,
+            backend="platform-duo-dock",
+            install_hint="USE=plasma or hotkeys; platform-duo-dock / platform-screen-swap",
+        )
+    if has_duo_pogo_usb():
+        return Feature(
+            "duo_dock",
+            "Duo dock / dual eDP",
+            True,
+            "USB pogo 0b05:1b2c (DMI not Duo)",
+            backend="usb-1b2c",
+            install_hint="platform-duo-dock",
+        )
+    return Feature(
+        "duo_dock",
+        "Duo dock / dual eDP",
+        False,
+        "not a Duo dual-eDP chassis (ScreenPad-only models use USE=screenpad)",
+        install_hint="UX5400: screenpad CLI; Duo: UX8406/UX581/…",
+    )
+
+
 def probe_duo_keyboard_bt() -> Feature:
     """UX8406 Primax BT keyboard bind health (keys missing when rdesc fixup fails)."""
-    product = (product_name() or "") + " " + (board_name() or "")
-    if "UX8406" not in product.upper():
+    if not is_duo_chassis():
         return Feature(
             "duo_kb_bt",
             "Duo keyboard (Bluetooth)",
             False,
-            "not UX8406",
+            "not Duo chassis",
         )
     try:
         from zenbook_kb.touchpad import duo_keyboard_hid_health
@@ -443,6 +481,7 @@ def build_report() -> ProbeReport:
         probe_ac(),
         probe_touchpad(),
         probe_touchpad_sensitivity(),
+        probe_duo_dock(),
         probe_duo_keyboard_bt(),
     ]
     use: list[str] = []
@@ -455,13 +494,15 @@ def build_report() -> ProbeReport:
         use.append("screenpad")
     else:
         skip.append("screenpad")
-    if "UX8406" in product.upper() or "UX8406" in board.upper():
+    if is_duo_chassis() or "UX8406" in product.upper() or "UX8406" in board.upper():
         use.append("zenbook_ux8406")
         use.append("kernel")
         use.append("hotkeys")
+        use.append("plasma")
     elif "UX5400" in product.upper():
         skip.append("kernel")
         skip.append("zenbook_ux8406")
+        use.append("plasma")  # session + KCM still useful; Displays = ScreenPad
     return ProbeReport(
         dmi_product=product,
         dmi_board=board,

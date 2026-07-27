@@ -24,47 +24,39 @@ Status legend: **done** · **now** · **next** · **later**
 | Package / announce **0.0.2** | **done** | tag + published release + Gentoo Manifest/ebuild |
 | Plasma KCM + PowerDevil / session | **done** (0.0.3) | `platform-session` + KCM MVP; tag `v0.0.3` |
 | Ubuntu `.deb` + packaging checks | **done** (CLI) | Smoke-built on Ubuntu 24.04 Server (augury1); KF6/KCM not in Noble |
-| Alpine `apk` + packaging rules | **done** (smoke) | APK built on cast04; promote with 0.0.3 |
-| UX5400 WM/DE annoyance (TBD) | **later** | palm OK; separate Plasma/WM issue — describe when ready |
-| UX8406 dual-eDP touch jump (Plasma/Wayland) | **later** | touch on lower panel warps cursor to primary — likely KWin, not our filter |
+| Alpine `apk` + packaging rules | **done** (smoke) | APK built on cast04 |
+| Contributor research library | **done** (seed) | [`docs/`](docs/README.md) — Fn-row RE, daemon atlas, Duo/session/touchpad |
+| Gentoo KCM via `USE=plasma` | **done** (tree) | emerge builds/installs KCM; Displays tab gated |
 | Touchpad GUI calibrate (capture → knobs) | **now** | MVP Calibrate… in tuner; deepen for BT palm parasites |
-| UX581 lightbar (HID `0b05:0124`) | **later** | **blocked on hardware**; side branch `zenbook_ux581` — **not in 0.0.3_pre1** |
+| UX8406 dual-eDP touch jump (Plasma/Wayland) | **next** | touch on lower panel warps cursor to primary — likely KWin |
+| UX5400 WM/DE annoyance (TBD) | **later** | palm OK; separate Plasma/WM issue — describe when ready |
+| UX581 lightbar (HID `0b05:0124`) | **later** | **blocked on hardware**; side branch `zenbook_ux581` |
 | UX5400 AccelSpeed polish | **later** | same pipeline; lower priority than UX8406 |
 | Generic non-ASUS fan backends | **later** | thinkpad/hp/dell hwmon profiles |
+| Ubuntu KF6 / KCM `.deb` | **later** | needs 26.04+ or Kubuntu KF6 stack |
 
-### Field check — UX5400EA (`feature/epp-rapl-touchpad`)
-
-Validated on-device: `platform-probe`, fan readings/PWM modes, `platform-fan-control`
-daemon, tray metrics graph across profiles. ScreenPad oneshot restart no longer
-spams `start-stop-daemon: no matching processes`.
-
-## Touchpad / palm rejection (UX8406, related UX5400)
-
-**Problem (not “sensitivity” alone):** large pad near the keyboard; while typing,
-palm edges + light taps move the pointer and steal focus from the current field.
-
-**MVP shipped:** ordered pipeline + per-device `touchpad.json` v2 +
-`platform-touchpad-gui` (also from tray when on PATH).
-
-**Now (typing-inhibit branch):** `typing_inhibit` (palm filters only for ~350 ms
-after keyboard activity), `soft_accel` (`linear` / `nonlinear` + `pivot`),
-multitouch passthrough, long-lived live filter + shared daemon pidfiles.
-
-```bash
-platform-touchpad list
-platform-touchpad-gui
-sudo platform-touchpad run --device '<stable-key>'
-```
-
-## After **0.0.2** — next RC (`feature/plasma-kcm-powerdevil`)
+## After **0.0.3** — next RC (**0.0.4**)
 
 | # | Track | Intent |
 |---|--------|--------|
-| 3.1 | **Plasma KCM + PowerDevil / session** | **Shipped in 0.0.3.** Original intent: System Settings KCModule + resume watcher; sleep/hibernate/resume **configurable** per-user profiles; presentation-mode inhibit held **outside** plasmashell so `plasmashell --replace` does not drop it. Design: [`README.plasma.md`](README.plasma.md). |
-| 3.2 | **Ubuntu / Debian** | Ship `.deb`; Ubuntu access; packaging + installation checks. |
-| 3.3 | **Alpine** | `apk` recipe; Alpine install checks; packaging rules for musl / OpenRC-native layout. |
-| 3.4 | **UX5400 WM/DE** | Palm path looks fine; separate annoying behaviour — details TBD. |
-| 3.5 | **UX581 lightbar** | Still **no hardware on hand**. Side branch `zenbook_ux581`; test when device returns. |
+| 4.0 | **KCM in emerge + Displays gate** | **Done (tree).** `USE=plasma` builds KCM; tab gated by Duo/ScreenPad. |
+| 4.1 | **Touchpad Calibrate deepen** | BT palm parasites; capture→knobs; UX8406 primary. |
+| 4.2 | **`docs/` research library** | **Seeded.** Expand as RE continues; see [`docs/README.md`](docs/README.md). |
+| 4.3 | **Dual-eDP touch jump** | Observe/fix KWin/Wayland cursor warp from lower panel touch. |
+| 4.4 | **UX5400 WM/DE** | When described by operator. |
+| 4.5 | **UX581 lightbar** | Hardware-gated; `zenbook_ux581`. |
+
+Visual roadmap: Cursor canvas `platform-roadmap.canvas.tsx` (toward 0.0.4).
+
+## After **0.0.2** — shipped as **0.0.3** (`feature/plasma-kcm-powerdevil`)
+
+| # | Track | Intent |
+|---|--------|--------|
+| 3.1 | **Plasma KCM + PowerDevil / session** | **Shipped in 0.0.3.** |
+| 3.2 | **Ubuntu / Debian** | **CLI `.deb` smoke on 24.04.** |
+| 3.3 | **Alpine** | **APK smoke on cast04.** |
+| 3.4 | **UX5400 WM/DE** | Deferred → 0.0.4 later. |
+| 3.5 | **UX581 lightbar** | Still blocked on hardware. |
 
 ## Gentoo USE mapping
 
@@ -75,6 +67,7 @@ sudo platform-touchpad run --device '<stable-key>'
 | `screenpad` | UX5400 ScreenPad |
 | `kernel` | oot hid-asus (build from sources; fail-closed preflight) |
 | `qt6` | `configure_gui.py`, `platform-tray`, `platform-touchpad-gui` |
+| `plasma` | `platform-session`, Duo/ScreenPad CLIs, sleep hook, **KCM** (KF6) |
 
 ```bash
 platform-probe                  # human dry-run
@@ -109,11 +102,12 @@ platform-probe ──────────────► install decisions (
                     │         └─ per-device touchpad.json v2
                     │
                     └─► (done) announced 0.0.2
-                              └─► (now) Plasma KCM + session/PowerDevil
-                              └─► (later) .deb · apk · UX581
+                              └─► (done) 0.0.3 Plasma KCM + session + Duo BT
+                              └─► (now) 0.0.4: Calibrate deepen · KCM emerge · Displays gate
+                              └─► (later) dual-eDP · UX581 · Ubuntu KF6
 
 screenpad* / zenbook-screenpad (oneshot)     UX5400 only
 screenpad-sync (daemon)                      optional brightness mirror
 ```
 
-See also [PLANNED.md](PLANNED.md) for command cheatsheets and [CHANGELOG.md](CHANGELOG.md).
+Contributor research: [`docs/`](docs/README.md). See also [PLANNED.md](PLANNED.md) and [CHANGELOG.md](CHANGELOG.md).

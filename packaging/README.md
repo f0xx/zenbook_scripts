@@ -275,7 +275,7 @@ rewrites packaged unit/helper scripts to `/usr` and does **not** run
 | `screenpad` | off | ScreenPad CLI + udev + services (UX5400) |
 | `kernel` | on | Build oot `hid-asus` from sources + OpenRC sideload (fail-closed; `ZENBOOK_KERNEL_FORCE=1` for risky KV) |
 | `qt6` | off | `configure_gui.py` + `platform-tray` (PySide6) |
-| `plasma` | off | `platform-session`, sleep hook, `session.json.example`, Plasma docs (KCM via `plasma/kcm/build.sh`) |
+| `plasma` | off | `platform-session`, sleep hook, `session.json.example`, **KCM** (KF6 build) |
 | `zenbook_ux8406` | on | Install `conf.d/UX8406*` profiles |
 
 **Always** (RDEPEND): `sys-apps/dmidecode` (UX8406 `fn_row_policy=7` auto-set). Metrics use Python **stdlib sqlite3** (no extra dep).
@@ -284,7 +284,8 @@ rewrites packaged unit/helper scripts to `/usr` and does **not** run
 
 **Draft `.deb` scaffold** (not published): [`debian/`](debian/) — symlink to repo root and
 `dpkg-buildpackage -us -uc -b`. CLI-first on **Focal 20.04+** (`python3 >= 3.8`); Plasma KCM
-optional on **24.04+** via `plasma/kcm/build.sh`. See [`debian/README.md`](debian/README.md).
+optional on **24.04+** via `plasma/kcm/build.sh` (KF6 not in Noble; Gentoo
+`USE=plasma` builds the KCM at emerge). See [`debian/README.md`](debian/README.md).
 
 ```bash
 cd /path/to/zenbook_scripts

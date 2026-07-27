@@ -5,6 +5,24 @@ based on [Keep a Changelog](https://keepachangelog.com/). Version tags follow
 Gentoo-friendly naming where needed (`v0.0.1_hf1` → PV `0.0.1_p1`,
 `v0.0.2_pre1` → PV `0.0.2_pre1`).
 
+## [Unreleased] — toward 0.0.4
+
+### Changed
+
+- **Gentoo `USE=plasma`:** build and install `kcm_zenbook_platform` during
+  emerge (KF6/Qt6 deps). No separate `plasma/kcm/build.sh --system` step.
+- **KCM Displays tab:** shown only when Duo chassis/pogo **or** ScreenPad
+  sysfs is present; Duo vs ScreenPad controls are separate. Single-panel
+  models skip the tab. (0.0.3 always showed “Duo / Displays”.)
+- **`platform-probe`:** `duo_dock` feature line; recommend `plasma` on Duo /
+  UX5400.
+
+### Added
+
+- `zenbook_kb.dmi.is_duo_chassis()` / `has_duo_pogo_usb()`; unit tests.
+- Contributor `docs/` research library seed (Fn-row, daemons, Duo, session,
+  touchpad).
+
 ## [0.0.3] — 2026-07-24
 
 Tag: [`v0.0.3`](https://github.com/f0xx/zenbook_scripts/releases/tag/v0.0.3).

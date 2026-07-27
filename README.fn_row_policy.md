@@ -6,6 +6,9 @@ docked Primax keyboard’s F-row under Linux. Operator quick path:
 [`DEPLOY.md`](DEPLOY.md) §F. Regression simulator:
 `python3 -m unittest tests.test_fn_row_policy -v`.
 
+**Contributor RE / porting** (mask math, topology, BT remapper):
+[`docs/kernel/fn-row-policy.md`](docs/kernel/fn-row-policy.md).
+
 ## Hardware reality (why a policy exists)
 
 Windows Mode **B** on this dock is roughly:

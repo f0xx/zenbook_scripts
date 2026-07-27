@@ -3,7 +3,7 @@
 
 EAPI=8
 
-inherit linux-info toolchain-funcs
+inherit linux-info multiprocessing toolchain-funcs
 
 DESCRIPTION="ASUS Zenbook Duo scripts (UX8406 keyboard + UX5400 ScreenPad)"
 HOMEPAGE="https://github.com/f0xx/zenbook_scripts"
@@ -36,6 +36,12 @@ RDEPEND="
 	qt6? ( dev-python/pyside:6 )
 	plasma? (
 		sys-auth/elogind
+		kde-frameworks/kcmutils
+		kde-frameworks/kcoreaddons
+		kde-frameworks/ki18n
+		kde-frameworks/kirigami
+		dev-qt/qtbase:6[gui]
+		dev-qt/qtdeclarative:6
 	)
 "
 # Build oot hid-asus against /usr/src/linux (gentoo-sources, …).
@@ -45,6 +51,20 @@ DEPEND="
 	kernel? (
 		virtual/linux-sources
 		dev-build/make
+	)
+	plasma? (
+		kde-frameworks/extra-cmake-modules
+		kde-frameworks/kcmutils
+		kde-frameworks/kcoreaddons
+		kde-frameworks/ki18n
+		dev-qt/qtbase:6[gui]
+		dev-qt/qtdeclarative:6
+	)
+"
+BDEPEND="
+	plasma? (
+		dev-build/cmake
+		virtual/pkgconfig
 	)
 "
 
@@ -177,6 +197,17 @@ src_compile() {
 			KDIR="${kdir}" \
 			BUILDDIR="${T}/hid-asus-oot"
 	fi
+
+	if use plasma; then
+		local kcm_build="${T}/zenbook-kcm"
+		einfo "Building kcm_zenbook_platform (KF6)"
+		cmake -S "${S}/plasma/kcm" -B "${kcm_build}" \
+			-DCMAKE_BUILD_TYPE=RelWithDebInfo \
+			-DCMAKE_INSTALL_PREFIX="${EPREFIX}/usr" \
+			-DZENBOOK_SCRIPTS_ROOT="${EPREFIX}${ZENBOOK_SHARE}" \
+			|| die "cmake configure kcm failed"
+		cmake --build "${kcm_build}" -j"$(makeopts_jobs)" || die "cmake build kcm failed"
+	fi
 }
 
 src_install() {
@@ -251,6 +282,8 @@ src_install() {
 		doins plasma/session.json.example
 
 		dodoc README.plasma.md plasma/README.md
+
+		DESTDIR="${D}" cmake --install "${T}/zenbook-kcm" || die "cmake install kcm failed"
 	fi
 
 	if use hotkeys; then
@@ -365,12 +398,11 @@ pkg_postinst() {
 	fi
 
 	if use plasma; then
-		elog "Plasma session (USE=plasma):"
+		elog "Plasma session + KCM (USE=plasma):"
 		elog "  cp ${ZENBOOK_SHARE}/plasma/session.json.example \\"
 		elog "     ~/.config/zenbook-scripts/session.json"
-		elog "  Enable sleep hook: link or copy zenbook-platform-session to"
-		elog "  /usr/lib/systemd/system-sleep/ (installed when USE=plasma)."
-		elog "  KCModule (System Settings): build separately —"
-		elog "  cd plasma/kcm && ./build.sh --system (needs KF6/Qt6 dev packages)."
+		elog "  Sleep hook: /usr/lib/systemd/system-sleep/zenbook-platform-session"
+		elog "  System Settings → Display & Monitor → ZenBook Platform"
+		elog "  (or: kcmshell6 kcm_zenbook_platform)"
 	fi
 }

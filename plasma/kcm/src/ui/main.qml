@@ -13,6 +13,18 @@ KCMUtils.ScrollViewKCM {
     implicitWidth: Kirigami.Units.gridUnit * 44
     implicitHeight: Kirigami.Units.gridUnit * 30
 
+    readonly property var tabPages: {
+        var pages = [
+            { title: i18n("Overview"), source: "OverviewPage.qml" }
+        ]
+        if (kcm.showDisplaysTab) {
+            pages.push({ title: i18n("Displays"), source: "DisplaysPage.qml" })
+        }
+        pages.push({ title: i18n("Sleep / Resume"), source: "SleepResumePage.qml" })
+        pages.push({ title: i18n("About"), source: "AboutPage.qml" })
+        return pages
+    }
+
     ColumnLayout {
         width: root.availableWidth
         spacing: Kirigami.Units.largeSpacing
@@ -21,22 +33,19 @@ KCMUtils.ScrollViewKCM {
             id: tabBar
             Layout.fillWidth: true
 
-            QQC2.TabButton { text: i18n("Overview") }
-            QQC2.TabButton { text: i18n("Duo / Displays") }
-            QQC2.TabButton { text: i18n("Sleep / Resume") }
-            QQC2.TabButton { text: i18n("About") }
+            Repeater {
+                model: root.tabPages
+                QQC2.TabButton {
+                    text: modelData.title
+                }
+            }
         }
 
         Loader {
             id: pageLoader
             Layout.fillWidth: true
             Layout.preferredHeight: Kirigami.Units.gridUnit * 22
-            source: [
-                "OverviewPage.qml",
-                "DuoDisplaysPage.qml",
-                "SleepResumePage.qml",
-                "AboutPage.qml"
-            ][tabBar.currentIndex]
+            source: root.tabPages[Math.min(tabBar.currentIndex, root.tabPages.length - 1)].source
         }
 
         QQC2.Label {

@@ -1,8 +1,9 @@
 # Plasma KCM + PowerDevil session integration
 
-**Branch:** `feature/plasma-kcm-powerdevil` (from `main` after **0.0.2**)  
-**Target:** next RC / release (`0.0.3` or `0.0.3_pre1`)  
-**Scope:** one shot — System Settings KCModule **and** PowerDevil / sleep–resume
+**Branch:** shipped in **0.0.3**; KCM-in-emerge + Displays gate toward **0.0.4**  
+**Target:** Gentoo `USE=plasma` installs the KCModule; Displays tab is
+hardware-gated (Duo and/or ScreenPad).  
+**Scope:** System Settings KCModule **and** PowerDevil / sleep–resume
 session policies (not tray-only).
 
 ## Why together

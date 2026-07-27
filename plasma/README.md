@@ -13,20 +13,24 @@ plasma/
     src/
 ```
 
-## KCModule MVP (`kcm_zenbook_platform`)
+## KCModule (`kcm_zenbook_platform`)
 
-System Settings module with four tabs:
+System Settings module. Tabs:
 
-| Tab | Purpose |
-|-----|---------|
-| **Overview** | `platform-probe` text summary + Refresh |
-| **Duo / Displays** | `platform-duo-dock status`; Docked / Undocked / Screen swap |
-| **Sleep / Resume** | Edit `~/.config/zenbook-scripts/session.json` toggles |
-| **About** | Version + pointer to `README.plasma.md` |
+| Tab | Purpose | When shown |
+|-----|---------|------------|
+| **Overview** | `platform-probe` summary | always |
+| **Displays** | Duo dock and/or ScreenPad | Duo chassis / pogo **or** `asus_screenpad` |
+| **Sleep / Resume** | Edit `~/.config/zenbook-scripts/session.json` | always |
+| **About** | Version + docs link | always |
+
+**Not every ZenBook is dual-screen.** UX5400 ScreenPad ≠ Duo eDP-2 dock.
+Plain single-panel models hide **Displays** entirely.
 
 ### Build dependencies (Gentoo)
 
-Emerging the KCM requires dev packages (runtime Plasma is not enough):
+`USE=plasma` on the ebuild **builds and installs** the KCM (KF6/Qt6 deps
+pulled automatically). Manual path still works for devel:
 
 ```bash
 emerge -av \
@@ -48,7 +52,9 @@ ls /usr/lib64/cmake/KF6KCMUtils/
 
 ### Build and install
 
-From the repo root:
+**Preferred (Gentoo):** `USE=plasma emerge app-laptop/zenbook-scripts`
+
+From the repo (devel / non-Gentoo):
 
 ```bash
 cd plasma/kcm

@@ -12,9 +12,15 @@ class ZenbookPlatform : public KQuickConfigModule
 
     Q_PROPERTY(QString probeText READ probeText NOTIFY probeTextChanged)
     Q_PROPERTY(QString duoStatusText READ duoStatusText NOTIFY duoStatusTextChanged)
+    Q_PROPERTY(QString screenpadStatusText READ screenpadStatusText NOTIFY screenpadStatusTextChanged)
     Q_PROPERTY(QString lastCommandOutput READ lastCommandOutput NOTIFY lastCommandOutputChanged)
     Q_PROPERTY(QString lastError READ lastError NOTIFY lastErrorChanged)
     Q_PROPERTY(bool busy READ busy NOTIFY busyChanged)
+
+    Q_PROPERTY(bool showDisplaysTab READ showDisplaysTab CONSTANT)
+    Q_PROPERTY(bool hasDuoDock READ hasDuoDock CONSTANT)
+    Q_PROPERTY(bool hasScreenpad READ hasScreenpad CONSTANT)
+    Q_PROPERTY(QString dmiProduct READ dmiProduct CONSTANT)
 
     Q_PROPERTY(QString sessionConfigPath READ sessionConfigPath CONSTANT)
     Q_PROPERTY(QString activeProfile READ activeProfile NOTIFY sessionChanged)
@@ -38,6 +44,10 @@ public:
     {
         return m_duoStatusText;
     }
+    QString screenpadStatusText() const
+    {
+        return m_screenpadStatusText;
+    }
     QString lastCommandOutput() const
     {
         return m_lastCommandOutput;
@@ -49,6 +59,23 @@ public:
     bool busy() const
     {
         return m_busy;
+    }
+
+    bool showDisplaysTab() const
+    {
+        return m_hasDuoDock || m_hasScreenpad;
+    }
+    bool hasDuoDock() const
+    {
+        return m_hasDuoDock;
+    }
+    bool hasScreenpad() const
+    {
+        return m_hasScreenpad;
+    }
+    QString dmiProduct() const
+    {
+        return m_dmiProduct;
     }
 
     QString sessionConfigPath() const;
@@ -90,6 +117,10 @@ public:
     Q_INVOKABLE void runDuoDocked();
     Q_INVOKABLE void runDuoUndocked();
     Q_INVOKABLE void runScreenSwap();
+    Q_INVOKABLE void refreshScreenpadStatus();
+    Q_INVOKABLE void runScreenpadOn();
+    Q_INVOKABLE void runScreenpadOff();
+    Q_INVOKABLE void runScreenpadSync();
     Q_INVOKABLE void loadSession();
     Q_INVOKABLE bool saveSession();
     Q_INVOKABLE void resetSessionDefaults();
@@ -97,6 +128,7 @@ public:
 Q_SIGNALS:
     void probeTextChanged();
     void duoStatusTextChanged();
+    void screenpadStatusTextChanged();
     void lastCommandOutputChanged();
     void lastErrorChanged();
     void busyChanged();
@@ -107,6 +139,7 @@ private Q_SLOTS:
     void onProcessFinished(int exitCode, QProcess::ExitStatus status);
 
 private:
+    void detectHardware();
     QString resolveScript(const QString &name) const;
     void runScript(const QString &name, const QStringList &args, const QString &outputProperty);
     void setBusy(bool busy);
@@ -118,9 +151,14 @@ private:
 
     QString m_probeText;
     QString m_duoStatusText;
+    QString m_screenpadStatusText;
     QString m_lastCommandOutput;
     QString m_lastError;
     bool m_busy = false;
+
+    bool m_hasDuoDock = false;
+    bool m_hasScreenpad = false;
+    QString m_dmiProduct;
 
     QString m_activeProfile = QStringLiteral("default");
     bool m_restoreAfterPlasmashellReplace = true;
@@ -133,6 +171,7 @@ private:
     enum class OutputTarget {
         Probe,
         DuoStatus,
+        ScreenpadStatus,
         Command,
     };
     OutputTarget m_outputTarget = OutputTarget::Command;

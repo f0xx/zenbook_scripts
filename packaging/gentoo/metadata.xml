@@ -23,8 +23,8 @@
 		</flag>
 		<flag name="plasma">
 			Install platform-session, duo-dock / screen-swap CLIs, systemd sleep
-			hook, session.json.example, and Plasma docs. KCModule is built separately
-			via plasma/kcm/build.sh (KF6/Qt6 dev packages).
+			hook, session.json.example, and build/install Plasma KCModule
+			kcm_zenbook_platform (pulls KF6/Qt6 build + runtime deps).
 		</flag>
 		<flag name="qt6">Install configure_gui.py and platform-tray (PySide6)</flag>
 		<flag name="fan_control">

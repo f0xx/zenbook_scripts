@@ -94,10 +94,11 @@ platform-tray                  # USE=qt6 — metrics graph + profile/fan menu
 ## Quick links
 
 - [DEPLOY.md](DEPLOY.md) — when to rebuild / reinstall / reload `hid-asus`
-- [ROADMAP.md](ROADMAP.md) — where we are / next
+- [ROADMAP.md](ROADMAP.md) — where we are / next (0.0.4)
+- [docs/README.md](docs/README.md) — contributor research library (Fn-row RE, daemon atlas)
 - [CHANGELOG.md](CHANGELOG.md) — release notes (keep updated with tags)
 - [PLANNED.md](PLANNED.md) — feature cheatsheets (`platform-fan*`, probe, tray)
-- [README.plasma.md](README.plasma.md) — Plasma KCM + PowerDevil / session (next RC)
+- [README.plasma.md](README.plasma.md) — Plasma KCM + PowerDevil / session
 - [README.fn_row_policy.md](README.fn_row_policy.md) — UX8406 `fn_row_policy` bitmask / chords
 - [kernel/README.md](kernel/README.md) — out-of-tree `hid-asus` build & install
 - [packaging/README.md](packaging/README.md) — Gentoo ebuild / overlay notes
