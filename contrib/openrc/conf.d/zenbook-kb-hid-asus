@@ -16,9 +16,10 @@ fn_lock_default=0
 fn_lock_allow_toggle=1
 #
 # Fn-row policy bitmask (decimal). Only applied on full insmod (not quick rebind).
-#   7  = F1–F3 leave Mode B; F4–F12 swapped (plain KEY_Fn, Fn+F = special) — recommended
-#   15 = same but bit3 set keeps Mode B F4 (plain BL) — usually wrong for this deal
+#   7  = F4–F12 swapped; plain F1–F3 → KEY_Fn; Fn+F1–F3 → mute/vol — recommended
+#   15 = like 7 but bit3 set keeps Mode B F4 (plain BL) — usually wrong
 #   0  = disabled (stock fn-lock behavior only)
+# Note: EC may still nudge volume on F2/F3 physical presses (plain or Fn).
 fn_row_policy=7
 #
 # Seconds to wait for docked keyboard 0b05:1b2c after boot (ignored when sideload=auto)

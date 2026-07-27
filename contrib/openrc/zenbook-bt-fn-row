@@ -1,0 +1,70 @@
+#!/sbin/openrc-run
+# Bluetooth Mode B → policy-7-ish Fn-row invert for Primax Duo keyboard.
+#
+#   sudo cp contrib/openrc/zenbook-bt-fn-row /etc/init.d/
+#   sudo rc-update add zenbook-bt-fn-row default
+#   sudo rc-service zenbook-bt-fn-row start
+#
+# Or: sudo platform-bt-fn-row start
+# Idle when no BT keyboard; start after pairing / reconnect.
+
+name="zenbook-bt-fn-row"
+description="Zenbook Duo Bluetooth Fn-row Mode B invert"
+
+: "${command:=/usr/bin/platform-bt-fn-row}"
+: "${command_args:=start}"
+: "${command_background:=no}"
+: "${pidfile:=/run/zenbook-bt-fn-row.pid}"
+: "${output_log:=/var/log/${RC_SVCNAME}.log}"
+: "${error_log:=/var/log/${RC_SVCNAME}.log}"
+
+depend() {
+	need localmount
+	use logger bluetooth
+	after udev modules
+}
+
+start_pre() {
+	if [ ! -x "${command}" ]; then
+		for c in /usr/bin/platform-bt-fn-row /usr/local/bin/platform-bt-fn-row; do
+			if [ -x "${c}" ]; then
+				command="${c}"
+				break
+			fi
+		done
+	fi
+	if [ ! -x "${command}" ]; then
+		eerror "platform-bt-fn-row not found"
+		return 1
+	fi
+	if [ -f "${pidfile}" ]; then
+		_pid="$(tr -d '[:space:]' < "${pidfile}" 2>/dev/null || true)"
+		if [ -n "${_pid}" ] && ! kill -0 "${_pid}" 2>/dev/null; then
+			rm -f "${pidfile}"
+		fi
+	fi
+	if [ -n "${output_log:-}" ]; then
+		checkpath -f -m 0644 -o root:root "${output_log}"
+	fi
+}
+
+start() {
+	ebegin "Starting ${RC_SVCNAME}"
+	# platform-bt-fn-row start double-forks and writes pidfile itself
+	if [ -n "${output_log:-}" ]; then
+		"${command}" start >>"${output_log}" 2>>"${error_log}"
+	else
+		"${command}" start
+	fi
+	eend $?
+}
+
+stop() {
+	ebegin "Stopping ${RC_SVCNAME}"
+	"${command}" stop
+	eend $?
+}
+
+status() {
+	"${command}" status
+}

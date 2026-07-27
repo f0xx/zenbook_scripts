@@ -1,0 +1,59 @@
+#!/sbin/openrc-run
+# Adaptive fan profile daemon (legacy name → platform-fan-control).
+#
+# Prefer zenbook-platform-fan-control. This unit keeps the old svcname for
+# upgrades; both claim different pidfiles — do not enable both.
+
+name="zenbook-kb-fan-control"
+description="Zenbook adaptive fan profile controller (legacy)"
+
+: "${command:=/usr/bin/platform-fan-control}"
+: "${command_args:=run --replace}"
+: "${command_background:=yes}"
+: "${pidfile:=/run/${RC_SVCNAME}.pid}"
+: "${output_log:=/var/log/${RC_SVCNAME}.log}"
+: "${error_log:=/var/log/${RC_SVCNAME}.log}"
+: "${FAN_CONTROL_CONFIG:=/etc/zenbook-scripts/fan-control.json}"
+
+depend() {
+	need localmount
+	use logger
+	after modules
+}
+
+start_pre() {
+	for _wait_lib in \
+		/usr/share/zenbook-scripts/lib/openrc-wait.sh \
+		/usr/local/share/zenbook-scripts/lib/openrc-wait.sh; do
+		if [ -f "${_wait_lib}" ]; then
+			# shellcheck source=lib/openrc-wait.sh
+			. "${_wait_lib}"
+			zenbook_rc_clear_stale_svc_pidfile
+			break
+		fi
+	done
+	if [ ! -x "${command}" ]; then
+		for c in /usr/bin/platform-fan-control /usr/bin/kb-fan-control \
+			/usr/local/bin/platform-fan-control /usr/local/bin/kb-fan-control; do
+			if [ -x "${c}" ]; then
+				command="${c}"
+				break
+			fi
+		done
+	fi
+	if [ ! -x "${command}" ]; then
+		eerror "platform-fan-control / kb-fan-control not found"
+		return 1
+	fi
+	cfg="${FAN_CONTROL_CONFIG}"
+	if [ ! -f "${cfg}" ]; then
+		ewarn "missing ${cfg}"
+		ewarn "copy fan-control.json.example → /etc/zenbook-scripts/fan-control.json"
+	fi
+	# Legacy unit uses its own pidfile path; daemon still writes FAN_PIDFILE
+	# (platform name). Prefer the platform unit to avoid dual daemons.
+	command_args="-c ${cfg} run --replace"
+	if [ -n "${output_log:-}" ]; then
+		checkpath -f -m 0644 -o root:root "${output_log}"
+	fi
+}

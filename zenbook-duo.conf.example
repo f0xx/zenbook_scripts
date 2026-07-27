@@ -21,6 +21,6 @@ default_brightness = 1
 # brightness_max = 3
 
 [duo]
-# Used by duo.sh integration
+# Legacy keys from old duo.sh (not used by current tools). Kept for conf compat.
 default_backlight = 1
 default_scale = 1

@@ -1,17 +1,33 @@
 #!/sbin/openrc-run
 # Restore ASUS ScreenPad after boot (UX5400EA / ScreenPad Plus).
+# Oneshot: runs screenpad-boot and exits (not a long-lived daemon).
 # Install via configure.py (UX5400 / ScreenPad path).
 
 name="zenbook-screenpad"
 description="Zenbook ScreenPad boot restore"
 
-: "${command:=/usr/local/bin/screenpad-boot}"
+: "${command:=/usr/bin/screenpad-boot}"
 : "${command_background:=no}"
 
 depend() {
 	need localmount
 	after modules
 	before display-manager xdm
+}
+
+start_pre() {
+	if [ ! -x "${command}" ]; then
+		for c in /usr/bin/screenpad-boot /usr/local/bin/screenpad-boot; do
+			if [ -x "${c}" ]; then
+				command="${c}"
+				break
+			fi
+		done
+	fi
+	if [ ! -x "${command}" ]; then
+		eerror "screenpad-boot not found"
+		return 1
+	fi
 }
 
 start() {
@@ -24,4 +40,9 @@ start() {
 	export SCREENPAD_BOOT_MODE="${SCREENPAD_BOOT_MODE:-on}"
 	"${command}"
 	eend $?
+}
+
+stop() {
+	# Oneshot — screenpad-boot already exited; nothing to kill.
+	return 0
 }

@@ -3,7 +3,7 @@
 
 EAPI=8
 
-inherit git-r3 linux-info toolchain-funcs
+inherit git-r3 linux-info multiprocessing toolchain-funcs
 
 DESCRIPTION="ASUS Zenbook Duo scripts (UX8406 keyboard + UX5400 ScreenPad)"
 HOMEPAGE="https://github.com/f0xx/zenbook_scripts"
@@ -13,12 +13,13 @@ LICENSE="GPL-2+"
 SLOT="0"
 KEYWORDS=""
 
-IUSE="+hotkeys +kernel qt6 screenpad +zenbook_ux8406"
+IUSE="+fan_control +hotkeys +kernel plasma qt6 screenpad +zenbook_ux8406"
 REQUIRED_USE="kernel? ( zenbook_ux8406 )"
 
 RDEPEND="
 	>=dev-lang/python-3.10
 	dev-python/pyusb
+	sys-apps/dmidecode
 	hotkeys? (
 		virtual/udev
 		sys-power/acpid
@@ -28,6 +29,15 @@ RDEPEND="
 		virtual/udev
 	)
 	qt6? ( dev-python/pyside:6 )
+	plasma? (
+		sys-auth/elogind
+		kde-frameworks/kcmutils
+		kde-frameworks/kcoreaddons
+		kde-frameworks/ki18n
+		kde-frameworks/kirigami
+		dev-qt/qtbase:6[gui]
+		dev-qt/qtdeclarative:6
+	)
 "
 # Build oot hid-asus against /usr/src/linux (gentoo-sources, …).
 # Avoid virtual/dist-kernel — it pulls gentoo-kernel and USE conflicts.
@@ -37,13 +47,27 @@ DEPEND="
 		virtual/linux-sources
 		dev-build/make
 	)
+	plasma? (
+		kde-frameworks/extra-cmake-modules
+		kde-frameworks/kcmutils
+		kde-frameworks/kcoreaddons
+		kde-frameworks/ki18n
+		dev-qt/qtbase:6[gui]
+		dev-qt/qtdeclarative:6
+	)
+"
+BDEPEND="
+	plasma? (
+		dev-build/cmake
+		virtual/pkgconfig
+	)
 "
 
 ZENBOOK_SHARE=/usr/share/zenbook-scripts
 ZENBOOK_LIBEXEC=/usr/libexec
 ZENBOOK_KO_ROOT=/usr/lib/modules/zenbook-hid-asus
 
-# Upstream trees default to /usr/local (configure.py). Distro packages use /usr.
+# Upstream trees and configure.py default to /usr (override with --prefix).
 zenbook_rewrite_usr_prefix() {
 	local dir f
 
@@ -101,12 +125,65 @@ pkg_setup() {
 	fi
 }
 
+# Fail-closed preflight (source build only — never ship a foreign .ko).
+# Override risk with ZENBOOK_KERNEL_FORCE=1 in the environment.
+zenbook_kernel_preflight() {
+	local kdir rc=0
+	local -a py_args
+
+	kdir=$(zenbook_kernel_kdir)
+	py_args=(
+		"${S}/zenbook_kb/kernel_preflight.py"
+		--repo-root "${S}"
+		--kdir "${kdir}"
+	)
+	if [[ ${ZENBOOK_KERNEL_FORCE:-} == 1 || ${ZENBOOK_KERNEL_FORCE:-} == yes ]]; then
+		py_args+=( --force )
+	fi
+
+	# Match FILESDIR patch (conditional); warn if missing for this KV.
+	if [[ -d ${FILESDIR}/patches/linux-${KV_FULL} ]]; then
+		einfo "Gentoo files/ patch dir present: linux-${KV_FULL}"
+	elif [[ -d ${S}/kernel/patches/linux-${KV_FULL} ]]; then
+		einfo "Upstream kernel/patches present: linux-${KV_FULL}"
+	else
+		ewarn "No maintained patch dir for KV_FULL=${KV_FULL}"
+		ewarn "Supported: 7.0.12-gentoo-r1, 7.1.3-gentoo — or set ZENBOOK_KERNEL_FORCE=1"
+	fi
+
+	einfo "Running hid-asus kernel preflight…"
+	python3 "${py_args[@]}" || rc=$?
+	case ${rc} in
+		0) return 0 ;;
+		1)
+			eerror "hid-asus cannot be replaced on this kernel (built-in / no modules)."
+			eerror "Disable USE=kernel or fix CONFIG_HID_ASUS=m + CONFIG_MODULES=y."
+			die "kernel preflight ineligible (exit 1)"
+			;;
+		2)
+			eerror "hid-asus build is risky (unsupported version and/or CONFIG_MODVERSIONS)."
+			eerror "Re-emerge with: ZENBOOK_KERNEL_FORCE=1 emerge …"
+			eerror "or disable USE=kernel (userspace only; UX8406 HID features not guaranteed)."
+			die "kernel preflight risky without ZENBOOK_KERNEL_FORCE (exit 2)"
+			;;
+		3)
+			eerror "Kernel sources/headers missing for oot hid-asus."
+			eerror "Install matching virtual/linux-sources and eselect kernel."
+			die "kernel preflight: no source tree (exit 3)"
+			;;
+		*)
+			die "kernel preflight failed (exit ${rc})"
+			;;
+	esac
+}
+
 src_compile() {
 	if use kernel; then
 		local kdir
 
+		zenbook_kernel_preflight
 		kdir=$(zenbook_kernel_kdir)
-		einfo "Building hid-asus against KDIR=${kdir}"
+		einfo "Building hid-asus against KDIR=${kdir} (from sources, not a prebuilt .ko)"
 		# Portage ARCH=amd64 breaks kbuild (expects ARCH=x86).
 		local -x ARCH
 		ARCH="$(tc-arch-kernel)"
@@ -115,6 +192,17 @@ src_compile() {
 			KDIR="${kdir}" \
 			BUILDDIR="${T}/hid-asus-oot"
 	fi
+
+	if use plasma; then
+		local kcm_build="${T}/zenbook-kcm"
+		einfo "Building kcm_zenbook_platform (KF6)"
+		cmake -S "${S}/plasma/kcm" -B "${kcm_build}" \
+			-DCMAKE_BUILD_TYPE=RelWithDebInfo \
+			-DCMAKE_INSTALL_PREFIX="${EPREFIX}/usr" \
+			-DZENBOOK_SCRIPTS_ROOT="${EPREFIX}${ZENBOOK_SHARE}" \
+			|| die "cmake configure kcm failed"
+		cmake --build "${kcm_build}" -j"$(makeopts_jobs)" || die "cmake build kcm failed"
+	fi
 }
 
 src_install() {
@@ -122,6 +210,16 @@ src_install() {
 	insinto "${ZENBOOK_SHARE}"
 	doins -r zenbook_kb brightness.py lib
 	doins zenbook-hotkeys.conf.example zenbook-duo.conf.example
+	doins touchpad.json.example
+	if use fan_control; then
+		doins fan-control.json.example
+		insinto /etc/zenbook-scripts
+		newins fan-control.json.example fan-control.json.example
+		newins touchpad.json.example touchpad.json.example
+	else
+		insinto /etc/zenbook-scripts
+		newins touchpad.json.example touchpad.json.example
+	fi
 
 	if use zenbook_ux8406; then
 		insinto "${ZENBOOK_SHARE}/conf.d"
@@ -133,7 +231,12 @@ src_install() {
 	fi
 
 	# User-facing CLIs
-	dobin configure.py configure.sh bin/kb-brightness bin/kb-platform-profile
+	dobin configure.py configure.sh bin/kb-brightness bin/kb-platform-profile bin/platform-fan bin/platform-probe bin/platform-power bin/platform-touchpad bin/platform-metrics
+	dobin bin/platform-profile-boot
+	dobin bin/kb-fan
+	if use fan_control; then
+		dobin bin/platform-fan-control bin/kb-fan-control
+	fi
 	if use screenpad || use hotkeys; then
 		dobin bin/screenpad bin/screenpad-boot bin/screenpad-sync
 	fi
@@ -145,7 +248,39 @@ src_install() {
 			bin/kb-calibrate-hotkeys \
 			bin/snapshot-plan-state
 	fi
-	use qt6 && dobin configure_gui.py
+	if use hotkeys || use plasma; then
+		dobin \
+			bin/platform-session \
+			bin/platform-bt-fn-row \
+			bin/platform-duo-dock \
+			bin/platform-screen-swap
+	fi
+	if use fan_control; then
+		newbin contrib/openrc/zenbook-fan-control-hook.sh zenbook-fan-control-hook
+	fi
+	if use qt6; then
+		dobin configure_gui.py
+		dobin bin/platform-tray
+		dobin bin/platform-touchpad-gui
+		dobin bin/platform-touch-cal
+	fi
+
+	if use plasma; then
+		insinto "${ZENBOOK_LIBEXEC}"
+		newins contrib/openrc/zenbook-platform-session-hook.sh zenbook-platform-session-hook
+		fperms 0755 "${ZENBOOK_LIBEXEC}/zenbook-platform-session-hook"
+
+		insinto /usr/lib/systemd/system-sleep
+		newins contrib/systemd/zenbook-platform-session zenbook-platform-session
+		fperms 0755 /usr/lib/systemd/system-sleep/zenbook-platform-session
+
+		insinto "${ZENBOOK_SHARE}/plasma"
+		doins plasma/session.json.example
+
+		dodoc README.plasma.md plasma/README.md
+
+		DESTDIR="${D}" cmake --install "${T}/zenbook-kcm" || die "cmake install kcm failed"
+	fi
 
 	if use hotkeys; then
 		insinto "${ZENBOOK_LIBEXEC}"
@@ -170,6 +305,16 @@ src_install() {
 
 		insinto /etc/modprobe.d
 		doins contrib/modprobe/zenbook-hid-asus.conf
+	fi
+
+	if use fan_control; then
+		newinitd contrib/openrc/zenbook-platform-fan-control zenbook-platform-fan-control
+		newconfd contrib/openrc/conf.d/zenbook-platform-fan-control zenbook-platform-fan-control
+		dosym zenbook-platform-fan-control /etc/init.d/zenbook-kb-fan-control
+		newinitd contrib/openrc/zenbook-platform-profile zenbook-platform-profile
+		newconfd contrib/openrc/conf.d/zenbook-platform-profile zenbook-platform-profile
+		insinto /etc/systemd/system
+		doins contrib/systemd/zenbook-platform-profile.service
 	fi
 
 	if use screenpad; then
@@ -208,7 +353,8 @@ src_install() {
 
 	local doc
 	for doc in LICENSE DEPLOY.md README.ux8406.md README.ux5400.md \
-		kernel/README.md packaging/README.md PLANNED.md README.md; do
+		kernel/README.md packaging/README.md packaging/gentoo/files/README.md \
+		PLANNED.md ROADMAP.md README.md; do
 		[[ -f "${S}/${doc}" ]] || continue
 		dodoc "${doc}"
 	done
@@ -221,14 +367,38 @@ pkg_postinst() {
 	# the Gentoo /usr layout.
 
 	elog "Gentoo layout: /usr/bin, /usr/libexec, /usr/share/zenbook-scripts"
-	elog "(configure.py from a git tree still uses /usr/local by design)."
+	elog "(configure.py defaults to the same /usr prefix; use --prefix to override)."
+
+	if use fan_control; then
+		elog "Fan-control (USE=fan_control):"
+		elog "  sudo cp /etc/zenbook-scripts/fan-control.json.example \\"
+		elog "          /etc/zenbook-scripts/fan-control.json"
+		elog "  sudo rc-update add zenbook-platform-fan-control default"
+		elog "  sudo rc-service zenbook-platform-fan-control start"
+		elog "  platform-probe && platform-fan-control check"
+		elog "  sudo rc-update add zenbook-platform-profile default  # persist platform_profile"
+		elog "UX8406: configure/install sets fn_row_policy=7 via dmidecode/sysfs."
+	fi
 
 	if use kernel && [[ "${MERGE_TYPE}" != "binpkg" ]]; then
 		ewarn "Re-emerge app-laptop/zenbook-scripts after each kernel upgrade"
-		ewarn "(oot hid-asus.ko is per-KV_FULL)."
-		ewarn "Boot sideload: rc-update add zenbook-kb-hid-asus boot"
+		ewarn "(oot hid-asus is rebuilt from sources per KV_FULL — no prebuilt .ko)."
+		ewarn "Risky/unsupported KV: ZENBOOK_KERNEL_FORCE=1 emerge …"
+		ewarn "Boot sideload: rc-update add zenbook-kb-hid-asus default"
 		ewarn "               rc-service zenbook-kb-hid-asus start"
 		ewarn "Hotkeys:       rc-update add zenbook-kb-hotkeys default"
 		ewarn "Set fn_row_policy=7 in /etc/conf.d/zenbook-kb-hid-asus for docked UX8406."
+	elif ! use kernel; then
+		elog "USE=-kernel: oot hid-asus not built. Docked UX8406 HID/backlight/fn-row"
+		elog "features are not guaranteed with mainline hid-asus alone."
+	fi
+
+	if use plasma; then
+		elog "Plasma session + KCM (USE=plasma):"
+		elog "  cp ${ZENBOOK_SHARE}/plasma/session.json.example \\"
+		elog "     ~/.config/zenbook-scripts/session.json"
+		elog "  Sleep hook: /usr/lib/systemd/system-sleep/zenbook-platform-session"
+		elog "  System Settings → Display & Monitor → ZenBook Platform"
+		elog "  (or: kcmshell6 kcm_zenbook_platform)"
 	fi
 }

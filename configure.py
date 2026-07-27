@@ -8,6 +8,7 @@ import configparser
 import os
 import subprocess
 import sys
+import traceback
 from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -15,13 +16,17 @@ if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
 from zenbook_kb.install import (
+    cleanup_legacy_prefix,
     detect_init_system,
     install_all,
+    install_fan_control_support,
     install_kb_brightness_tree,
-    install_screenpad_support,
     install_sudoers_kb_brightness,
+    print_install_summary,
+    refresh_install_paths,
 )
-from zenbook_kb.dmi import has_screenpad_sysfs, is_ux5400, product_name
+from zenbook_kb.dmi import has_platform_profile, has_screenpad_sysfs, is_ux5400, product_name
+from zenbook_kb.paths import get_prefix
 from zenbook_kb.users import default_duo_config, default_hotkeys_config, resolve_config_dir
 
 EXAMPLE_CONFIG = Path(__file__).resolve().parent / "zenbook-duo.conf.example"
@@ -35,6 +40,7 @@ def prompt(label: str, default: str) -> str:
 
 def yes_no(question: str, default_no: bool = True, *, assume_yes: bool = False) -> bool:
     if assume_yes:
+        print(f"{question} → yes (--all-yes)", flush=True)
         return True
     suffix = "[y/N]" if default_no else "[Y/n]"
     return input(f"{question} {suffix}: ").strip().lower().startswith("y")
@@ -58,7 +64,7 @@ def write_config(cfg: configparser.ConfigParser, path: Path) -> None:
 
 def test_brightness(script_dir: Path, level: int) -> None:
     cmd = [sys.executable, str(script_dir / "brightness.py"), str(level), "--show-mode"]
-    print(f"Running: {' '.join(cmd)}")
+    print(f"Running: {' '.join(cmd)}", flush=True)
     subprocess.run(cmd, check=False)
 
 
@@ -69,7 +75,130 @@ def ensure_hotkeys_config() -> None:
         return
     config_dir.mkdir(parents=True, exist_ok=True)
     default_hotkeys.write_text(EXAMPLE_HOTKEYS.read_text())
-    print(f"Created {default_hotkeys} (edit to bind unmapped Fn+ keys)")
+    print(f"Created {default_hotkeys} (edit to bind unmapped Fn+ keys)", flush=True)
+
+
+def resolve_fan_control_flag(args: argparse.Namespace) -> bool | None:
+    """Return True/False when CLI forced; None = decide later (prompt / auto)."""
+    if args.include_fan_control and args.no_include_fan_control:
+        raise SystemExit("use only one of --include-fan-control / --no-include-fan-control")
+    if args.include_fan_control:
+        return True
+    if args.no_include_fan_control:
+        return False
+    return None
+
+
+def resolve_kernel_flag(args: argparse.Namespace) -> bool | None:
+    """Return True/False when CLI forced; None = decide later (prompt / skip)."""
+    if args.with_kernel and args.no_kernel:
+        raise SystemExit("use only one of --with-kernel / --no-kernel")
+    if args.with_kernel:
+        return True
+    if args.no_kernel:
+        return False
+    return None
+
+
+def decide_kernel_install(
+    args: argparse.Namespace,
+    script_dir: Path,
+    *,
+    assume_yes: bool,
+) -> tuple[bool, bool]:
+    """Return (with_kernel, kernel_force).
+
+    ``--all-yes`` does **not** auto-enable the kmod (must pass ``--with-kernel``).
+    """
+    from zenbook_kb.dmi import is_ux8406
+    from zenbook_kb.kernel_preflight import SKIP_FEATURES_MSG, run_preflight
+
+    forced = resolve_kernel_flag(args)
+    force = bool(args.kernel_force) or os.environ.get(
+        "ZENBOOK_KERNEL_FORCE", ""
+    ).strip().lower() in ("1", "yes", "true")
+
+    if forced is False:
+        print(f"Kernel module: skipped (--no-kernel).\n{SKIP_FEATURES_MSG}", flush=True)
+        return False, force
+
+    pf = run_preflight(repo_root=script_dir, force=force)
+    print("Kernel preflight:", flush=True)
+    for line in pf.summary_lines():
+        print(f"  {line}", flush=True)
+
+    if forced is True:
+        if not pf.can_build and pf.risky and not force:
+            print(
+                "USE/--with-kernel requested but preflight is risky; "
+                "pass --kernel-force or ZENBOOK_KERNEL_FORCE=1 to continue.",
+                flush=True,
+            )
+            print(SKIP_FEATURES_MSG, flush=True)
+            return False, force
+        if not pf.eligible or not pf.has_source:
+            print(
+                "Cannot build oot hid-asus (ineligible or missing sources).",
+                flush=True,
+            )
+            print(SKIP_FEATURES_MSG, flush=True)
+            return False, force
+        return True, force
+
+    # Interactive / defaults path: only offer on UX8406 when eligible.
+    if not is_ux8406():
+        return False, force
+    if not pf.eligible or not pf.has_source:
+        print(
+            f"UX8406 detected but oot hid-asus cannot be built here.\n{SKIP_FEATURES_MSG}",
+            flush=True,
+        )
+        return False, force
+
+    if args.defaults and not assume_yes:
+        # --defaults alone: do not build kmod unless --with-kernel
+        print(
+            f"Kernel module: skipped (--defaults without --with-kernel).\n{SKIP_FEATURES_MSG}",
+            flush=True,
+        )
+        return False, force
+
+    if pf.risky and not force:
+        if assume_yes:
+            print(
+                "Risky kernel preflight; not auto-building under --all-yes. "
+                "Use --with-kernel --kernel-force.",
+                flush=True,
+            )
+            print(SKIP_FEATURES_MSG, flush=True)
+            return False, force
+        if not yes_no(
+            "Kernel looks unsupported or risky (see warnings). Build oot hid-asus anyway?",
+            default_no=True,
+            assume_yes=False,
+        ):
+            print(SKIP_FEATURES_MSG, flush=True)
+            return False, force
+        force = True
+
+    if assume_yes:
+        # Still require explicit --with-kernel for kmod (handled above as forced).
+        print(
+            "Kernel module: skipped (--all-yes does not imply kmod; pass --with-kernel).",
+            flush=True,
+        )
+        print(SKIP_FEATURES_MSG, flush=True)
+        return False, force
+
+    if yes_no(
+        "Build and install oot hid-asus from kernel sources (replaces modular hid-asus)?",
+        default_no=True,
+        assume_yes=False,
+    ):
+        return True, force
+
+    print(SKIP_FEATURES_MSG, flush=True)
+    return False, force
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -84,8 +213,54 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Assume yes for all yes/no prompts (use with --defaults for semi-auto)",
     )
+    parser.add_argument(
+        "--include-fan-control",
+        action="store_true",
+        help="Install adaptive platform-fan-control (config + OpenRC)",
+    )
+    parser.add_argument(
+        "--no-include-fan-control",
+        action="store_true",
+        help="Skip adaptive fan-control install (overrides auto / --all-yes)",
+    )
+    parser.add_argument(
+        "--with-kernel",
+        action="store_true",
+        help="Build+install oot hid-asus from local kernel sources (no prebuilt .ko)",
+    )
+    parser.add_argument(
+        "--no-kernel",
+        action="store_true",
+        help="Skip oot hid-asus build/install",
+    )
+    parser.add_argument(
+        "--kernel-force",
+        action="store_true",
+        help="Allow oot build on unsupported KV / MODVERSIONS (ack risk)",
+    )
+    parser.add_argument(
+        "--prefix",
+        default=None,
+        help="Install prefix (default: $ZENBOOK_PREFIX or /usr). Example: --prefix /usr",
+    )
+    parser.add_argument(
+        "--cleanup-usr-local",
+        action="store_true",
+        help="Remove leftover zenbook_scripts files under /usr/local after installing to --prefix",
+    )
+    parser.add_argument(
+        "--cleanup-dry-run",
+        action="store_true",
+        help="With --cleanup-usr-local, only list what would be removed",
+    )
     args = parser.parse_args(argv)
 
+    # Interactive configure may ask for sudo password; daemons never do.
+    if sys.stdin.isatty() and "ZENBOOK_SUDO_ASK" not in os.environ:
+        os.environ["ZENBOOK_SUDO_ASK"] = "1"
+
+    prefix = refresh_install_paths(args.prefix)
+    _ = prefix  # bound for side effect / logging via get_prefix()
     script_dir = SCRIPT_DIR
     default_config = default_duo_config()
     cfg = configparser.ConfigParser()
@@ -114,12 +289,20 @@ def main(argv: list[str] | None = None) -> int:
     init_system = detect_init_system()
     dmi_name = product_name() or "unknown"
     screenpad = has_screenpad_sysfs() or is_ux5400()
-    print("Zenbook Duo keyboard configurator")
-    print(f"Detected DMI product: {dmi_name}")
-    print(f"Detected connection: {detect_keyboard()}")
-    print(f"Detected ScreenPad sysfs: {'yes' if has_screenpad_sysfs() else 'no'}")
-    print(f"Detected init system: {init_system} ({'systemctl found' if init_system == 'systemd' else 'OpenRC-like'})")
-    print()
+    platform_profile = has_platform_profile()
+    fan_flag = resolve_fan_control_flag(args)
+    print("Zenbook Duo keyboard configurator", flush=True)
+    print(f"Detected DMI product: {dmi_name}", flush=True)
+    print(f"Detected connection: {detect_keyboard()}", flush=True)
+    print(f"Detected ScreenPad sysfs: {'yes' if has_screenpad_sysfs() else 'no'}", flush=True)
+    print(f"Detected platform_profile: {'yes' if platform_profile else 'no'}", flush=True)
+    print(
+        f"Detected init system: {init_system} "
+        f"({'systemctl found' if init_system == 'systemd' else 'OpenRC-like'})",
+        flush=True,
+    )
+    print(f"Install prefix: {get_prefix()}", flush=True)
+    print(flush=True)
 
     if not args.defaults:
         kb["usb_vendor_id"] = prompt("USB vendor ID (pogo pins)", kb.get("usb_vendor_id", "0b05"))
@@ -128,63 +311,137 @@ def main(argv: list[str] | None = None) -> int:
         kb["bt_product_id"] = prompt("Bluetooth product ID", kb.get("bt_product_id", "1b2d"))
         kb["usb_windex"] = prompt("USB interface index (wIndex)", kb.get("usb_windex", "4"))
         kb["default_brightness"] = prompt("Default brightness 0-3", kb.get("default_brightness", "1"))
-        duo["default_backlight"] = prompt(
-            "duo.sh default backlight 0-3", duo.get("default_backlight", kb["default_brightness"])
-        )
-        duo["default_scale"] = prompt("duo.sh monitor scale", duo.get("default_scale", "1"))
+        # Legacy [duo] keys (old duo.sh); keep in sync for old conf files only.
+        duo["default_backlight"] = kb["default_brightness"]
+        duo.setdefault("default_scale", "1")
 
     write_config(cfg, default_config)
     ensure_hotkeys_config()
-    print(f"\nSaved {default_config}")
+    print(f"\nSaved {default_config}", flush=True)
 
     if yes_no("Test brightness now?", default_no=True, assume_yes=args.all_yes):
         test_brightness(script_dir, int(kb["default_brightness"]))
 
-    if screenpad and yes_no(
-        "Install ScreenPad + platform-profile tools (UX5400 / asus_screenpad)?",
-        default_no=False,
-        assume_yes=args.all_yes,
-    ):
-        with_sync = yes_no(
-            "Also install ScreenPad brightness-sync service?",
+    # --- collect install choices first (no side effects yet) ---
+    want_screenpad = False
+    want_screenpad_sync = False
+    if screenpad:
+        want_screenpad = yes_no(
+            "Install ScreenPad + platform-profile tools (UX5400 / asus_screenpad)?",
             default_no=False,
             assume_yes=args.all_yes,
         )
-        install_screenpad_support(script_dir, with_sync=with_sync)
-        print("Try: screenpad status && screenpad on 180")
-        print("Try: kb-platform-profile list && kb-platform-profile cycle")
+        if want_screenpad:
+            want_screenpad_sync = yes_no(
+                "Also install ScreenPad brightness-sync service?",
+                default_no=False,
+                assume_yes=args.all_yes,
+            )
 
-    if yes_no(
-        "Install kb-brightness + Fn+ hotkey service to /usr/local?",
+    with_fan: bool | None = fan_flag
+    if with_fan is None:
+        if not platform_profile:
+            with_fan = False
+        elif args.all_yes:
+            with_fan = True
+        else:
+            with_fan = yes_no(
+                "Install adaptive fan-control daemon (/etc/zenbook-scripts/fan-control.json)?",
+                default_no=False,
+                assume_yes=False,
+            )
+
+    want_full = yes_no(
+        f"Install kb-brightness + tools to {get_prefix()}?",
         default_no=True,
         assume_yes=args.all_yes,
-    ):
+    )
+    with_hotkeys = False
+    if want_full:
         with_hotkeys = yes_no(
-            f"Install udev rules + {init_system} hotkey listener service?",
+            f"Also install udev rules + {init_system} hotkey listener service?",
             default_no=False,
             assume_yes=args.all_yes,
         )
-        install_all(
-            script_dir,
-            with_hotkey_service=with_hotkeys,
-            with_screenpad=screenpad,
-            with_screenpad_sync=True,
-        )
-        if with_hotkeys:
-            print()
-            print("Try: kb-brightness-hotkeys --dry-run   (press Fn+ keys)")
-            print("Map unmapped keys in ~/.config/zenbook-scripts/zenbook-hotkeys.conf")
-            if init_system == "openrc":
-                print("Service: rc-service zenbook-kb-hotkeys status")
-            else:
-                print("Service: systemctl status zenbook-kb-hotkeys.service")
-    elif yes_no("Install scripts only (no udev/service)?", default_no=True, assume_yes=args.all_yes):
-        install_kb_brightness_tree(script_dir)
-        install_sudoers_kb_brightness()
-        if screenpad:
-            from zenbook_kb.install import install_sudoers_ux5400
+    elif not with_fan and not want_screenpad:
+        if yes_no("Install scripts only (no udev/service)?", default_no=True, assume_yes=args.all_yes):
+            want_full = True
+            with_hotkeys = False
 
-            install_sudoers_ux5400()
+    with_kernel = False
+    kernel_force = bool(args.kernel_force)
+    if with_hotkeys or args.with_kernel:
+        with_kernel, kernel_force = decide_kernel_install(
+            args, script_dir, assume_yes=args.all_yes
+        )
+    elif args.no_kernel:
+        from zenbook_kb.kernel_preflight import SKIP_FEATURES_MSG
+
+        print(f"Kernel module: skipped (--no-kernel).\n{SKIP_FEATURES_MSG}", flush=True)
+
+    print("\n--- starting install (progress below) ---\n", flush=True)
+
+    try:
+        if want_full or want_screenpad or with_fan:
+            # One path: tree + optional pieces (avoids silent mid-prompt hangs).
+            if want_full or want_screenpad:
+                install_all(
+                    script_dir,
+                    with_hotkey_service=with_hotkeys if want_full else False,
+                    with_screenpad=want_screenpad,
+                    with_screenpad_sync=want_screenpad_sync,
+                    with_fan_control=bool(with_fan),
+                    fan_control_enable=bool(with_fan),
+                    with_kernel=with_kernel,
+                    kernel_force=kernel_force,
+                )
+            elif with_fan:
+                install_kb_brightness_tree(script_dir)
+                install_sudoers_kb_brightness()
+                install_fan_control_support(script_dir, enable_service=True, seed_config=True)
+        else:
+            print("Nothing selected to install.", flush=True)
+        if with_kernel and not with_hotkeys:
+            from zenbook_kb.install import build_and_install_hid_asus
+
+            build_and_install_hid_asus(script_dir, force=kernel_force)
+    except subprocess.TimeoutExpired as exc:
+        print(f"\nERROR: command timed out: {exc.cmd}", file=sys.stderr, flush=True)
+        print("Partial install possible — see summary.", file=sys.stderr, flush=True)
+        print_install_summary()
+        return 1
+    except Exception:
+        print("\nERROR during install:", file=sys.stderr, flush=True)
+        traceback.print_exc()
+        print_install_summary()
+        return 1
+
+    print_install_summary()
+
+    if args.cleanup_usr_local:
+        cleanup_legacy_prefix("/usr/local", dry_run=args.cleanup_dry_run)
+    elif str(get_prefix()) == "/usr" and not args.defaults:
+        if yes_no(
+            "Remove leftover zenbook_scripts files under /usr/local?",
+            default_no=False,
+            assume_yes=False,
+        ):
+            cleanup_legacy_prefix("/usr/local", dry_run=args.cleanup_dry_run)
+
+    if with_hotkeys:
+        print("\nTry: kb-brightness-hotkeys --dry-run", flush=True)
+        if init_system == "openrc":
+            print("Service: rc-service zenbook-kb-hotkeys status", flush=True)
+    if with_kernel:
+        print("Kernel: oot hid-asus built from sources (see /usr/lib/modules/zenbook-hid-asus/)", flush=True)
+        if init_system == "openrc":
+            print("Service: rc-service zenbook-kb-hid-asus status", flush=True)
+    if with_fan:
+        print("Fan: platform-probe && platform-fan-control check", flush=True)
+        if init_system == "openrc":
+            print("Service: rc-service zenbook-platform-fan-control status", flush=True)
+    if want_screenpad:
+        print("Try: screenpad status && kb-platform-profile list", flush=True)
 
     return 0
 

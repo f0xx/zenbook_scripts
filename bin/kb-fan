@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# Deprecated alias — use platform-fan (not keyboard-related).
+echo "note: kb-fan is deprecated; use platform-fan" >&2
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [[ -x "${here}/platform-fan" ]]; then
+	exec "${here}/platform-fan" "$@"
+fi
+for c in /usr/bin/platform-fan /usr/local/bin/platform-fan; do
+	[[ -x "$c" ]] && exec "$c" "$@"
+done
+echo "platform-fan not found" >&2
+exit 127

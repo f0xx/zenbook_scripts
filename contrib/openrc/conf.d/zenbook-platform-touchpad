@@ -1,0 +1,8 @@
+# Config for /etc/init.d/zenbook-platform-touchpad
+#
+# TOUCHPAD_CONFIG=/etc/zenbook-scripts/touchpad.json
+# TOUCHPAD_DEVICE=auto
+#   # or a stable key from: platform-touchpad list
+
+TOUCHPAD_CONFIG=/etc/zenbook-scripts/touchpad.json
+TOUCHPAD_DEVICE=auto

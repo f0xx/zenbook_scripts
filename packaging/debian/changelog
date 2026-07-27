@@ -1,0 +1,7 @@
+zenbook-scripts (0.0.3) unstable; urgency=medium
+
+  * Release 0.0.3: Plasma session/KCM, Duo BT/Fn-row, platform_profile persist.
+  * Debian packaging path fix for packaging/debian symlink; drop duplicate compat.
+
+ -- f0xx <noreply@users.noreply.github.com>  Fri, 24 Jul 2026 22:00:00 +0000
+

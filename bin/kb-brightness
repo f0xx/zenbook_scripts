@@ -30,6 +30,13 @@ zenbook_kb_find_root() {
         return 0
     fi
 
+    if [[ -f /usr/share/zenbook-scripts/lib/protocol.sh ]] \
+        && [[ -f /usr/share/zenbook-scripts/lib/limits.sh ]] \
+        && [[ -f /usr/share/zenbook-scripts/lib/snapshot.sh ]]; then
+        echo /usr/share/zenbook-scripts
+        return 0
+    fi
+
     if [[ -f /usr/local/share/zenbook-scripts/lib/protocol.sh ]] \
         && [[ -f /usr/local/share/zenbook-scripts/lib/limits.sh ]] \
         && [[ -f /usr/local/share/zenbook-scripts/lib/snapshot.sh ]]; then
@@ -45,7 +52,7 @@ zenbook_kb_find_root() {
         fi
     done
 
-    echo "zenbook-scripts lib/ not found (expected /usr/local/share/zenbook-scripts/lib or repo lib/)" >&2
+    echo "zenbook-scripts lib/ not found (expected /usr/share/zenbook-scripts/lib or repo lib/)" >&2
     return 1
 }
 

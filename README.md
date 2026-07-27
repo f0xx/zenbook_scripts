@@ -7,21 +7,38 @@ package. We do **not** act as distro maintainers or QA. Use at your own risk.
 
 ## Models
 
-| Model | Docs | Branch |
-|-------|------|--------|
-| [ASUS Zenbook UX8406 (MA)](README.ux8406.md) | [`README.ux8406.md`](README.ux8406.md) | [`zenbook_ux8406ma`](https://github.com/f0xx/zenbook_scripts/tree/zenbook_ux8406ma) |
-| [ASUS Zenbook UX5400 (E)](README.ux5400.md) | [`README.ux5400.md`](README.ux5400.md) | [`zenbook_ux5400e`](https://github.com/f0xx/zenbook_scripts/tree/zenbook_ux5400e) |
-| [ASUS ZenBook Pro Duo UX581](README.ux581.md) (sold as UX582) | [`README.ux581.md`](README.ux581.md) | [`zenbook_ux581`](https://github.com/f0xx/zenbook_scripts/tree/zenbook_ux581) |
+| Model | Docs | Notes |
+|-------|------|-------|
+| [ASUS Zenbook UX8406 (MA)](README.ux8406.md) | [`README.ux8406.md`](README.ux8406.md) | Docs on **`main`** |
+| [ASUS Zenbook UX5400 (E)](README.ux5400.md) | [`README.ux5400.md`](README.ux5400.md) | Docs on **`main`** |
+| [ASUS ZenBook Pro Duo UX581](README.ux581.md) (sold as UX582) | [`README.ux581.md`](README.ux581.md) | Lightbar: branch [`zenbook_ux581`](https://github.com/f0xx/zenbook_scripts/tree/zenbook_ux581) (no HW tests yet) |
 
-Model-specific READMEs live on `main` after merge; feature work continues on the model branches.
+Model docs live on `main`. Lightbar feature work continues on `zenbook_ux581`
+([docs/ux581/lightbar.md](docs/ux581/lightbar.md)). Plasma KCM shipped in **0.0.3**
+([README.plasma.md](README.plasma.md)).
 
 ## Install
 
 | Distro | How |
 |--------|-----|
-| **Gentoo** | Local overlay + ebuild — see [packaging/README.md](packaging/README.md) (release **`0.0.1_p1`** → tag [`v0.0.1_hf1`](https://github.com/f0xx/zenbook_scripts/releases/tag/v0.0.1_hf1)) |
+| **Gentoo** | Local overlay + ebuild — see [packaging/README.md](packaging/README.md) (**`0.0.2`** → tag [`v0.0.2`](https://github.com/f0xx/zenbook_scripts/releases/tag/v0.0.2); older **`0.0.1_p1`** → [`v0.0.1_hf1`](https://github.com/f0xx/zenbook_scripts/releases/tag/v0.0.1_hf1)) |
 | **Debian / Ubuntu** | No `.deb` yet — from-source steps in [packaging/debian/README.md](packaging/debian/README.md) |
 | **Any (git / tarball)** | `sudo python3 configure.py` — [DEPLOY.md](DEPLOY.md); UX8406 module: [kernel/README.md](kernel/README.md) |
+
+### Release tarball checksums (`v0.0.2`)
+
+Typing-inhibit / soft-accel / pidfiles + fan-control / probe / tray stack.
+Published release + Gentoo Manifest/ebuild ([CHANGELOG.md](CHANGELOG.md)).
+Prefer `~amd64` keywords (not `**`) so `emerge -u` does not pull live `9999`
+ahead of this tag — see [packaging/README.md](packaging/README.md) upgrade note.
+
+Source: https://github.com/f0xx/zenbook_scripts/archive/refs/tags/v0.0.2.tar.gz
+
+| Algo | Digest |
+|------|--------|
+| SHA256 | `be5b80f3a145a6efb53fb9863d365569f897d38b7cf722af3c32288fcf9093d9` |
+| SHA512 | `36ca9e5965814d7aa1ef8c6ce156849599c61515d07b17c93f840ca78197aeadbecda01af4db42241217802a6c1dbb4f617333da43047e8d7a1f7ea9be09a052` |
+| BLAKE2B | `e495347571a71fd73c7be5bf5b5f0a2809d025d719c5204abbe36be4dc8f0c12940160136ee1179b414379761f9a73f1384127357b624493c312d6bf9b8abaef` |
 
 ### Release tarball checksums (`v0.0.1_hf1`)
 
@@ -37,20 +54,32 @@ Source: https://github.com/f0xx/zenbook_scripts/archive/refs/tags/v0.0.1_hf1.tar
 
 Full steps (overlay, Manifest, unmask, emerge, `eselect kernel`, services): **[packaging/README.md](packaging/README.md)**.
 
-Ebuild installs under **`/usr`** (`/usr/bin`, `/usr/libexec`, `/usr/share/zenbook-scripts`).  
-`configure.py` from git still uses **`/usr/local`**.
+Ebuild installs under **`/usr`**. `configure.py` defaults to **`/usr`** as well
+(`--prefix /usr/local` or `ZENBOOK_PREFIX=/usr/local` for the old layout).
 
 ```bash
 # After copying packaging/gentoo/* into your overlay's
 # app-laptop/zenbook-scripts/ and unmasking ~amd64:
 # eselect kernel set <N>   # match uname -r for USE=kernel
-emerge -av =app-laptop/zenbook-scripts-0.0.1_p1
-sudo rc-update add zenbook-kb-hid-asus boot    # UX8406 USE=kernel
+emerge -av =app-laptop/zenbook-scripts-0.0.2
+# UX5400: USE="screenpad fan_control -kernel -zenbook_ux8406" emerge -av =app-laptop/zenbook-scripts-0.0.2
+sudo rc-update add zenbook-kb-hid-asus default   # UX8406 USE=kernel
 sudo rc-update add zenbook-kb-hotkeys default
-# fn_row_policy=7 in /etc/conf.d/zenbook-kb-hid-asus
+sudo rc-update add zenbook-platform-fan-control default   # USE=fan_control
+# optional: rc-update add zenbook-platform-touchpad default
+# fn_row_policy=7 in /etc/conf.d/zenbook-kb-hid-asus (auto on UX8406 install)
 ```
 
 Live git: `zenbook-scripts-9999.ebuild` (needs `**` keywords).
+
+Platform thermal tools (all models with `asus-nb-wmi`):
+
+```bash
+platform-probe                 # what this machine supports
+platform-fan status|modes|auto|full
+platform-fan-control status|once|run
+platform-tray                  # USE=qt6 — metrics graph + profile/fan menu
+```
 
 ## Contributing
 
@@ -65,6 +94,12 @@ Live git: `zenbook-scripts-9999.ebuild` (needs `**` keywords).
 ## Quick links
 
 - [DEPLOY.md](DEPLOY.md) — when to rebuild / reinstall / reload `hid-asus`
+- [ROADMAP.md](ROADMAP.md) — where we are / next (0.0.4)
+- [docs/README.md](docs/README.md) — contributor research library (Fn-row RE, daemon atlas)
+- [CHANGELOG.md](CHANGELOG.md) — release notes (keep updated with tags)
+- [PLANNED.md](PLANNED.md) — feature cheatsheets (`platform-fan*`, probe, tray)
+- [README.plasma.md](README.plasma.md) — Plasma KCM + PowerDevil / session
+- [README.fn_row_policy.md](README.fn_row_policy.md) — UX8406 `fn_row_policy` bitmask / chords
 - [kernel/README.md](kernel/README.md) — out-of-tree `hid-asus` build & install
 - [packaging/README.md](packaging/README.md) — Gentoo ebuild / overlay notes
 - [packaging/debian/README.md](packaging/debian/README.md) — Debian/Ubuntu from source

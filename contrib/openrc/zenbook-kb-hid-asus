@@ -6,7 +6,7 @@
 name="zenbook-kb-hid-asus"
 description="Zenbook Duo UX8406 hid-asus sideload"
 
-: "${boot_script:=/usr/local/libexec/zenbook-hid-asus-boot.sh}"
+: "${boot_script:=/usr/libexec/zenbook-hid-asus-boot.sh}"
 
 depend() {
 	need localmount
@@ -32,7 +32,9 @@ stop() {
 }
 
 stop_pre() {
-	if [ -x /usr/local/bin/kb-brightness-sleep ]; then
+	if [ -x /usr/bin/kb-brightness-sleep ]; then
+		/usr/bin/kb-brightness-sleep save 2>/dev/null || true
+	elif [ -x /usr/local/bin/kb-brightness-sleep ]; then
 		/usr/local/bin/kb-brightness-sleep save 2>/dev/null || true
 	fi
 }

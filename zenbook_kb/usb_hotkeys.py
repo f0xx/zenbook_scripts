@@ -215,8 +215,9 @@ def builtin_usb_vendor_actions() -> dict[int, str]:
         0x10: "display-brightness:down",
         0x20: "display-brightness:up",
         0x7C: "audio:mic-mute",
-        0x88: "rfkill:wlan",
-        # Observed on UX8406 during debug; bind manually once confirmed (likely BT toggle).
+        0x88: "rfkill:bluetooth",
+        0x9C: "shell:platform-screen-swap",
+        # Observed on UX8406 during debug; bind manually once confirmed.
         0x3D: "log",
         VENDOR_FNLOCK: "log",  # toggles in kernel with hid-asus; log for now
     }

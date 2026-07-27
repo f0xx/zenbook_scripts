@@ -1,0 +1,55 @@
+#!/usr/bin/env python3
+"""Sample fan/temp metrics into SQLite (stdlib) for the tray graph."""
+
+from __future__ import annotations
+
+import argparse
+import sys
+import time
+from pathlib import Path
+
+# Prefer the checkout / share tree that contains this code revision.
+_ROOT = Path(__file__).resolve().parent.parent
+_SHARE_CANDIDATES = (
+    _ROOT,
+    Path("/usr/share/zenbook-scripts"),
+    Path("/usr/local/share/zenbook-scripts"),
+)
+_inserted = False
+for _share in _SHARE_CANDIDATES:
+    if (_share / "zenbook_kb" / "metrics.py").is_file():
+        sys.path.insert(0, str(_share))
+        _inserted = True
+        break
+if not _inserted and (_ROOT / "zenbook_kb").is_dir():
+    sys.path.insert(0, str(_ROOT))
+
+from zenbook_kb.metrics import MetricsStore, default_db_path  # noqa: E402
+
+
+def main(argv: list[str] | None = None) -> int:
+    p = argparse.ArgumentParser(description=__doc__)
+    p.add_argument("-c", "--db", type=Path, default=None)
+    p.add_argument("-n", "--count", type=int, default=1, help="samples to take")
+    p.add_argument("-i", "--interval", type=float, default=5.0)
+    p.add_argument("--prune-days", type=float, default=7.0)
+    args = p.parse_args(argv)
+    store = MetricsStore(args.db)
+    try:
+        for i in range(max(1, args.count)):
+            s = store.sample_now()
+            print(
+                f"ts={s.ts:.0f} rpm={s.rpm} temp={s.temp_c} "
+                f"pwm={s.pwm_mode} profile={s.profile}"
+            )
+            if i + 1 < args.count:
+                time.sleep(args.interval)
+        store.prune(older_than_sec=args.prune_days * 86400)
+        print(f"db={store.path}")
+    finally:
+        store.close()
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

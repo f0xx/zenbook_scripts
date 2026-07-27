@@ -19,6 +19,16 @@ depend() {
 }
 
 start_pre() {
+	for _wait_lib in \
+		/usr/share/zenbook-scripts/lib/openrc-wait.sh \
+		/usr/local/share/zenbook-scripts/lib/openrc-wait.sh; do
+		if [ -f "${_wait_lib}" ]; then
+			# shellcheck source=lib/openrc-wait.sh
+			. "${_wait_lib}"
+			zenbook_rc_clear_stale_svc_pidfile
+			break
+		fi
+	done
 	checkpath -d -m 0755 -o root:root /run
 	if [ -n "${output_log:-}" ]; then
 		checkpath -f -m 0664 -o root:root "$output_log"

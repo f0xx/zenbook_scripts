@@ -1,89 +1,106 @@
-# Debian / Ubuntu (from source)
+# Debian / Ubuntu packaging (zenbook-scripts)
 
-There is **no `.deb`**, PPA, or DKMS package in this repository yet.
-Use a release tarball or git checkout, then install userspace with `configure.py`
-and (for UX8406) build the out-of-tree `hid-asus` module yourself.
+**No `.deb` is published yet.** This directory holds a **debhelper scaffold** for
+local builds and future review. Nothing is deployed to augury0 or any apt mirror
+from this repo automatically.
 
-PRs that add proper packaging are welcome; they must go through review.
+## What the package installs
+
+Binary package **`zenbook-scripts`** (Architecture: `all`), CLI-first:
+
+- `/usr/bin/` — `kb-brightness`, `platform-probe`, `platform-session`, …
+- `/usr/share/zenbook-scripts/` — Python + shell support tree
+- `/usr/libexec/` — udev/ACPI helpers
+- udev rules, systemd units, and sleep hooks under `/etc` and `/usr/lib/systemd/`
+- OpenRC scripts under `/usr/share/doc/zenbook-scripts/examples/openrc/` (reference)
+
+**Not included:** out-of-tree `hid-asus.ko` (build from `kernel/` manually or via
+future DKMS). **Plasma 6 KCM** (`plasma/kcm/`) is optional and needs Ubuntu **24.04+**
+(or Debian trixie/sid) with Qt6/KF6 dev packages — build with
+`plasma/kcm/build.sh --system` separately.
 
 ## Dependencies
 
-```bash
-sudo apt update
-sudo apt install -y python3 python3-usb python3-pip \
-  build-essential flex bison libelf-dev libssl-dev \
-  linux-headers-$(uname -r)
-# optional GUI:
-# sudo apt install -y python3-pyside6.qtwidgets
-```
+| Relation | Packages |
+|----------|----------|
+| Depends | `python3 (>= 3.8)`, `dmidecode` |
+| Recommends | `python3-usb`, `systemd` \| `elogind`, `acpid` |
 
-## Fetch `v0.0.1_hf1`
+### Ubuntu 20.04 Focal (probe host)
 
-```bash
-cd /tmp
-curl -fsSL -o zenbook_scripts-0.0.1_hf1.tar.gz \
-  https://github.com/f0xx/zenbook_scripts/archive/refs/tags/v0.0.1_hf1.tar.gz
+- Default apt has **Python 3.8** — satisfies `Depends: python3 (>= 3.8)`.
+- **`platform-session`** uses `from __future__ import annotations` (no PEP 604
+  runtime requirement); no `match`/`case`. Should run on 3.8, but **session CLI is
+  newer** — test on Focal before relying on it in production.
+- **No Qt6/KF6 in Focal** → do not expect KCM builds; CLI + hooks only.
+- Build the `.deb` on Focal or newer with `debhelper-compat (= 12)`.
 
-# verify (pick one)
-echo 'b4f4c5d6cdc79c1985d779c55ddfad64159199cc4c051a13365a33b88242a0e5  zenbook_scripts-0.0.1_hf1.tar.gz' | sha256sum -c
-echo 'd53dc34926e758015eee4dec7ecc5c4272bec706fc2142ac1cf907a8ced2fac0ed28383168bc035f69062ba61ffa4315f5a8f007d792be2fb347897533945acf  zenbook_scripts-0.0.1_hf1.tar.gz' | sha512sum -c
+### Ubuntu 24.04+ / Debian bookworm+
 
-tar -xzf zenbook_scripts-0.0.1_hf1.tar.gz
-cd zenbook_scripts-0.0.1_hf1
-```
+Same CLI package. Optional Plasma KCM: install build deps (`qt6-base-dev`,
+`libkf6kcmutils-dev`, …) and run `plasma/kcm/build.sh --system` — not wired into
+this `.deb` yet.
 
-## Userspace install
+## Build `.deb` from git checkout
 
 ```bash
-sudo python3 configure.py --defaults --all-yes
-# or interactive: sudo python3 configure.py
+cd /path/to/zenbook_scripts
+
+# debhelper expects debian/ at the source root
+ln -snf packaging/debian debian
+
+sudo apt install -y debhelper-compat devscripts
+dpkg-buildpackage -us -uc -b
+
+# artifacts in parent directory:
+#   ../zenbook-scripts_0.0.3~pre1_all.deb
 ```
 
-That installs CLIs under `/usr/local/bin`, the share tree under
-`/usr/local/share/zenbook-scripts/`, udev rules, and systemd units when detected.
+Install locally:
 
-### Enable systemd units (if installed)
+```bash
+sudo dpkg -i ../zenbook-scripts_0.0.3~pre1_all.deb
+sudo apt-get install -f   # if Recommends missing
+```
+
+## Why not `configure.py` in `debian/rules`?
+
+`configure.py` supports `--prefix /usr` but **not `DESTDIR`**, and it runs `sudo`
+for `/etc`, udev reload, and sudoers — unsuitable for non-interactive package builds.
+`debian/install.sh` copies the same tree Portage installs (minus USE flags / kernel
+module build).
+
+## Manual setup after install
+
+See upstream [`DEPLOY.md`](../../DEPLOY.md):
 
 ```bash
 sudo systemctl daemon-reload
-sudo systemctl enable --now zenbook-kb-hotkeys.service   # if present
-# ScreenPad (UX5400):
-# sudo systemctl enable --now zenbook-screenpad.service
-# sudo systemctl enable --now zenbook-screenpad-sync.service
+sudo systemctl enable --now zenbook-kb-hotkeys.service   # if desired
+platform-probe
+cp /usr/share/zenbook-scripts/plasma/session.json.example \
+   ~/.config/zenbook-scripts/session.json   # Plasma session policy
 ```
 
-Sleep hook (if not already placed by install):
-
-```bash
-# contrib/systemd/zenbook-kb-brightness-sleep → /usr/lib/systemd/system-sleep/
-```
-
-## UX8406 kernel module (optional but recommended when docked)
+UX8406 oot module (optional):
 
 ```bash
 make -C kernel build-current
 sudo make -C kernel install
-# loads path: /usr/lib/modules/zenbook-hid-asus/$(uname -r)/hid-asus.ko
-
-# one-shot test load (stop hotkeys first — pyusb on if4 bricks the dock)
-sudo systemctl stop zenbook-kb-hotkeys.service 2>/dev/null || true
-sudo ./kernel/scripts/switch-hid-asus.sh sideload   # or unload/insmod/rebind; see kernel/README.md
 ```
 
-Set `fn_row_policy=7` when using the sideloaded module (modprobe options or
-`insmod … fn_row_policy=7`). Details: [`kernel/README.md`](../../kernel/README.md),
-[`DEPLOY.md`](../../DEPLOY.md).
+## From-source install (without `.deb`)
 
-Rebuild the module after every kernel / headers upgrade.
-
-## Without root packaging
+Still supported — unchanged from earlier docs:
 
 ```bash
-PYTHONPATH=. python3 -m zenbook_kb.sniff 15
-./bin/kb-brightness status
+sudo python3 configure.py --defaults --all-yes --prefix /usr
 ```
 
-## Want a real `.deb`?
+## Future work
 
-Open a PR that adds `debian/` (debhelper + preferably DKMS for `hid-asus`).
-Until then, treat this README as the supported Debian/Ubuntu path.
+- Optional `zenbook-scripts-plasma` binary on 24.04+ with documented Build-Depends
+- DKMS or `linux-modules-*` helper for `hid-asus`
+- PPA / official archive — **not claimed today**
+
+PRs welcome; must go through review.

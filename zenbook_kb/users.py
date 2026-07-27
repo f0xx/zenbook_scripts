@@ -64,6 +64,23 @@ def default_duo_config() -> Path:
     return resolve_config_dir() / "zenbook-duo.conf"
 
 
+# Machine-global fan policy (platform_profile is not per-user).
+SYSTEM_FAN_CONTROL_CONFIG = Path("/etc/zenbook-scripts/fan-control.json")
+
+
+def default_fan_control_config() -> Path:
+    """Resolve fan-control JSON: env override, else system-wide path.
+
+    Fan / platform_profile state is hardware-global — one laptop, one policy.
+    Per-user ``~/.config/...`` files are intentionally *not* consulted so
+    multiple accounts cannot silently disagree with the running daemon.
+    """
+    env = os.environ.get("FAN_CONTROL_CONFIG")
+    if env:
+        return Path(env).expanduser()
+    return SYSTEM_FAN_CONTROL_CONFIG
+
+
 def validate_unix_user(user: str) -> None:
     """Raise ``KeyError`` if *user* is not a local passwd entry."""
     pwd.getpwnam(user)

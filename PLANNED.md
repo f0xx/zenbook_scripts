@@ -7,9 +7,179 @@ kb-platform-profile get
 kb-platform-profile list          # quiet balanced performance
 kb-platform-profile set balanced
 kb-platform-profile cycle         # quiet → balanced → performance → …
+kb-platform-profile save|saved|restore
 ```
 
-Custom fan PWM curves remain unavailable on UX5400EA / UX8406 (`fan_curve_get_factory_default` → ENODEV).
+**Persistence:** explicit `set`/`cycle` writes
+`/var/lib/zenbook-scripts/platform-profile`. Boot oneshot
+`platform-profile-boot` / `zenbook-platform-profile` restores after reboot or
+hibernate. Resume hooks restore before adaptive fan-control re-evaluates.
+Adaptive `platform-fan-control` writes sysfs only (does not overwrite saved
+choice). Optional PWM: `/var/lib/zenbook-scripts/fan-pwm-enable`.
+
+## `platform-fan` — implemented (was `kb-fan`)
+
+`kb-fan` remains as a deprecation wrapper. Prefer **`platform-fan`** — this is
+thermal/fan control, not a keyboard Fn key.
+
+Probed on UX8406MA and UX5400EA (`asus-nb-wmi` hwmon):
+
+| Control | Result |
+|---------|--------|
+| Custom `pwm*_auto_point_*` curves | **Unavailable** (`fan_curve_get_factory_default` → ENODEV) |
+| `platform_profile` / `throttle_thermal_policy` | **Works** — quiet↔balanced↔performance (ttp 2/0/1) |
+| `pwm1_enable` | **0** = full-on (~max RPM), **2** = firmware auto; **1** (manual curve) → EINVAL |
+| `fan1_input` | RPM readout |
+
+```bash
+platform-probe                 # dry-run: what this machine supports
+platform-fan status
+platform-fan modes              # PWM auto/full + ACPI profiles available here
+platform-fan rpm
+platform-fan auto              # pwm1_enable=2
+platform-fan full              # pwm1_enable=0 (loud; needs root/sudo -n)
+platform-fan quiet|balanced|performance
+```
+
+## `platform-fan-control` — adaptive daemon (was `kb-fan-control`)
+
+Watches AC/battery, load, temp, and optional lid; applies named profiles via
+`kb-platform-profile` + `platform-fan`. Sleep/lid hooks fire one-shot events.
+
+```bash
+sudo mkdir -p /etc/zenbook-scripts
+sudo cp fan-control.json.example /etc/zenbook-scripts/fan-control.json
+# edit rules.ac / rules.battery / events.*
+platform-fan-control status
+platform-fan-control once                 # evaluate + apply once
+platform-fan-control event sleep_pre      # from sleep hooks
+platform-fan-control run                  # daemon (OpenRC: zenbook-platform-fan-control)
+```
+
+Config is plain JSON (no TOML / PyYAML), **machine-global** under
+`/etc/zenbook-scripts/fan-control.json` (override with `-c` or
+`FAN_CONTROL_CONFIG`). Fan / `platform_profile` cannot be per-user — only one
+policy applies on the laptop, so home-directory copies are ignored on purpose.
+
+OpenRC unit is installed but **not** auto-started by the ebuild (seed config first).
+`configure.py --include-fan-control` seeds `/etc/zenbook-scripts/fan-control.json`
+and enables the service.
+
+```bash
+# verify
+platform-probe
+platform-fan-control check
+platform-fan-control status
+rc-service zenbook-platform-fan-control status   # if enabled
+tail -f /var/log/zenbook-platform-fan-control.log
+
+# configure.py / configure.sh
+sudo ./configure.py --defaults --all-yes --include-fan-control --prefix /usr
+sudo ./configure.py --defaults --all-yes --no-include-fan-control
+# Gentoo: USE="fan_control" / USE="-fan_control"
+```
+
+## `platform-probe` — implemented
+
+```bash
+platform-probe                     # human-readable capability report
+platform-probe --json
+platform-probe --feature fan_pwm
+platform-probe --recommend-use     # Gentoo USE suggestions
+```
+
+## `platform-tray` / `platform-metrics` — implemented
+
+SQLite time series under `~/.local/share/zenbook-scripts/metrics.sqlite3`
+(Python stdlib `sqlite3` — no extra dep).
+
+```bash
+platform-metrics -n 20 -i 5        # CLI sampler
+platform-tray                      # tray menu + Open metrics graph…
+# Graph: X zoom 75–200%, sample interval 1–20s, sticky POI hover details
+```
+
+Requires PySide6 (`USE=qt6` / `emerge dev-python/pyside:6`). Fan writes from the
+tray use `sudo -n` only (never hang on a password prompt).
+
+---
+
+## `platform-power` / EPP+RAPL — implemented
+
+Wired into `platform-fan-control` profiles (see `fan-control.json.example`):
+
+```json
+"epp": "balance_power",
+"intel_pstate": { "max_perf_pct": 100, "no_turbo": false },
+"rapl": { "pl1_w": 28, "pl2_w": 45 }
+```
+
+Notes:
+- Non-`performance` EPP switches `scaling_governor` to `powersave` first (otherwise EPP writes return EBUSY under the `performance` governor).
+- `epp: performance` sets `scaling_governor=performance` (EPP node stays locked).
+- RAPL values accept watts (`pl1_w`) or microwatts (`pl1_uw`).
+
+```bash
+platform-power status
+platform-power epp balance_power
+platform-power rapl --pl1 28 --pl2 45
+platform-fan-control apply powersave   # applies epp+rapl from JSON profile
+```
+
+---
+
+## `platform-touchpad` — MVP implemented
+
+Not AccelSpeed-only. Palm / accidental pointer motion while typing on the large
+UX8406 pad (similar annoyance on UX5400 — tune later).
+
+Pipeline: **event-sim → exec-delay (N ms) → outlier-reject**
+
+```bash
+platform-touchpad list
+platform-touchpad selftest
+platform-touchpad sim --duration-ms 20          # short brush → drop
+platform-touchpad monitor --seconds 15          # dry-run on real pad
+sudo cp touchpad.json.example /etc/zenbook-scripts/touchpad.json
+sudo platform-touchpad run                      # grab + uinput live filter
+```
+
+Defaults: `exec_delay` **25 ms**, `outlier_reject` **max_delta 1200**.
+
+**Per-device profiles** (`touchpad.json` version 2): keys are stable
+`name|phys` (not `eventN`). GUI combo switches knobs per device; Save updates
+that device only. ELAN screen pads can stay `"enabled": false`.
+
+**Daemon pidfiles** (shared OpenRC / systemd / manual CLI):
+
+| Service | Pidfile |
+|---------|---------|
+| touchpad live filter | `/run/zenbook-platform-touchpad.pid` |
+| fan-control | `/run/zenbook-platform-fan-control.pid` |
+| kb-hotkeys | `/run/zenbook-kb-hotkeys.pid` |
+| screenpad-sync | `/run/zenbook-screenpad-sync.pid` |
+| kb-lid | `/run/zenbook-kb-lid.pid` |
+
+Helpers: `zenbook_kb/pidfile.py` + `lib/openrc-wait.sh` (`zenbook_rc_clear_stale_svc_pidfile`).
+Daemons self-write on start and clear on exit; stale files are removed on read /
+`start_pre`. Status CLIs report `live: running|stopped`.
+
+**typing_inhibit** (default on, ~350 ms): `exec_delay` / `outlier_reject` only
+while recent keyboard activity — idle pointing is pass-through.
+
+**soft_accel** (default gain 1.6, mode `linear`): scales ABS motion on the live
+uinput path so feel is closer to a +60% DE AccelSpeed (compositor accel does not
+apply to the virtual device). Mode `nonlinear` keeps slow moves near 1× and
+ramps toward `gain` on larger per-frame deltas (`pivot`, default 40).
+
+```bash
+platform-touchpad list                 # shows stable key=
+platform-touchpad status
+platform-touchpad selftest
+platform-touchpad capture -o /tmp/tp.jsonl --seconds 30
+# /usr/share/zenbook-scripts/contrib/scripts/touchpad-capture-analyze.sh /tmp/tp.jsonl
+platform-touchpad-gui                  # USE=qt6 / PySide6; also from platform-tray
+```
 
 ---
 
@@ -38,12 +208,16 @@ OpenRGB / rogauracore: **not applicable** on UX5400EA (no USB Aura Core HID; whi
 
 ---
 
-## Fn-lock module parameters (UX8406) — implemented
+## Fn-lock / Fn-row module parameters (UX8406) — implemented
 
 `kernel/scripts/port-ux8406.py` adds:
 
 - `fn_lock_default` — `-1` = DMI (UX8406 → Mode B), `0` / `1` override
 - `fn_lock_allow_toggle` — disable Fn+Esc when `0`
+- `fn_row_policy` — F4–F12 swap bitmask + F1–F3 fixed remap when ≠ 0
+
+Default docked: **`fn_row_policy=7`**. Full tables / drawings:
+[`README.fn_row_policy.md`](README.fn_row_policy.md).
 
 Example: `contrib/modprobe/zenbook-hid-asus.conf` → `/etc/modprobe.d/`
 
@@ -56,6 +230,21 @@ Example: `contrib/modprobe/zenbook-hid-asus.conf` → `/etc/modprobe.d/`
 - `contrib/acpi/` — acpid lid/sleep events (fallback when acpid owns lid)
 - `bin/kb-brightness-lid-watch` + `contrib/openrc/zenbook-kb-lid` — **elogind** `LidClosed` (UX8406MA default)
 - `bin/snapshot-plan-state` — labelled config backups before milestones
+
+---
+
+## Plasma KCM + PowerDevil / session — in progress
+
+Branch: **`feature/plasma-kcm-powerdevil`**. Full design: [`README.plasma.md`](README.plasma.md).
+
+One shot for next RC:
+
+1. **KCModule** — System Settings UI (Overview / Touchpad / Thermal link / Sleep·Resume)
+2. **`platform-session`** — per-user `session.json` profiles; sleep/hibernate/resume actions
+3. **Presentation inhibit** held outside plasmashell (survives `--replace`)
+4. Optional QSG-thread watch (default off)
+
+Scaffold: `plasma/session.json.example`. Tray remains the quick thermal surface.
 
 ---
 

@@ -108,7 +108,7 @@ zenbook_screenpad_write() {
 		return 0
 	fi
 	if command -v sudo >/dev/null 2>&1; then
-		printf '%s\n' "${value}" | sudo tee "${file}" >/dev/null
+		printf '%s\n' "${value}" | sudo -n tee "${file}" >/dev/null
 		return 0
 	fi
 	echo "Cannot write ${file} (need root or video-group udev rule)" >&2
@@ -124,8 +124,8 @@ zenbook_screenpad_remember() {
 		if [[ -w "$(dirname "${dir}")" ]] || [[ "${EUID:-$(id -u)}" -eq 0 ]]; then
 			mkdir -p "${dir}"
 		elif command -v sudo >/dev/null 2>&1; then
-			sudo mkdir -p "${dir}"
-			sudo chmod 0775 "${dir}" || true
+			sudo -n mkdir -p "${dir}"
+			sudo -n chmod 0775 "${dir}" || true
 		else
 			# Fall back to user config if /var/lib is not writable.
 			file="$(zenbook_screenpad_config_dir)/screenpad-brightness"
@@ -137,7 +137,7 @@ zenbook_screenpad_remember() {
 		return 0
 	fi
 	if command -v sudo >/dev/null 2>&1; then
-		printf '%s\n' "${level}" | sudo tee "${file}" >/dev/null
+		printf '%s\n' "${level}" | sudo -n tee "${file}" >/dev/null
 		return 0
 	fi
 	file="$(zenbook_screenpad_config_dir)/screenpad-brightness"
@@ -196,7 +196,7 @@ zenbook_screenpad_on() {
 			if [[ -w "${conn}/status" ]]; then
 				printf 'detect\n' >"${conn}/status" 2>/dev/null || true
 			elif command -v sudo >/dev/null 2>&1; then
-				printf 'detect\n' | sudo tee "${conn}/status" >/dev/null 2>&1 || true
+				printf 'detect\n' | sudo -n tee "${conn}/status" >/dev/null 2>&1 || true
 			fi
 		done
 		if zenbook_screenpad_drm_connected >/dev/null 2>&1; then
