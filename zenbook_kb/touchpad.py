@@ -1078,7 +1078,10 @@ def default_filters() -> list[dict[str, Any]]:
             "gain": DEFAULT_SOFT_ACCEL_GAIN,
             "mode": DEFAULT_SOFT_ACCEL_MODE,
             "pivot": DEFAULT_SOFT_ACCEL_PIVOT,
-            "enabled": True,
+            # Off by default: always-on ABS rewrite (gain≠1) causes cursor
+            # teleports / "dangling" pointer. Palm path is typing_inhibit +
+            # exec_delay + outlier only. Enable soft_accel only after calibrate.
+            "enabled": False,
         },
     ]
 
@@ -1531,11 +1534,15 @@ def iter_touchpad_with_typing(
                         fds.pop(fd, None)
                         open_kbd.discard(path)
                         bufs.pop(fd, None)
-                    continue
+                        continue
+                    # Grabbed touchpad I/O error — exit so grab is released.
+                    return
                 except BlockingIOError:
                     continue
                 if not chunk:
-                    # EOF / device gone (common on BT undock)
+                    # EOF / device gone (dock undock, BT drop). For the grabbed
+                    # touchpad this must end the loop — otherwise we keep the
+                    # EVIOCGRAB while emitting nothing → dead cursor + buttons.
                     if not is_tp:
                         try:
                             os.close(fd)
@@ -1544,7 +1551,8 @@ def iter_touchpad_with_typing(
                         fds.pop(fd, None)
                         open_kbd.discard(path)
                         bufs.pop(fd, None)
-                    continue
+                        continue
+                    return
                 bufs.setdefault(fd, b"")
                 bufs[fd] += chunk
                 while len(bufs[fd]) >= INPUT_EVENT_SIZE:
@@ -1558,6 +1566,10 @@ def iter_touchpad_with_typing(
                             activity.note_ev(ev)
                         continue
                     yield ev
+            # Device node vanished mid-select (USB undock)
+            for fd, (path, is_tp) in list(fds.items()):
+                if is_tp and not path.exists():
+                    return
     finally:
         for fd, (_path, is_tp) in list(fds.items()):
             if is_tp and grabbed:

@@ -8,12 +8,14 @@ Examples:
   platform-touchpad selftest
   platform-touchpad monitor --seconds 10
   sudo platform-touchpad run --device event10
+  sudo platform-touchpad stop
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import os
 import signal
 import sys
 from pathlib import Path
@@ -281,6 +283,25 @@ def cmd_run(args: argparse.Namespace) -> int:
         release_pidfile(TOUCHPAD_PIDFILE)
 
 
+def cmd_stop(_: argparse.Namespace) -> int:
+    """Stop a live filter via pidfile (releases EVIOCGRAB)."""
+    pid = read_pidfile(TOUCHPAD_PIDFILE, clear_stale=True)
+    if pid is None:
+        print("live filter not running")
+        return 0
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except ProcessLookupError:
+        release_pidfile(TOUCHPAD_PIDFILE)
+        print(f"stale pid {pid} cleared")
+        return 0
+    except PermissionError:
+        print(f"need root to signal pid {pid}", file=sys.stderr)
+        return 1
+    print(f"sent SIGTERM to pid {pid}")
+    return 0
+
+
 def cmd_status(args: argparse.Namespace) -> int:
     cfg_path = Path(args.config) if args.config else DEFAULT_CONFIG
     cfg = load_config(cfg_path if cfg_path.is_file() else None)
@@ -402,6 +423,7 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help=f"JSON config (default {DEFAULT_CONFIG})",
     )
+    sub.add_parser("stop", help="SIGTERM live filter (release EVIOCGRAB)")
 
     args = parser.parse_args(argv)
     try:
@@ -409,6 +431,8 @@ def main(argv: list[str] | None = None) -> int:
             return cmd_list(args)
         if args.cmd == "status":
             return cmd_status(args)
+        if args.cmd == "stop":
+            return cmd_stop(args)
         if args.cmd == "selftest":
             return cmd_selftest(args)
         if args.cmd == "sim":
