@@ -10,6 +10,45 @@ ZENBOOK_PLATFORM_PROFILE_CHOICES="${ZENBOOK_PLATFORM_PROFILE_CHOICES:-/sys/firmw
 ZENBOOK_PLATFORM_PROFILE_STATE_DIR="${ZENBOOK_PLATFORM_PROFILE_STATE_DIR:-/var/lib/zenbook-scripts}"
 ZENBOOK_PLATFORM_PROFILE_STATE="${ZENBOOK_PLATFORM_PROFILE_STATE:-${ZENBOOK_PLATFORM_PROFILE_STATE_DIR}/platform-profile}"
 ZENBOOK_FAN_PWM_STATE="${ZENBOOK_FAN_PWM_STATE:-${ZENBOOK_PLATFORM_PROFILE_STATE_DIR}/fan-pwm-enable}"
+ZENBOOK_FAN_CONTROL_MODE_STATE="${ZENBOOK_FAN_CONTROL_MODE_STATE:-${ZENBOOK_PLATFORM_PROFILE_STATE_DIR}/fan-control-mode}"
+
+zenbook_fan_control_mode_get() {
+	local file="${ZENBOOK_FAN_CONTROL_MODE_STATE}"
+	local value
+	if [[ -r "${file}" ]]; then
+		value="$(tr -d '[:space:]' <"${file}")"
+		case "${value}" in
+		auto | manual) printf '%s\n' "${value}"; return 0 ;;
+		esac
+	fi
+	printf '%s\n' auto
+}
+
+zenbook_fan_control_mode_set() {
+	local want="$1"
+	local file="${ZENBOOK_FAN_CONTROL_MODE_STATE}"
+	local dir
+	case "${want}" in
+	auto | adaptive | rules) want=auto ;;
+	manual | lock) want=manual ;;
+	*)
+		echo "Unknown fan-control mode '${want}' (use auto|manual)" >&2
+		return 2
+		;;
+	esac
+	dir="$(zenbook_platform_profile_state_dir)" || return 1
+	file="${dir}/fan-control-mode"
+	if [[ -w "${file}" ]] || { [[ ! -e "${file}" && -w "${dir}" ]]; }; then
+		printf '%s\n' "${want}" >"${file}" && return 0
+	fi
+	if command -v sudo >/dev/null 2>&1; then
+		if printf '%s\n' "${want}" | sudo -n tee "${file}" >/dev/null 2>&1; then
+			return 0
+		fi
+	fi
+	echo "Cannot persist fan-control mode to ${file}" >&2
+	return 1
+}
 
 zenbook_platform_profile_present() {
 	[[ -f "${ZENBOOK_PLATFORM_PROFILE}" ]]
@@ -111,6 +150,8 @@ zenbook_platform_profile_set() {
 	# Persist user/CLI choice unless adaptive fan-control opts out.
 	if [[ "${ZENBOOK_PP_PERSIST:-1}" != "0" ]]; then
 		zenbook_platform_profile_state_write "${want}" || true
+		# Explicit profile = leave adaptive rules until user picks auto.
+		zenbook_fan_control_mode_set manual || true
 	fi
 	zenbook_platform_profile_get
 }

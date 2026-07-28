@@ -375,6 +375,7 @@ class PlatformTray(QWidget):
         super().__init__()
         self.report = build_report()
         self.fan = _which("platform-fan", "kb-fan")
+        self.fan_control = _which("platform-fan-control", "kb-fan-control")
         self.profile = _which("kb-platform-profile")
         self.probe = _which("platform-probe")
         self.touchpad_gui = _which("platform-touchpad-gui")
@@ -406,14 +407,21 @@ class PlatformTray(QWidget):
             act.setEnabled(pp_ok and bool(self.profile))
             act.triggered.connect(lambda _c=False, n=name: self._set_profile(n))
             self.menu.addAction(act)
+        adaptive = QAction("Profile: auto (adaptive)", self)
+        adaptive.setEnabled(bool(self.fan_control) or bool(self.fan))
+        adaptive.setToolTip("Resume load/temp rules (clears manual lock)")
+        adaptive.triggered.connect(self._set_adaptive)
+        self.menu.addAction(adaptive)
 
         self.menu.addSeparator()
         auto = QAction("Fans: auto", self)
         auto.setEnabled(fan_ok and bool(self.fan))
+        auto.setToolTip("PWM auto + resume adaptive rules")
         auto.triggered.connect(lambda: self._fan_cmd("auto"))
         self.menu.addAction(auto)
         full = QAction("Fans: full (loud)", self)
         full.setEnabled(fan_ok and bool(self.fan))
+        full.setToolTip("Full fans + manual lock (daemon will not overwrite)")
         full.triggered.connect(lambda: self._fan_cmd("full"))
         self.menu.addAction(full)
 
@@ -451,6 +459,56 @@ class PlatformTray(QWidget):
     def _set_profile(self, name: str) -> None:
         if self.profile:
             _run([self.profile, "set", name])
+        self.store.add_event("mode", "profile", None, f"user:{name}")
+        self.store.sample_now()
+        self.refresh_status()
+
+    def _set_adaptive(self) -> None:
+        """Clear manual lock and let platform-fan-control apply rules again."""
+        ok = False
+        if self.fan_control:
+            r = subprocess.run(
+                ["sudo", "-n", self.fan_control, "mode", "auto"],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=12,
+            )
+            if r.returncode != 0:
+                r = subprocess.run(
+                    [self.fan_control, "mode", "auto"],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                    timeout=12,
+                )
+            ok = r.returncode == 0
+        elif self.fan:
+            r = subprocess.run(
+                ["sudo", "-n", self.fan, "adaptive"],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=8,
+            )
+            if r.returncode != 0:
+                r = subprocess.run(
+                    [self.fan, "adaptive"],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                    timeout=8,
+                )
+            ok = r.returncode == 0
+        if not ok:
+            self.tray.showMessage(
+                "platform-tray",
+                "Could not set adaptive mode (need root / NOPASSWD)",
+                QSystemTrayIcon.MessageIcon.Warning,
+                4000,
+            )
+        else:
+            self.store.add_event("mode", "control", None, "user:adaptive")
         self.store.sample_now()
         self.refresh_status()
 
@@ -576,6 +634,15 @@ class PlatformTray(QWidget):
     def refresh_status(self) -> None:
         self.store.sample_now()
         bits: list[str] = []
+        mode_path = Path("/var/lib/zenbook-scripts/fan-control-mode")
+        try:
+            mode = mode_path.read_text(encoding="utf-8").strip().lower()
+        except OSError:
+            mode = "auto"
+        if mode == "manual":
+            bits.append("manual")
+        else:
+            bits.append("adaptive")
         if self.profile:
             bits.append(_run([self.profile, "get"]) or "?")
         if self.fan:

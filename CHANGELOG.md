@@ -7,6 +7,18 @@ Gentoo-friendly naming where needed (`v0.0.1_hf1` → PV `0.0.1_p1`,
 
 ## [Unreleased] — toward 0.0.4
 
+### Fixed
+
+- **Live touchpad:** device EOF / I/O error now ends `platform-touchpad run`
+  and releases `EVIOCGRAB` (was: grab held with no emits → dead cursor/buttons;
+  undock “fixed” it by removing the node).
+- **soft_accel default off:** always-on ABS rewrite at gain 1.6 was a prime
+  cause of cursor teleports / “dangling” pointer during normal moves. Palm
+  path remains typing_inhibit + exec_delay + outlier only.
+- **Fan tray stickiness:** explicit Profile / Fans: full no longer get
+  overwritten by `platform-fan-control` after hysteresis; mode file
+  `/var/lib/zenbook-scripts/fan-control-mode` (`manual` vs `auto`).
+
 ### Changed
 
 - **Gentoo `USE=plasma`:** build and install `kcm_zenbook_platform` during
@@ -19,6 +31,9 @@ Gentoo-friendly naming where needed (`v0.0.1_hf1` → PV `0.0.1_p1`,
 
 ### Added
 
+- **Tray / CLI adaptive unlock:** `Profile: auto (adaptive)`,
+  `platform-fan adaptive`, `platform-fan-control mode auto|manual`.
+- **`platform-touchpad stop`:** SIGTERM live filter via pidfile.
 - **`platform-touch-cal`:** fullscreen dual-eDP touch calibrator / jump
   diagnoser (xinput-val principles; PySide6; `USE=qt6`). Proves lower→primary
   warp; does not claim a compositor fix.

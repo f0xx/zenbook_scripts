@@ -28,3 +28,6 @@ Also invoked from `kb-brightness-sleep` when the hook is installed.
 
 Overlaps `platform-session` `fan_sleep_*` — prefer one orchestrator.
 Never fails the sleep path hard (`|| true`).
+
+If `/var/lib/zenbook-scripts/fan-control-mode` is `manual`, `sleep_post` restores
+the user choice and skips adaptive re-eval (see `docs/daemons/fan-control.md`).

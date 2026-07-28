@@ -118,6 +118,16 @@ zenbook_fan_pwm_enable_set() {
 	# Persist explicit CLI pwm mode (fan-control sets ZENBOOK_FAN_PWM_PERSIST=0).
 	if [[ "${ZENBOOK_FAN_PWM_PERSIST:-1}" != "0" ]]; then
 		zenbook_fan_pwm_state_write "${mode}" || true
+		# full (0) → manual lock; auto (2) → resume adaptive rules.
+		if [[ "${mode}" == "0" ]]; then
+			if declare -F zenbook_fan_control_mode_set >/dev/null 2>&1; then
+				zenbook_fan_control_mode_set manual || true
+			fi
+		elif [[ "${mode}" == "2" ]]; then
+			if declare -F zenbook_fan_control_mode_set >/dev/null 2>&1; then
+				zenbook_fan_control_mode_set auto || true
+			fi
+		fi
 	fi
 }
 
