@@ -22,6 +22,7 @@ INSTALL_BIN_SCREENPAD: Path
 INSTALL_BIN_SCREENPAD_SYNC: Path
 INSTALL_BIN_SCREENPAD_BOOT: Path
 INSTALL_BIN_PLATFORM_PROFILE: Path
+INSTALL_BIN_PLATFORM_PROFILE_BOOT: Path
 INSTALL_BIN_FAN: Path
 INSTALL_BIN_FAN_LEGACY: Path
 INSTALL_BIN_FAN_CONTROL: Path
@@ -45,6 +46,8 @@ OPENRC_HID_ASUS_CONF: Path
 OPENRC_SCREENPAD_INIT: Path
 OPENRC_SCREENPAD_SYNC_INIT: Path
 OPENRC_SCREENPAD_CONF: Path
+OPENRC_PLATFORM_PROFILE_INIT: Path
+OPENRC_PLATFORM_PROFILE_CONF: Path
 OPENRC_TOUCHPAD_INIT: Path
 OPENRC_TOUCHPAD_CONF: Path
 INSTALL_LIBEXEC: Path
@@ -53,6 +56,7 @@ OPENRC_CONF: Path
 SYSTEMD_UNIT: Path
 SYSTEMD_SCREENPAD_UNIT: Path
 SYSTEMD_SCREENPAD_SYNC_UNIT: Path
+SYSTEMD_PLATFORM_PROFILE_UNIT: Path
 SYSTEMD_TOUCHPAD_UNIT: Path
 SYSTEMD_SLEEP_HOOK: Path
 ACPI_EVENTS_DIR: Path
@@ -66,7 +70,8 @@ def refresh_install_paths(prefix: str | Path | None = None) -> Path:
     global INSTALL_SHARE, INSTALL_BIN_BRIGHTNESS, INSTALL_BIN_HOTKEYS
     global INSTALL_BIN_CALIBRATE, INSTALL_BIN_SLEEP, INSTALL_BIN_LID_WATCH
     global INSTALL_BIN_SCREENPAD, INSTALL_BIN_SCREENPAD_SYNC, INSTALL_BIN_SCREENPAD_BOOT
-    global INSTALL_BIN_PLATFORM_PROFILE, INSTALL_BIN_FAN, INSTALL_BIN_FAN_LEGACY
+    global INSTALL_BIN_PLATFORM_PROFILE, INSTALL_BIN_PLATFORM_PROFILE_BOOT
+    global INSTALL_BIN_FAN, INSTALL_BIN_FAN_LEGACY
     global INSTALL_BIN_FAN_CONTROL, INSTALL_BIN_FAN_CONTROL_LEGACY
     global INSTALL_BIN_PLATFORM_PROBE, INSTALL_BIN_PLATFORM_POWER
     global INSTALL_BIN_PLATFORM_TOUCHPAD, INSTALL_BIN_PLATFORM_TRAY, INSTALL_BIN_FAN_HOOK
@@ -77,7 +82,8 @@ def refresh_install_paths(prefix: str | Path | None = None) -> Path:
     global OPENRC_TOUCHPAD_INIT, OPENRC_TOUCHPAD_CONF
     global INSTALL_LIBEXEC, INSTALLED_KO_ROOT, OPENRC_CONF
     global SYSTEMD_UNIT, SYSTEMD_SCREENPAD_UNIT, SYSTEMD_SCREENPAD_SYNC_UNIT
-    global SYSTEMD_TOUCHPAD_UNIT
+    global SYSTEMD_PLATFORM_PROFILE_UNIT, SYSTEMD_TOUCHPAD_UNIT
+    global OPENRC_PLATFORM_PROFILE_INIT, OPENRC_PLATFORM_PROFILE_CONF
     global SYSTEMD_SLEEP_HOOK, ACPI_EVENTS_DIR, ACPI_SLEEP_EVENT, ACPI_SLEEP_HELPER
     global MODPROBE_CONF
 
@@ -596,8 +602,17 @@ def install_touchpad_daemon_support(
         _sudo(["cp", str(example_tp), str(etc_dir / "touchpad.json.example")])
         live = etc_dir / "touchpad.json"
         if not live.is_file():
-            _sudo(["cp", str(example_tp), str(live)])
-            print(f"Seeded {live} from example")
+            from zenbook_kb.dmi import is_ux5400
+
+            seed = script_dir / "touchpad.json.example.ux5400"
+            if is_ux5400() and seed.is_file():
+                _sudo(["cp", str(seed), str(live)])
+                print(
+                    f"Seeded {live} (UX5400 — GDX1515 touchpad filter enabled by default)"
+                )
+            else:
+                _sudo(["cp", str(example_tp), str(live)])
+                print(f"Seeded {live} from example")
 
     init = detect_init_system()
     if init == "systemd":

@@ -432,6 +432,14 @@ brightness, then nudges DRM `detect` so `HDMI-A-2` reappears.
 
 Last brightness is stored in `/var/lib/zenbook-scripts/screenpad-brightness`.
 
+**Touchpad (GDX1515):** without filtering, sporadic cursor jumps can build up over
+long Plasma sessions (reboot is the only relief). The palm pipeline
+(`exec_delay` + `outlier_reject`, optionally via `zenbook-platform-touchpad` or
+`platform-touchpad-gui`) suppresses those misfires. If the pad ever looks dead
+while the filter is running, run `sudo platform-touchpad stop` — that releases
+`EVIOCGRAB`. Chassis ELAN tuning on UX8406 Duo is separate; UX5400 knobs are
+not assumed to transfer.
+
 ### Install / services
 
 Auto-detected when DMI contains `UX5400` or `asus_screenpad` exists:
