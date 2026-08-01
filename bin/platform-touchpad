@@ -46,6 +46,7 @@ from zenbook_kb.touchpad import (  # noqa: E402
     device_profile_enabled,
     discover_touchpads,
     filters_for_device,
+    live_filter_refusal_reason,
     iter_touchpad_with_typing,
     load_config,
     make_sim_brush,
@@ -252,6 +253,11 @@ def cmd_capture(args: argparse.Namespace) -> int:
 def cmd_run(args: argparse.Namespace) -> int:
     cfg = _load(args)
     info = resolve_touchpad(args.device, cfg)
+    refusal = live_filter_refusal_reason(info)
+    if refusal and not args.force:
+        print(refusal, file=sys.stderr)
+        print("Refusing EVIOCGRAB — pass --force to override.", file=sys.stderr)
+        return 3
     if not device_profile_enabled(cfg, info, path=info.path):
         print(f"profile disabled for {info.key}; pass-through not started", file=sys.stderr)
         return 2
@@ -318,8 +324,12 @@ def cmd_status(args: argparse.Namespace) -> int:
     for info in pads:
         filters = filters_for_device(cfg, info)
         en = device_profile_enabled(cfg, info)
+        rec = live_filter_refusal_reason(info) is None
         pipe = build_pipeline({"filters": filters})
-        print(f"  {info.path}  [{('on' if en else 'off')}]  {info.name}")
+        tag = "on" if en else "off"
+        if not rec:
+            tag += ", opt-in"
+        print(f"  {info.path}  [{tag}]  {info.name}")
         print(f"    key: {info.key}")
         print(f"    {pipe.summary()}")
     stored = cfg.get("devices") or {}
@@ -415,6 +425,11 @@ def main(argv: list[str] | None = None) -> int:
         "--replace",
         action="store_true",
         help="stop an existing live filter (same pidfile) before starting",
+    )
+    p_run.add_argument(
+        "--force",
+        action="store_true",
+        help="allow live filter on non-Duo detachable pads (unsafe on integrated pads)",
     )
 
     p_status = sub.add_parser("status", help="show devices + per-device filter config")

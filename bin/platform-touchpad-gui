@@ -80,6 +80,7 @@ from zenbook_kb.touchpad import (  # noqa: E402
     filters_from_knobs,
     iter_touchpad_with_typing,
     knobs_from_filters,
+    live_filter_refusal_reason,
     load_config,
     normalize_config,
     normalize_soft_accel_mode,
@@ -258,7 +259,7 @@ class TouchpadTuner(QMainWindow):
         form = QFormLayout(knobs)
 
         self.profile_enable = QCheckBox("profile enabled (live filter)")
-        self.profile_enable.setChecked(True)
+        self.profile_enable.setChecked(False)
         form.addRow(self.profile_enable)
 
         self.typing_enable = QCheckBox("enabled")
@@ -826,6 +827,22 @@ class TouchpadTuner(QMainWindow):
                 "Enable “profile enabled” for this device, or pick another pad.",
             )
             return
+        refusal = live_filter_refusal_reason(info)
+        if refusal:
+            confirm = QMessageBox.warning(
+                self,
+                "Unlisted touchpad",
+                f"{refusal}\n\n"
+                "The live filter grabs the physical pad (EVIOCGRAB) and forwards "
+                "events through a virtual device. If it stops without releasing "
+                "the grab, the pad can look dead until:\n"
+                "  sudo platform-touchpad stop\n\n"
+                "Continue anyway?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if confirm != QMessageBox.StandardButton.Yes:
+                return
         self.save_config(silent=True)
         self.stop_live()
         self.stop_monitor()
@@ -842,8 +859,10 @@ class TouchpadTuner(QMainWindow):
             str(self.delay_spin.value()),
             "--max-delta",
             str(self.delta_spin.value()),
-            "--replace",
         ]
+        if live_filter_refusal_reason(info):
+            cmd.append("--force")
+        cmd.append("--replace")
         log_path = _live_log_path()
         try:
             log_f = open(log_path, "w", encoding="utf-8")

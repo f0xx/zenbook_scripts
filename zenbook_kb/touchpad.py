@@ -1241,6 +1241,31 @@ def filters_for_device(
     return default_filters()
 
 
+def live_filter_recommended(info: TouchpadInfo) -> bool:
+    """Pads this project ships default profiles for (live filter is expected).
+
+    - Duo detachable keyboard touchpad (Primax USB)
+    - UX5400 integrated GDX1515 ScreenPad touchpad (outlier/exec_delay tame
+      sporadic jumps from pad firmware / electrical glitches)
+    """
+    low = info.name.lower()
+    if "keyboard touchpad" in low:
+        return True
+    if "gdx1515" in low or "27c6:01f4" in low:
+        return True
+    return False
+
+
+def live_filter_refusal_reason(info: TouchpadInfo) -> str | None:
+    """Reason to refuse ``run`` without ``--force``, or None if supported."""
+    if live_filter_recommended(info):
+        return None
+    return (
+        f"{info.name} has no default live-filter profile — opt in via "
+        "touchpad.json and pass --force after review"
+    )
+
+
 def device_profile_enabled(
     cfg: dict[str, Any],
     info: TouchpadInfo | None = None,
@@ -1249,7 +1274,9 @@ def device_profile_enabled(
 ) -> bool:
     _key, entry = _match_device_entry(cfg, info, path=path)
     if entry is None:
-        return True
+        if info is None:
+            return False
+        return live_filter_recommended(info)
     return bool(entry.get("enabled", True))
 
 
