@@ -297,6 +297,11 @@ def install_kb_brightness_tree(script_dir: Path) -> None:
         dest = zb_paths.bin_dir() / "platform-touch-cal"
         _sudo(["cp", str(touch_cal), str(dest)])
         _sudo(["chmod", "a+x", str(dest)])
+    touch_map = script_dir / "bin" / "platform-touch-map"
+    if touch_map.is_file():
+        dest = zb_paths.bin_dir() / "platform-touch-map"
+        _sudo(["cp", str(touch_map), str(dest)])
+        _sudo(["chmod", "a+x", str(dest)])
     fan_hook = script_dir / "contrib" / "openrc" / "zenbook-fan-control-hook.sh"
     if fan_hook.is_file():
         _sudo(["cp", str(fan_hook), str(INSTALL_BIN_FAN_HOOK)])

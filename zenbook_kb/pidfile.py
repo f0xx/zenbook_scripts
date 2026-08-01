@@ -99,8 +99,29 @@ def write_pidfile(path: Path, pid: int | None = None) -> None:
     pid = os.getpid() if pid is None else int(pid)
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(f"{pid}\n", encoding="utf-8")
-    tmp.replace(path)
+    try:
+        tmp.write_text(f"{pid}\n", encoding="utf-8")
+        tmp.replace(path)
+        return
+    except OSError:
+        # Non-root OpenRC services (command_user=…) cannot create files in /run.
+        # Fall back to truncating a pre-created pidfile, then to /run/zenbook-scripts/.
+        pass
+    try:
+        path.write_text(f"{pid}\n", encoding="utf-8")
+        return
+    except OSError:
+        pass
+    RUN_GROUP_DIR.mkdir(parents=True, exist_ok=True)
+    alt = RUN_GROUP_DIR / path.name
+    alt_tmp = alt.with_suffix(alt.suffix + ".tmp")
+    alt_tmp.write_text(f"{pid}\n", encoding="utf-8")
+    alt_tmp.replace(alt)
+    try:
+        if path.resolve() != alt.resolve():
+            path.write_text(f"{pid}\n", encoding="utf-8")
+    except OSError:
+        log.warning("pidfile written to %s (could not update %s)", alt, path)
 
 
 def clear_pidfile(path: Path, *, only_if_pid: int | None = None) -> None:

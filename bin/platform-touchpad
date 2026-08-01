@@ -53,6 +53,7 @@ from zenbook_kb.touchpad import (  # noqa: E402
     resolve_touchpad,
     run_selftest,
 )
+from zenbook_kb.touchpad_calibrate import detect_transport  # noqa: E402
 from zenbook_kb.pidfile import (  # noqa: E402
     TOUCHPAD_PIDFILE,
     TOUCHPAD_SVCNAME,
@@ -209,6 +210,19 @@ def cmd_capture(args: argparse.Namespace) -> int:
         "device": str(info.path),
         "key": info.key,
         "name": info.name,
+        "phys": getattr(info, "phys", "") or "",
+        "uniq": getattr(info, "uniq", "") or "",
+        "sequence": getattr(args, "sequence", None) or "mixed",
+        "transport": (
+            None
+            if getattr(args, "transport", "auto") in (None, "auto")
+            else args.transport
+        )
+        or detect_transport(
+            name=info.name,
+            phys=getattr(info, "phys", "") or "",
+            uniq=getattr(info, "uniq", "") or "",
+        ),
         "pipeline": pipe.summary(),
     }
     n_in = n_pass = n_drop = 0
@@ -399,6 +413,18 @@ def main(argv: list[str] | None = None) -> int:
     p_cap.add_argument("--seconds", type=float, default=None)
     p_cap.add_argument("--delay-ms", type=float, default=None)
     p_cap.add_argument("--max-delta", type=int, default=None)
+    p_cap.add_argument(
+        "--sequence",
+        choices=("type", "palm", "mixed"),
+        default="mixed",
+        help="label capture intent in JSONL meta (calibrate wizard)",
+    )
+    p_cap.add_argument(
+        "--transport",
+        choices=("auto", "usb", "bluetooth", "i2c", "unknown"),
+        default="auto",
+        help="override transport tag in meta (default: detect from phys)",
+    )
     p_cap.add_argument(
         "--flush-every",
         type=int,

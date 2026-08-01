@@ -18,6 +18,15 @@ Gentoo-friendly naming where needed (`v0.0.1_hf1` → PV `0.0.1_p1`,
 - **Fan tray stickiness:** explicit Profile / Fans: full no longer get
   overwritten by `platform-fan-control` after hysteresis; mode file
   `/var/lib/zenbook-scripts/fan-control-mode` (`manual` vs `auto`).
+- **UX5400 GDX1515 live filter** (PR #13): whitelist pad for live filter;
+  `--force` gate for unknown devices; UX5400 install seeds GDX1515 profile;
+  grab-safety docs + GUI defaults.
+
+- **Duo touch→output map:** `platform-touch-map` sets KWin `outputName`
+  (UX8406 ELAN9009→eDP-1, ELAN9008→eDP-2); hooked from duo-dock undock +
+  session `touch_map_apply`.
+- **Touchpad Calibrate deepen:** guided type/palm/mixed captures, shared
+  analyzer, before/after drop %, apply + live restart.
 
 ### Changed
 

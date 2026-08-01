@@ -42,6 +42,7 @@ ACTIONS = frozenset(
         "fan_sleep_pre",
         "fan_sleep_post",
         "touchpad_reassert",
+        "touch_map_apply",
     }
 )
 
@@ -280,7 +281,12 @@ def default_config() -> dict[str, Any]:
 def default_profile() -> dict[str, Any]:
     return {
         "on_sleep": ["brightness_save", "fan_sleep_pre"],
-        "on_resume": ["brightness_restore", "fan_sleep_post", "touchpad_reassert"],
+        "on_resume": [
+            "brightness_restore",
+            "fan_sleep_post",
+            "touchpad_reassert",
+            "touch_map_apply",
+        ],
         "on_hibernate": ["brightness_save"],
         "presentation": {
             "restore_after_plasmashell_replace": True,
@@ -381,6 +387,12 @@ def run_action(name: str) -> bool:
             _log(f"touchpad_reassert: SIGHUP to pid {pid} failed: {exc}", level="warning")
             return False
         return True
+
+    if name == "touch_map_apply":
+        # Re-bind Duo digitizers → eDP after sleep (KWin may clear outputName).
+        if _run_bin("platform-touch-map", ["apply"]):
+            return True
+        return _run_bin("platform-touch-map", ["auto", "--save"])
 
     return False
 

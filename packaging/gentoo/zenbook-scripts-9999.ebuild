@@ -253,7 +253,8 @@ src_install() {
 			bin/platform-session \
 			bin/platform-bt-fn-row \
 			bin/platform-duo-dock \
-			bin/platform-screen-swap
+			bin/platform-screen-swap \
+			bin/platform-touch-map
 	fi
 	if use fan_control; then
 		newbin contrib/openrc/zenbook-fan-control-hook.sh zenbook-fan-control-hook

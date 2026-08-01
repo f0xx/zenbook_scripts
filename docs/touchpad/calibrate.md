@@ -1,21 +1,33 @@
 # Touchpad Calibrate deepen (0.0.4)
 
-MVP today: tuner **Calibrate…** → `platform-touchpad capture` (~20s) → suggested
-`max_delta` / `exec_delay` / typing window from drop rates.
+Tuner **Calibrate…** runs a guided sequence → shared analyzer → optional
+before/after drop-rate → save JSON + restart live filter.
 
-## Goal
+## Flow
 
-Map **capture → knobs** more deliberately for UX8406 **BT palm parasites**
-(USB pogo already better). AccelSpeed on UX5400 stays Plasma/libinput.
+1. **type** (~8s) — type only, palms off  
+2. **palm** (~8s) — palms only, no typing  
+3. **mixed** (~12s) — normal work posture  
+4. Suggest `max_delta` / `exec_delay` / typing window from **mixed** drop rates  
+5. Apply → write `touchpad.json` → restart `platform-touchpad run --replace`  
+6. Optional 10s mixed re-capture for before/after %
 
-## Planned deepen
+Capture JSONL `meta` includes `sequence` + `transport` (`usb` / `bluetooth` /
+`i2c` from phys). CLI:
 
-1. Guided sequences: type-only / palm-only / mixed, labeled in capture meta
-2. Per-transport profiles in `touchpad.json` v2 (`usb` vs `bluetooth` keys)
-3. Apply suggestions with one click (write JSON + restart live filter)
-4. Show before/after drop-rate in the tuner after apply
+```bash
+platform-touchpad capture --sequence mixed --transport usb -o /tmp/cap.jsonl --seconds 12
+```
 
-## Operator field notes (fill in)
+Analyzer: `zenbook_kb/touchpad_calibrate.py` (also used by the GUI).
+
+## Still open
+
+- Nested `usb`/`bluetooth` keys under one logical pad in `touchpad.json` v2
+  (today: separate device keys when BT vs USB pad differ)
+- Operator field table below
+
+## Operator field notes
 
 | Session | Transport | Symptom | Capture file | Applied knobs |
 |---------|-----------|---------|--------------|---------------|
@@ -25,4 +37,4 @@ Map **capture → knobs** more deliberately for UX8406 **BT palm parasites**
 
 - [`pipeline.md`](pipeline.md)
 - [`../daemons/touchpad.md`](../daemons/touchpad.md)
-- `tests/test_touchpad_pipeline.py`
+- `tests/test_touchpad_pipeline.py`, `tests/test_touch_map_calibrate.py`

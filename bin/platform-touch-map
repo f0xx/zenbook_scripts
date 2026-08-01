@@ -1,0 +1,227 @@
+#!/usr/bin/env python3
+"""Map Duo / multi-panel touchscreens to DRM outputs (Plasma Wayland / KWin).
+
+Usage:
+  platform-touch-map status
+  platform-touch-map auto [--dry-run] [--save]
+  platform-touch-map apply [--dry-run]          # from ~/.config/.../touch-map.json
+  platform-touch-map set <match> <output> [--save]
+  platform-touch-map clear <match|all> [--save]
+  platform-touch-map kcm                        # open Plasma Touchscreen settings
+
+UX8406: auto maps ELAN9008→eDP-1, ELAN9009→eDP-2 (and matching Stylus).
+Re-apply after login / duo-dock undock (KWin may reset empty outputName).
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+_ROOT = Path(__file__).resolve().parent.parent
+for _share in (_ROOT, Path("/usr/share/zenbook-scripts"), Path("/usr/local/share/zenbook-scripts")):
+    if (_share / "zenbook_kb" / "touch_map.py").is_file():
+        sys.path.insert(0, str(_share))
+        break
+
+from zenbook_kb.touch_map import (  # noqa: E402
+    DEFAULT_STATE,
+    MapRule,
+    apply_rules,
+    auto_rules,
+    format_status,
+    kwin_available,
+    load_state,
+    rules_from_state,
+    save_state,
+)
+
+
+def cmd_status(_: argparse.Namespace) -> int:
+    print(format_status())
+    state = load_state()
+    rules = rules_from_state(state)
+    if rules:
+        print("saved_rules:")
+        for r in rules:
+            print(f"  {r.match} → {r.output}")
+    else:
+        print(f"saved_rules: (none — {DEFAULT_STATE})")
+    return 0
+
+
+def cmd_auto(args: argparse.Namespace) -> int:
+    if not kwin_available() and not args.dry_run:
+        print("KWin D-Bus not available", file=sys.stderr)
+        return 1
+    rules = auto_rules()
+    if not rules:
+        print("No auto rules (need UX8406 preset or ≥1 eDP + touchscreen)", file=sys.stderr)
+        return 2
+    print("rules:")
+    for r in rules:
+        print(f"  {r.match} → {r.output}")
+    applied = apply_rules(rules, dry_run=bool(args.dry_run))
+    for row in applied:
+        tag = "would map" if args.dry_run else "mapped"
+        print(f"{tag}: {row['sysname']}  {row['name']}  →  {row['output']}")
+    if args.save:
+        state = {"version": 1, "rules": [{"match": r.match, "output": r.output} for r in rules]}
+        path = save_state(state)
+        print(f"saved: {path}")
+    return 0
+
+
+def cmd_apply(args: argparse.Namespace) -> int:
+    if not kwin_available() and not args.dry_run:
+        print("KWin D-Bus not available", file=sys.stderr)
+        return 1
+    state = load_state()
+    rules = rules_from_state(state)
+    if not rules:
+        rules = auto_rules()
+        print("no saved rules — using auto preset")
+    if not rules:
+        print("nothing to apply", file=sys.stderr)
+        return 2
+    applied = apply_rules(rules, dry_run=bool(args.dry_run))
+    for row in applied:
+        tag = "would map" if args.dry_run else "mapped"
+        print(f"{tag}: {row['sysname']}  {row['name']}  →  {row['output']}")
+    if not applied:
+        print("no matching KWin touch devices", file=sys.stderr)
+        return 1
+    return 0
+
+
+def cmd_set(args: argparse.Namespace) -> int:
+    if not kwin_available() and not args.dry_run:
+        print("KWin D-Bus not available", file=sys.stderr)
+        return 1
+    rule = MapRule(args.match, args.output)
+    applied = apply_rules([rule], dry_run=bool(args.dry_run))
+    for row in applied:
+        tag = "would map" if args.dry_run else "mapped"
+        print(f"{tag}: {row['sysname']}  {row['name']}  →  {row['output']}")
+    if not applied:
+        print(f"no device matched {args.match!r}", file=sys.stderr)
+        return 1
+    if args.save:
+        state = load_state()
+        rules = [r for r in rules_from_state(state) if r.match != args.match]
+        rules.append(rule)
+        save_state(
+            {
+                "version": 1,
+                "rules": [{"match": r.match, "output": r.output} for r in rules],
+            }
+        )
+        print(f"saved: {DEFAULT_STATE}")
+    return 0
+
+
+def cmd_clear(args: argparse.Namespace) -> int:
+    if not kwin_available() and not args.dry_run:
+        print("KWin D-Bus not available", file=sys.stderr)
+        return 1
+    target = args.match
+    # Clear by setting empty outputName (KWin auto)
+    from zenbook_kb.touch_map import list_touch_devices, set_output_name
+
+    n = 0
+    for dev in list_touch_devices(include_stylus=True):
+        if target == "all" or target in dev.name:
+            if args.dry_run:
+                print(f"would clear: {dev.sysname} {dev.name}")
+            else:
+                set_output_name(dev.sysname, "")
+                print(f"cleared: {dev.sysname} {dev.name}")
+            n += 1
+    if args.save:
+        if target == "all":
+            save_state({"version": 1, "rules": []})
+        else:
+            state = load_state()
+            rules = [r for r in rules_from_state(state) if target not in r.match]
+            save_state(
+                {
+                    "version": 1,
+                    "rules": [{"match": r.match, "output": r.output} for r in rules],
+                }
+            )
+        print(f"saved: {DEFAULT_STATE}")
+    return 0 if n else 1
+
+
+def cmd_kcm(_: argparse.Namespace) -> int:
+    for cmd in (
+        ["kcmshell6", "kcm_touchscreen"],
+        ["systemsettings", "kcm_touchscreen"],
+        ["systemsettings5", "kcm_touchscreen"],
+    ):
+        if shutil.which(cmd[0]):
+            subprocess.Popen(cmd)  # noqa: S603
+            print(f"opened: {' '.join(cmd)}")
+            return 0
+    print("kcm_touchscreen not found (install plasma-desktop / kcm)", file=sys.stderr)
+    return 1
+
+
+def cmd_json(_: argparse.Namespace) -> int:
+    from zenbook_kb.touch_map import devices_as_dicts, list_drm_outputs, _dmi_product
+
+    print(
+        json.dumps(
+            {
+                "dmi": _dmi_product(),
+                "outputs": list_drm_outputs(),
+                "devices": devices_as_dicts(),
+                "saved": load_state(),
+            },
+            indent=2,
+        )
+    )
+    return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    sub = p.add_subparsers(dest="cmd", required=True)
+
+    sub.add_parser("status", help="show KWin touch devices + mappings")
+    p_auto = sub.add_parser("auto", help="apply machine preset / zip eDP↔touch")
+    p_auto.add_argument("--dry-run", action="store_true")
+    p_auto.add_argument("--save", action="store_true", help=f"write {DEFAULT_STATE}")
+    p_apply = sub.add_parser("apply", help="re-apply saved (or auto) rules")
+    p_apply.add_argument("--dry-run", action="store_true")
+    p_set = sub.add_parser("set", help="map devices matching NAME substring to OUTPUT")
+    p_set.add_argument("match")
+    p_set.add_argument("output")
+    p_set.add_argument("--dry-run", action="store_true")
+    p_set.add_argument("--save", action="store_true")
+    p_clear = sub.add_parser("clear", help="clear mapping (empty outputName)")
+    p_clear.add_argument("match", help="name substring or 'all'")
+    p_clear.add_argument("--dry-run", action="store_true")
+    p_clear.add_argument("--save", action="store_true")
+    sub.add_parser("kcm", help="open Plasma Touchscreen settings")
+    sub.add_parser("json", help="machine-readable dump")
+
+    args = p.parse_args(argv)
+    handlers = {
+        "status": cmd_status,
+        "auto": cmd_auto,
+        "apply": cmd_apply,
+        "set": cmd_set,
+        "clear": cmd_clear,
+        "kcm": cmd_kcm,
+        "json": cmd_json,
+    }
+    return handlers[args.cmd](args)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

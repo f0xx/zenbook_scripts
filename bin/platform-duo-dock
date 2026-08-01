@@ -188,6 +188,10 @@ cmd_undocked() {
 	sleep 0.5
 	backlight_power_on
 	restore_lower_backlight
+	# KWin often leaves digitizer outputName empty → lower-panel touch jumps to eDP-1.
+	if command -v platform-touch-map >/dev/null 2>&1; then
+		platform-touch-map apply >/dev/null 2>&1 || platform-touch-map auto --save >/dev/null 2>&1 || true
+	fi
 	echo "duo-dock: undocked → ${LOWER} enable+stack (restored backlight if saved)"
 }
 

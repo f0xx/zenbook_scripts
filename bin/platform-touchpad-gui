@@ -94,6 +94,12 @@ from zenbook_kb.pidfile import (  # noqa: E402
     pid_alive,
     read_pidfile,
 )
+from zenbook_kb.touchpad_calibrate import (  # noqa: E402
+    analyze_capture_jsonl,
+    detect_transport,
+    format_stats_line,
+    suggest_knobs,
+)
 
 
 def _which_touchpad_cli() -> str | None:
@@ -669,7 +675,7 @@ class TouchpadTuner(QMainWindow):
         self._worker.start()
 
     def run_calibrate(self) -> None:
-        """Capture ~20s of real motion while typing; suggest knobs from drop rates."""
+        """Guided capture (type / palm / mixed) → knobs → optional before/after + live restart."""
         import tempfile
         import time as _time
 
@@ -682,120 +688,187 @@ class TouchpadTuner(QMainWindow):
             QMessageBox.warning(self, "No device", "No touchpad selected.")
             return
 
-        seconds = 20
+        transport = detect_transport(name=info.name, phys=info.phys, uniq=info.uniq)
         reply = QMessageBox.question(
             self,
             "Calibrate palm filters",
-            f"For the next {seconds}s, type normally and rest palms lightly on the "
-            f"pad as you would when working.\n\n"
-            f"Device: {info.name}\n\n"
-            f"Start capture?",
+            "Guided calibrate runs three short captures:\n"
+            "  1) type-only (~8s)\n"
+            "  2) palm-only (~8s)\n"
+            "  3) mixed (~12s)\n\n"
+            f"Device: {info.name}\nTransport: {transport}\n\n"
+            "Start?",
         )
         if reply != QMessageBox.StandardButton.Yes:
             return
 
         self.stop_monitor()
-        out = Path(tempfile.gettempdir()) / f"zenbook-tp-calibrate-{int(_time.time())}.jsonl"
-        cmd = [
-            cli,
-            "capture",
-            "--config",
-            str(self._cfg_path),
-            "--device",
-            info.key,
-            "--seconds",
-            str(seconds),
-            "-o",
-            str(out),
-            "-q",
+        was_live = self._is_live_running()
+        if was_live:
+            self.stop_live()
+
+        sequences: list[tuple[str, int, str]] = [
+            ("type", 8, "Type normally — keep palms off the pad."),
+            ("palm", 8, "Rest palms lightly on the pad — do not type."),
+            ("mixed", 12, "Type and rest palms as when working."),
         ]
-        QMessageBox.information(
-            self,
-            "Capturing…",
-            f"Capture running ({seconds}s).\nType and rest palms on the pad.\n\n"
-            f"Log: {out}",
-        )
-        try:
-            proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
-        except OSError as exc:
-            QMessageBox.warning(self, "Calibrate failed", str(exc))
-            return
-        if proc.returncode != 0:
-            QMessageBox.warning(
+        stats_by_seq: dict[str, object] = {}
+        last_out: Path | None = None
+        for seq, seconds, prompt in sequences:
+            go = QMessageBox.question(
                 self,
-                "Calibrate failed",
-                (proc.stderr or proc.stdout or f"exit {proc.returncode}")[:800],
+                f"Capture: {seq}",
+                f"{prompt}\n\nReady for {seconds}s capture?",
             )
-            return
+            if go != QMessageBox.StandardButton.Yes:
+                QMessageBox.information(self, "Calibrate", "Cancelled.")
+                if was_live:
+                    self.start_live()
+                return
+            out = (
+                Path(tempfile.gettempdir())
+                / f"zenbook-tp-calibrate-{seq}-{int(_time.time())}.jsonl"
+            )
+            last_out = out
+            cmd = [
+                cli,
+                "capture",
+                "--config",
+                str(self._cfg_path),
+                "--device",
+                info.key,
+                "--seconds",
+                str(seconds),
+                "--sequence",
+                seq,
+                "--transport",
+                transport if transport != "unknown" else "auto",
+                "-o",
+                str(out),
+                "-q",
+            ]
+            QMessageBox.information(
+                self,
+                "Capturing…",
+                f"Capture running ({seq}, {seconds}s).\nLog: {out}",
+            )
+            try:
+                proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
+            except OSError as exc:
+                QMessageBox.warning(self, "Calibrate failed", str(exc))
+                return
+            if proc.returncode != 0:
+                QMessageBox.warning(
+                    self,
+                    "Calibrate failed",
+                    (proc.stderr or proc.stdout or f"exit {proc.returncode}")[:800],
+                )
+                return
+            try:
+                stats_by_seq[seq] = analyze_capture_jsonl(out)
+            except (OSError, json.JSONDecodeError) as exc:
+                QMessageBox.warning(self, "Calibrate parse", str(exc))
+                return
 
-        frames = drops = outlier = delay = typing_armed = 0
-        by: dict[str, int] = {}
-        try:
-            for line in out.read_text(encoding="utf-8").splitlines():
-                if not line.strip():
-                    continue
-                rec = json.loads(line)
-                if rec.get("kind") == "meta":
-                    continue
-                frames += 1
-                if rec.get("typing_armed"):
-                    typing_armed += 1
-                if not rec.get("passed"):
-                    drops += 1
-                    reason = str(rec.get("dropped_by") or "unknown")
-                    by[reason] = by.get(reason, 0) + 1
-                    if "outlier" in reason:
-                        outlier += 1
-                    if "exec_delay" in reason or "delay" in reason:
-                        delay += 1
-        except (OSError, json.JSONDecodeError) as exc:
-            QMessageBox.warning(self, "Calibrate parse", str(exc))
-            return
-
-        if frames == 0:
+        # Prefer mixed for knob suggestions; fall back to any with frames.
+        primary = stats_by_seq.get("mixed") or next(
+            (s for s in stats_by_seq.values() if getattr(s, "frames", 0) > 0),
+            None,
+        )
+        if primary is None or getattr(primary, "frames", 0) == 0:
             QMessageBox.warning(self, "Calibrate", "No frames captured.")
             return
 
-        drop_pct = 100.0 * drops / frames
-        # Heuristics: too many outlier drops → raise max_delta; too many delay drops → shorten delay
-        sug_delta = int(self.delta_spin.value())
-        sug_delay = int(self.delay_spin.value())
-        sug_win = int(self.typing_spin.value())
-        notes: list[str] = []
-        if outlier >= max(5, frames * 0.05):
-            sug_delta = min(5000, max(sug_delta + 400, int(sug_delta * 1.4)))
-            notes.append(f"Many outlier drops ({outlier}) → raise max_delta to {sug_delta}")
-        if delay >= max(5, frames * 0.08):
-            sug_delay = max(5, sug_delay - 10)
-            notes.append(f"Many exec_delay drops ({delay}) → lower delay to {sug_delay} ms")
-        if typing_armed > frames * 0.7 and drop_pct > 40:
-            sug_win = max(100, sug_win - 100)
-            notes.append(
-                f"Armed most of the time with high drop rate → shorten typing window to {sug_win} ms"
-            )
-        if not notes:
-            notes.append("Drop rate looks moderate — keep current knobs or retune manually.")
-
-        summary = (
-            f"frames={frames} dropped={drops} ({drop_pct:.1f}%) "
-            f"typing_armed={typing_armed}\n"
-            f"by filter: {by or '{}'}\n\n"
-            + "\n".join(f"• {n}" for n in notes)
-            + f"\n\nApply suggestions?\n  max_delta={sug_delta}  delay={sug_delay} ms  "
-            f"typing_window={sug_win} ms"
+        sug = suggest_knobs(
+            primary,  # type: ignore[arg-type]
+            max_delta=int(self.delta_spin.value()),
+            delay_ms=int(self.delay_spin.value()),
+            typing_window_ms=int(self.typing_spin.value()),
         )
-        apply = QMessageBox.question(self, "Calibrate results", summary)
+        lines = [
+            f"transport={transport}",
+            *(f"{k}: {format_stats_line(v)}" for k, v in stats_by_seq.items()),  # type: ignore[arg-type]
+            "",
+            *(f"• {n}" for n in sug.notes),
+            "",
+            f"Apply suggestions?\n  max_delta={sug.max_delta}  delay={sug.delay_ms} ms  "
+            f"typing_window={sug.typing_window_ms} ms",
+            "",
+            "After apply, a short mixed re-capture measures before/after drop rate.",
+        ]
+        apply = QMessageBox.question(self, "Calibrate results", "\n".join(lines))
         if apply != QMessageBox.StandardButton.Yes:
+            if was_live:
+                self.start_live()
             return
-        self.delta_spin.setValue(sug_delta)
-        self.delay_spin.setValue(sug_delay)
-        self.typing_spin.setValue(sug_win)
+
+        before_drop = float(getattr(primary, "drop_pct", 0.0))
+        self.delta_spin.setValue(sug.max_delta)
+        self.delay_spin.setValue(sug.delay_ms)
+        self.typing_spin.setValue(sug.typing_window_ms)
         self._rebuild_pipe()
         self.save_config(silent=True)
+
+        # Restart live filter with new knobs when possible.
+        restart_note = ""
+        if was_live or self.profile_enable.isChecked():
+            self.start_live()
+            restart_note = "Live filter restarted with new knobs.\n"
+        else:
+            restart_note = "Profile not live — start Live filter when ready.\n"
+
+        # Before/after: quick mixed re-capture (optional skip)
+        after = QMessageBox.question(
+            self,
+            "Before / after",
+            "Run a 10s mixed re-capture to compare drop rate?",
+        )
+        after_txt = "(skipped)"
+        if after == QMessageBox.StandardButton.Yes:
+            if self._is_live_running():
+                self.stop_live()
+            out2 = (
+                Path(tempfile.gettempdir())
+                / f"zenbook-tp-calibrate-after-{int(_time.time())}.jsonl"
+            )
+            cmd2 = [
+                cli,
+                "capture",
+                "--config",
+                str(self._cfg_path),
+                "--device",
+                info.key,
+                "--seconds",
+                "10",
+                "--sequence",
+                "mixed",
+                "-o",
+                str(out2),
+                "-q",
+            ]
+            QMessageBox.information(self, "Capturing…", "Type + palms for 10s.")
+            proc2 = subprocess.run(cmd2, capture_output=True, text=True, check=False)
+            if proc2.returncode == 0:
+                try:
+                    st2 = analyze_capture_jsonl(out2)
+                    after_txt = (
+                        f"before drop={before_drop:.1f}% → after drop={st2.drop_pct:.1f}%\n"
+                        f"{format_stats_line(st2)}\nLog: {out2}"
+                    )
+                except (OSError, json.JSONDecodeError) as exc:
+                    after_txt = f"parse failed: {exc}"
+            else:
+                after_txt = (proc2.stderr or proc2.stdout or "re-capture failed")[:400]
+            if was_live or self.profile_enable.isChecked():
+                self.start_live()
+
         QMessageBox.information(
             self,
             "Calibrate",
-            f"Knobs applied and saved for this device.\nJSONL kept at:\n{out}",
+            f"{restart_note}Knobs saved for this device.\n"
+            f"{after_txt}\n"
+            f"JSONL kept under {tempfile.gettempdir()}/zenbook-tp-calibrate-*\n"
+            + (f"Last: {last_out}" if last_out else ""),
         )
 
     def stop_monitor(self) -> None:
