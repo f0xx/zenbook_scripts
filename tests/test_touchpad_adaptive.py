@@ -14,6 +14,7 @@ from zenbook_kb.touchpad import (
     filters_for_device,
     filter_profile_for_device,
     normalize_config,
+    upsert_device_profile,
 )
 from zenbook_kb.touchpad_adaptive import (
     AdaptiveMatrixFilter,
@@ -62,17 +63,17 @@ class TestTouchpadProfiles(unittest.TestCase):
         plugins = [f["plugin"] for f in got]
         self.assertIn("adaptive_matrix", plugins)
 
-    def test_filter_profile_for_device_from_cfg(self) -> None:
-        cfg = normalize_config(
-            {
-                "devices": {
-                    "test|phys": {"enabled": True, "filter_profile": "adaptive"},
-                }
-            }
+    def test_upsert_adaptive_profile(self) -> None:
+        cfg = upsert_device_profile(
+            normalize_config({}),
+            "test|phys",
+            filter_profile=FILTER_PROFILE_ADAPTIVE,
         )
-        prof = filter_profile_for_device(cfg, None, path=Path("/dev/input/event99"))
-        # no matching pad — still default
-        self.assertEqual(prof, FILTER_PROFILE_DEFAULT)
+        entry = cfg["devices"]["test|phys"]
+        self.assertEqual(entry.get("filter_profile"), FILTER_PROFILE_ADAPTIVE)
+        self.assertNotIn("filters", entry)
+        plugins = [p["plugin"] for p in resolve_device_filters(entry)]
+        self.assertIn("adaptive_matrix", plugins)
 
 
 class TestAdaptiveMatrixFilter(unittest.TestCase):

@@ -76,6 +76,7 @@ from zenbook_kb.touchpad import (  # noqa: E402
     build_pipeline,
     device_profile_enabled,
     discover_touchpads,
+    filter_profile_for_device,
     filters_for_device,
     filters_from_knobs,
     iter_touchpad_with_typing,
@@ -88,6 +89,11 @@ from zenbook_kb.touchpad import (  # noqa: E402
     save_config,
     upsert_device_profile,
 )
+from zenbook_kb.touchpad_profiles import (  # noqa: E402
+    FILTER_PROFILE_ADAPTIVE,
+    FILTER_PROFILE_DEFAULT,
+)
+from zenbook_kb.touchpad_adaptive import load_adaptive_state  # noqa: E402
 from zenbook_kb.pidfile import (  # noqa: E402
     TOUCHPAD_PIDFILE,
     clear_pidfile,
@@ -268,6 +274,11 @@ class TouchpadTuner(QMainWindow):
         self.profile_enable.setChecked(False)
         form.addRow(self.profile_enable)
 
+        self.profile_mode = QComboBox()
+        self.profile_mode.addItem("Default (static outlier)", FILTER_PROFILE_DEFAULT)
+        self.profile_mode.addItem("Adaptive (learning matrix)", FILTER_PROFILE_ADAPTIVE)
+        form.addRow("filter_profile", self.profile_mode)
+
         self.typing_enable = QCheckBox("enabled")
         self.typing_enable.setChecked(True)
         self.typing_spin = QSpinBox()
@@ -340,10 +351,10 @@ class TouchpadTuner(QMainWindow):
 
         hint = QLabel(
             "Palm filters (delay/outlier) arm only after keyboard activity when "
-            "typing_inhibit is on. soft_accel: Linear = constant gain; "
-            "Non-linear = slow moves near 1×, flicks ramp toward gain. "
-            "Live filter keeps running after this window closes; reopen the "
-            "tuner to stop it or change settings (Save, then restart live)."
+            "typing_inhibit is on. Adaptive profile replaces static outlier with "
+            "online learning (see docs/touchpad/adaptive-filtering.md). "
+            "soft_accel: Linear = constant gain; Non-linear = slow moves near 1×. "
+            "Live filter keeps running after this window closes."
         )
         hint.setWordWrap(True)
         layout.addWidget(hint)
@@ -377,6 +388,7 @@ class TouchpadTuner(QMainWindow):
         self.typing_enable.toggled.connect(self._on_knob_changed)
         self.soft_enable.toggled.connect(self._on_knob_changed)
         self.profile_enable.toggled.connect(self._on_knob_changed)
+        self.profile_mode.currentIndexChanged.connect(self._on_profile_mode_changed)
         self.device_box.currentIndexChanged.connect(self._on_device_changed)
         self.btn_monitor.clicked.connect(self.start_monitor)
         self.btn_live.clicked.connect(self.toggle_live)
@@ -444,6 +456,23 @@ class TouchpadTuner(QMainWindow):
             ),
         )
 
+    def _is_adaptive_profile(self) -> bool:
+        return self.profile_mode.currentData() == FILTER_PROFILE_ADAPTIVE
+
+    def _apply_profile_ui_state(self) -> None:
+        adaptive = self._is_adaptive_profile()
+        for w in (self.outlier_enable, self.delta_spin, self.delta_slider):
+            w.setEnabled(not adaptive)
+        if adaptive:
+            self.outlier_enable.setChecked(False)
+
+    def _on_profile_mode_changed(self, _idx: int = 0) -> None:
+        if self._loading_knobs:
+            return
+        self._apply_profile_ui_state()
+        self._rebuild_pipe()
+        self._on_knob_changed()
+
     def _persist_current_to_cfg(self) -> None:
         info = None
         if self._current_key:
@@ -455,12 +484,21 @@ class TouchpadTuner(QMainWindow):
             info = self._current_info()
         if info is None:
             return
-        self._cfg = upsert_device_profile(
-            self._cfg,
-            info.key,
-            filters=self._collect_filters(),
-            enabled=self.profile_enable.isChecked(),
-        )
+        enabled = self.profile_enable.isChecked()
+        if self._is_adaptive_profile():
+            self._cfg = upsert_device_profile(
+                self._cfg,
+                info.key,
+                filter_profile=FILTER_PROFILE_ADAPTIVE,
+                enabled=enabled,
+            )
+        else:
+            self._cfg = upsert_device_profile(
+                self._cfg,
+                info.key,
+                filters=self._collect_filters(),
+                enabled=enabled,
+            )
 
     def _set_knob_widgets(self, knobs: dict) -> None:
         self._loading_knobs = True
@@ -496,10 +534,20 @@ class TouchpadTuner(QMainWindow):
             self._persist_current_to_cfg()
         filters = filters_for_device(self._cfg, info)
         enabled = device_profile_enabled(self._cfg, info, path=info.path)
+        prof = filter_profile_for_device(self._cfg, info, path=info.path)
         self.profile_enable.setChecked(enabled)
+        self._loading_knobs = True
+        try:
+            idx = self.profile_mode.findData(prof)
+            if idx < 0:
+                idx = 0
+            self.profile_mode.setCurrentIndex(idx)
+        finally:
+            self._loading_knobs = False
         self._set_knob_widgets(knobs_from_filters(filters))
+        self._apply_profile_ui_state()
         self._current_key = info.key
-        self.key_label.setText(f"key: {info.key}")
+        self.key_label.setText(f"key: {info.key}  profile={prof}")
         self._rebuild_pipe()
 
     def _on_device_changed(self, _idx: int = 0) -> None:
@@ -599,10 +647,15 @@ class TouchpadTuner(QMainWindow):
         self._rebuild_pipe()
 
     def _rebuild_pipe(self) -> None:
-        self._pipe = build_pipeline({"filters": self._collect_filters()})
         info = self._current_info()
         if info is not None:
+            filters = filters_for_device(self._cfg, info)
+            self._pipe = build_pipeline(
+                {"filters": filters, "device_key": info.key}
+            )
             bind_soft_accel_bounds(self._pipe, info.path)
+        else:
+            self._pipe = build_pipeline({"filters": self._collect_filters()})
         if self._worker is not None:
             self._worker.pipe = self._pipe
 
@@ -631,13 +684,25 @@ class TouchpadTuner(QMainWindow):
         live_extra = f" pid={live_pid}" if live_pid else ""
         mon = "monitor" if self._worker and self._worker.is_alive() else "off"
         key = self._current_key or "—"
+        prof = "—"
+        adapt_line = ""
+        info = self._current_info()
+        if info is not None:
+            prof = filter_profile_for_device(self._cfg, info, path=info.path)
+            if prof == FILTER_PROFILE_ADAPTIVE:
+                st = load_adaptive_state(info.key)
+                adapt_line = (
+                    f"\nadaptive: baseline_x={st.baseline_x:.1f} "
+                    f"baseline_y={st.baseline_y:.1f} samples={st.samples}"
+                )
         text = (
-            f"device key: {key}\n"
+            f"device key: {key}  profile={prof}\n"
             f"mode: monitor={mon}  live={live}{live_extra}\n"
             f"pidfile: {TOUCHPAD_PIDFILE}\n"
             f"frames in={fin} out={fout} drop={drop} ({pct:.0f}%)\n"
             f"{summary}"
         )
+        text += adapt_line
         if err:
             text += f"\nerror: {err}"
         self.stats.setText(text)
@@ -1055,13 +1120,22 @@ class TouchpadTuner(QMainWindow):
         self._persist_current_to_cfg()
         info = self._current_info()
         if info is not None:
-            self._cfg = upsert_device_profile(
-                self._cfg,
-                info.key,
-                filters=self._collect_filters(),
-                enabled=self.profile_enable.isChecked(),
-                make_default=True,
-            )
+            if self._is_adaptive_profile():
+                self._cfg = upsert_device_profile(
+                    self._cfg,
+                    info.key,
+                    filter_profile=FILTER_PROFILE_ADAPTIVE,
+                    enabled=self.profile_enable.isChecked(),
+                    make_default=True,
+                )
+            else:
+                self._cfg = upsert_device_profile(
+                    self._cfg,
+                    info.key,
+                    filters=self._collect_filters(),
+                    enabled=self.profile_enable.isChecked(),
+                    make_default=True,
+                )
         path = self._cfg_path
         try:
             save_config(self._cfg, path)

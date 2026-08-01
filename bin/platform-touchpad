@@ -53,6 +53,12 @@ from zenbook_kb.touchpad import (  # noqa: E402
     make_sim_brush,
     resolve_touchpad,
     run_selftest,
+    save_config,
+    upsert_device_profile,
+)
+from zenbook_kb.touchpad_profiles import (  # noqa: E402
+    FILTER_PROFILE_ADAPTIVE,
+    FILTER_PROFILE_DEFAULT,
 )
 from zenbook_kb.touchpad_calibrate import detect_transport  # noqa: E402
 from zenbook_kb.pidfile import (  # noqa: E402
@@ -357,6 +363,48 @@ def cmd_status(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_profile(args: argparse.Namespace) -> int:
+    cfg = _load(args)
+    cfg_path = _cfg_path(args)
+    info = resolve_touchpad(args.device, cfg)
+    if args.profile_cmd == "show":
+        prof = filter_profile_for_device(cfg, info, path=info.path)
+        print(f"device:  {info.key}")
+        print(f"profile: {prof}")
+        if prof == FILTER_PROFILE_ADAPTIVE:
+            from zenbook_kb.touchpad_adaptive import load_adaptive_state
+
+            st = load_adaptive_state(info.key)
+            print(
+                f"learned: baseline_x={st.baseline_x:.1f} baseline_y={st.baseline_y:.1f} "
+                f"samples={st.samples}"
+            )
+        return 0
+    if args.profile_cmd == "set":
+        name = str(args.name).strip().lower()
+        if name not in (FILTER_PROFILE_DEFAULT, FILTER_PROFILE_ADAPTIVE):
+            print(f"unknown profile {name!r}; use default or adaptive", file=sys.stderr)
+            return 2
+        if name == FILTER_PROFILE_ADAPTIVE:
+            cfg = upsert_device_profile(
+                cfg,
+                info.key,
+                filter_profile=FILTER_PROFILE_ADAPTIVE,
+                enabled=device_profile_enabled(cfg, info, path=info.path),
+            )
+        else:
+            cfg = upsert_device_profile(
+                cfg,
+                info.key,
+                filters=filters_for_device(cfg, info, path=info.path),
+                enabled=device_profile_enabled(cfg, info, path=info.path),
+            )
+        save_config(cfg, cfg_path if cfg_path else DEFAULT_CONFIG)
+        print(f"set {info.key} filter_profile={name} → {cfg_path or DEFAULT_CONFIG}")
+        return 0
+    return 2
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -468,6 +516,22 @@ def main(argv: list[str] | None = None) -> int:
     )
     sub.add_parser("stop", help="SIGTERM live filter (release EVIOCGRAB)")
 
+    p_prof = sub.add_parser("profile", help="show or set filter_profile (default|adaptive)")
+    prof_sub = p_prof.add_subparsers(dest="profile_cmd", required=True)
+    p_prof_show = prof_sub.add_parser("show", help="show filter_profile for device")
+    p_prof_show.add_argument(
+        "--device",
+        default=None,
+        help="auto | /dev/input/eventN | stable key | name substring",
+    )
+    p_prof_set = prof_sub.add_parser("set", help="set filter_profile")
+    p_prof_set.add_argument("name", choices=("default", "adaptive"))
+    p_prof_set.add_argument(
+        "--device",
+        default=None,
+        help="auto | /dev/input/eventN | stable key | name substring",
+    )
+
     args = parser.parse_args(argv)
     try:
         if args.cmd == "list":
@@ -486,6 +550,8 @@ def main(argv: list[str] | None = None) -> int:
             return cmd_capture(args)
         if args.cmd == "run":
             return cmd_run(args)
+        if args.cmd == "profile":
+            return cmd_profile(args)
     except (OSError, PermissionError, ValueError, FileNotFoundError) as exc:
         print(exc, file=sys.stderr)
         return 1

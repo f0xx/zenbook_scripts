@@ -1309,12 +1309,26 @@ def upsert_device_profile(
     cfg: dict[str, Any],
     key: str,
     *,
-    filters: list[dict[str, Any]],
+    filters: list[dict[str, Any]] | None = None,
+    filter_profile: str | None = None,
     enabled: bool = True,
     make_default: bool = False,
 ) -> dict[str, Any]:
+    from zenbook_kb.touchpad_profiles import (
+        FILTER_PROFILE_ADAPTIVE,
+        normalize_filter_profile,
+    )
+
     out = normalize_config(cfg)
-    out["devices"][key] = {"filters": filters, "enabled": enabled}
+    entry: dict[str, Any] = {"enabled": enabled}
+    prof = normalize_filter_profile(filter_profile) if filter_profile else None
+    if prof == FILTER_PROFILE_ADAPTIVE:
+        entry["filter_profile"] = FILTER_PROFILE_ADAPTIVE
+    elif filters is not None:
+        entry["filters"] = filters
+    else:
+        entry["filters"] = default_filters()
+    out["devices"][key] = entry
     if make_default:
         out["default_device"] = key
     return out
