@@ -49,6 +49,7 @@ Status legend: **done** · **now** · **next** · **later**
 | 4.6 | **Closed-lid night (AC server)** | **likely, not mandatory** | Lid down ≠ suspend on AC: blank displays, quiet fan, min CPU, network stays up; restore on lid open. See below. |
 | 4.7 | **UX5400 GDX1515 live filter** | **done (main)** | PR [#13](https://github.com/f0xx/zenbook_scripts/pull/13): sporadic jumps over long sessions → `exec_delay` + `outlier_reject`; `--force` gate; UX5400 install seeds GDX1515 profile. |
 | 4.8 | **UX581 lightbar** | **blocked** | Hardware-gated; `zenbook_ux581`. |
+| 4.9 | **Adaptive touchpad filter** | **in progress** | Branch `feature/adaptive-touchpad-filter` → merge to 4.x branch first. |
 | — | **Release hygiene** | **open** | Commit/push unreleased tree, sync CHANGELOG, Gentoo `9999`, operator redeploy notes. |
 
 ### 4.6 Closed-lid night profile (idea — likely 0.0.4, optional)
@@ -95,6 +96,26 @@ Looked like a WM/compositor bug; root cause is pad glitches, not KWin.
 
 Optional follow-up: long-session soak on UX5400; enable `zenbook-platform-touchpad`
 OpenRC if you want always-on.
+
+### 4.9 Adaptive filtering (experimental — `feature/adaptive-touchpad-filter`)
+
+**Goal:** selectable **filter profiles** — `default` (static chain, unchanged) vs
+`adaptive` (online amplitude learning + 2×2 axis matrix, spike-aware).
+
+Not palm-only: extended event filtering that **self-adopts to leftovers** after
+static stages miss — learns typical motion amplitudes, ignores sporadic spikes,
+optional predictive velocity subtract. Persists state per device under
+`~/.config/zenbook-scripts/adaptive-touchpad/`.
+
+**Merge order (required):**
+
+```text
+feature/adaptive-touchpad-filter  →  feature/0.0.4-touch-map-calibrate  →  main
+```
+
+Do **not** PR 0.0.4 to main until adaptive branch merges or is explicitly dropped.
+
+See [`docs/touchpad/adaptive-filtering.md`](docs/touchpad/adaptive-filtering.md).
 
 Visual roadmap: Cursor canvas `platform-roadmap.canvas.tsx` (toward 0.0.4) — optional; see dependency graph below.
 

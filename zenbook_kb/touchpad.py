@@ -903,6 +903,19 @@ def build_pipeline(cfg: dict[str, Any] | None = None) -> Pipeline:
                     y_max=int(soft_bounds.get("y_max", item.get("y_max", 10000))),
                 )
             )
+        elif name in ("adaptive_matrix", "adaptive-matrix", "adaptive"):
+            from zenbook_kb.touchpad_adaptive import AdaptiveMatrixFilter
+
+            out.append(
+                AdaptiveMatrixFilter(
+                    device_key=str(cfg.get("device_key") or "auto"),
+                    learn_rate=float(item.get("learn_rate", 0.08)),
+                    spike_sigma=float(item.get("spike_sigma", 3.5)),
+                    predict_weight=float(item.get("predict_weight", 0.35)),
+                    min_baseline=float(item.get("min_baseline", 4.0)),
+                    persist_every=int(item.get("persist_every", 120)),
+                )
+            )
         elif name in ("smooth",):
             log.warning("smooth filter not implemented; skip")
         else:
@@ -1235,10 +1248,22 @@ def filters_for_device(
     path: Path | None = None,
 ) -> list[dict[str, Any]]:
     """Per-device filters; fall back to defaults (not another device's knobs)."""
+    from zenbook_kb.touchpad_profiles import resolve_device_filters
+
     _key, entry = _match_device_entry(cfg, info, path=path)
-    if entry and isinstance(entry.get("filters"), list):
-        return list(entry["filters"])
-    return default_filters()
+    return resolve_device_filters(entry)
+
+
+def filter_profile_for_device(
+    cfg: dict[str, Any],
+    info: TouchpadInfo | None = None,
+    *,
+    path: Path | None = None,
+) -> str:
+    from zenbook_kb.touchpad_profiles import device_filter_profile
+
+    _key, entry = _match_device_entry(cfg, info, path=path)
+    return device_filter_profile(entry)
 
 
 def live_filter_recommended(info: TouchpadInfo) -> bool:

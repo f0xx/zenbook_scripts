@@ -22,6 +22,12 @@ Gentoo-friendly naming where needed (`v0.0.1_hf1` → PV `0.0.1_p1`,
   `--force` gate for unknown devices; UX5400 install seeds GDX1515 profile;
   grab-safety docs + GUI defaults.
 
+### Added (experimental — adaptive branch)
+
+- **Adaptive filter profiles** (`filter_profile`: `default` | `adaptive`):
+  `adaptive_matrix` plugin with online baseline learning, spike rejection, and
+  persisted state (`zenbook_kb/touchpad_adaptive.py`).
+
 - **Duo touch→output map:** `platform-touch-map` sets KWin `outputName`
   (UX8406 ELAN9009→eDP-1, ELAN9008→eDP-2); hooked from duo-dock undock +
   session `touch_map_apply`.

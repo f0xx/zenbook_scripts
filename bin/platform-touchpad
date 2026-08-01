@@ -46,6 +46,7 @@ from zenbook_kb.touchpad import (  # noqa: E402
     device_profile_enabled,
     discover_touchpads,
     filters_for_device,
+    filter_profile_for_device,
     live_filter_refusal_reason,
     iter_touchpad_with_typing,
     load_config,
@@ -77,7 +78,7 @@ def _load(args: argparse.Namespace) -> dict:
 def _pipe_for(args: argparse.Namespace, info) -> object:
     cfg = _load(args)
     filters = filters_for_device(cfg, info, path=info.path)
-    pipe = build_pipeline({"filters": filters})
+    pipe = build_pipeline({"filters": filters, "device_key": info.key})
     bind_soft_accel_bounds(pipe, info.path)
     if getattr(args, "delay_ms", None) is not None or getattr(args, "max_delta", None) is not None:
         apply_pipeline_knobs(
@@ -339,12 +340,13 @@ def cmd_status(args: argparse.Namespace) -> int:
         filters = filters_for_device(cfg, info)
         en = device_profile_enabled(cfg, info)
         rec = live_filter_refusal_reason(info) is None
-        pipe = build_pipeline({"filters": filters})
+        profile = filter_profile_for_device(cfg, info)
+        pipe = build_pipeline({"filters": filters, "device_key": info.key})
         tag = "on" if en else "off"
         if not rec:
             tag += ", opt-in"
         print(f"  {info.path}  [{tag}]  {info.name}")
-        print(f"    key: {info.key}")
+        print(f"    key: {info.key}  filter_profile={profile}")
         print(f"    {pipe.summary()}")
     stored = cfg.get("devices") or {}
     orphan = [k for k in stored if not any(i.key == k or i.name == k for i in pads)]

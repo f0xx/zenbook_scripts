@@ -1,0 +1,52 @@
+# Touchpad filter profile: adaptive (experimental)
+
+Use `"filter_profile": "adaptive"` on a device entry instead of a hand-tuned
+`filters` list. The **default** profile behaviour is unchanged for entries that
+still ship explicit `filters` arrays (all current examples).
+
+```json
+{
+  "version": 2,
+  "default_device": "auto",
+  "devices": {
+    "GDX1515:00 27C6:01F4 Touchpad|i2c-GDX1515:00": {
+      "enabled": true,
+      "filter_profile": "adaptive"
+    }
+  }
+}
+```
+
+## Profiles
+
+| Profile | Chain |
+|---------|--------|
+| **default** | typing_inhibit → exec_delay → **outlier_reject** → soft_accel (off) |
+| **adaptive** | typing_inhibit → exec_delay → **adaptive_matrix** → soft_accel (off) |
+
+## adaptive_matrix (MVP)
+
+Online learner on motion **residuals** (not raw teleports):
+
+1. EWMA velocity → predictive subtract before spike test  
+2. Per-axis baseline amplitude (robust EWMA); spikes above `spike_sigma × baseline` dropped  
+3. 2×2 matrix (diagonal today) attenuates axes with high learned noise  
+4. State persists to `~/.config/zenbook-scripts/adaptive-touchpad/<device-key>.json`
+
+This is **not** a scalar gain — cross-terms reserved for correlation learning later.
+
+## Branch / merge order
+
+```
+feature/adaptive-touchpad-filter
+        ↓ (when field-validated)
+feature/0.0.4-touch-map-calibrate
+        ↓
+main
+```
+
+## See also
+
+- [`adaptive-filtering.md`](adaptive-filtering.md) — design notes  
+- [`pipeline.md`](pipeline.md) — static stages  
+- `zenbook_kb/touchpad_adaptive.py`, `zenbook_kb/touchpad_profiles.py`
