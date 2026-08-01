@@ -184,8 +184,8 @@ class AdaptiveMatrixFilter(Filter):
         """Diagonal scales shrink when baseline noise on an axis is high."""
         bx = max(self.min_baseline, self.state.baseline_x)
         by = max(self.min_baseline, self.state.baseline_y)
-        scale_x = 1.0 / (1.0 + bx / 40.0)
-        scale_y = 1.0 / (1.0 + by / 40.0)
+        scale_x = max(0.85, 1.0 / (1.0 + bx / 40.0))
+        scale_y = max(0.85, 1.0 / (1.0 + by / 40.0))
         self.state.matrix[0][0] = scale_x
         self.state.matrix[1][1] = scale_y
         # Cross-terms reserved for future correlation learning.
@@ -272,9 +272,18 @@ class AdaptiveMatrixFilter(Filter):
 
         if self._is_spike(resid_dx, resid_dy):
             self.spikes_dropped += 1
+            # Pass raw position through — dropping frames freezes the cursor
+            # (UX5400 GDX1515: sticky centre until finger lift).
             self._last = (x, y)
-            self.stats.note(1, 0)
-            return []
+            self.stats.note(1, 1)
+            return frame
+
+        # Decay stale velocity when movement slows (avoids over-prediction).
+        speed = (dx * dx + dy * dy) ** 0.5
+        if speed < max(self.min_baseline, self.state.baseline_x, self.state.baseline_y):
+            decay = 0.5
+            self.state.vel_x *= decay
+            self.state.vel_y *= decay
 
         # Learn from accepted residuals (ignore spikes above).
         self.state.baseline_x = self._ewma(self.state.baseline_x, abs(resid_dx))

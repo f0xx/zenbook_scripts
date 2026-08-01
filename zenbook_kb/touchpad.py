@@ -1321,12 +1321,11 @@ def upsert_device_profile(
 
     out = normalize_config(cfg)
     entry: dict[str, Any] = {"enabled": enabled}
-    prof = normalize_filter_profile(filter_profile) if filter_profile else None
-    if prof == FILTER_PROFILE_ADAPTIVE:
-        entry["filter_profile"] = FILTER_PROFILE_ADAPTIVE
-    elif filters is not None:
+    if filters is not None:
         entry["filters"] = filters
-    else:
+    if filter_profile:
+        entry["filter_profile"] = normalize_filter_profile(filter_profile)
+    if "filters" not in entry and "filter_profile" not in entry:
         entry["filters"] = default_filters()
     out["devices"][key] = entry
     if make_default:

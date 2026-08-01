@@ -28,6 +28,7 @@ from zenbook_kb.touchpad_profiles import (
     FILTER_PROFILE_DEFAULT,
     adaptive_profile_filters,
     default_profile_filters,
+    merge_gui_knobs,
     profile_filters,
     resolve_device_filters,
 )
@@ -63,17 +64,23 @@ class TestTouchpadProfiles(unittest.TestCase):
         plugins = [f["plugin"] for f in got]
         self.assertIn("adaptive_matrix", plugins)
 
-    def test_upsert_adaptive_profile(self) -> None:
-        cfg = upsert_device_profile(
-            normalize_config({}),
-            "test|phys",
-            filter_profile=FILTER_PROFILE_ADAPTIVE,
+    def test_merge_gui_soft_accel_adaptive(self) -> None:
+        from zenbook_kb.touchpad import filters_from_knobs
+
+        knobs = filters_from_knobs(
+            delay_enabled=True,
+            delay_ms=25,
+            outlier_enabled=True,
+            max_delta=1200,
+            soft_accel_enabled=True,
+            soft_accel_gain=2.0,
+            soft_accel_mode="linear",
         )
-        entry = cfg["devices"]["test|phys"]
-        self.assertEqual(entry.get("filter_profile"), FILTER_PROFILE_ADAPTIVE)
-        self.assertNotIn("filters", entry)
-        plugins = [p["plugin"] for p in resolve_device_filters(entry)]
-        self.assertIn("adaptive_matrix", plugins)
+        merged = merge_gui_knobs(FILTER_PROFILE_ADAPTIVE, knobs)
+        soft = next(f for f in merged if f["plugin"] == "soft_accel")
+        self.assertTrue(soft["enabled"])
+        self.assertEqual(soft["gain"], 2.0)
+        self.assertTrue(any(f["plugin"] == "adaptive_matrix" for f in merged))
 
 
 class TestAdaptiveMatrixFilter(unittest.TestCase):
@@ -88,7 +95,7 @@ class TestAdaptiveMatrixFilter(unittest.TestCase):
         self.assertGreater(f.learn_updates, 0)
 
         spike = f.process_frame(_syn_frame(500, 500, sec=2))
-        self.assertEqual(spike, [])
+        self.assertTrue(spike)
         self.assertGreater(f.spikes_dropped, 0)
 
     def test_state_persist_roundtrip(self) -> None:
