@@ -85,6 +85,24 @@ def _run(argv: list[str]) -> str:
     return out.splitlines()[0] if out else f"exit {r.returncode}"
 
 
+def _run_privileged_ok(argv: list[str], *, timeout: float = 12) -> bool:
+    """Run argv with sudo -n first, then unprivileged; True if either succeeds."""
+    for prefix in (["sudo", "-n"], []):
+        try:
+            r = subprocess.run(
+                [*prefix, *argv],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=timeout,
+            )
+        except (OSError, subprocess.SubprocessError):
+            continue
+        if r.returncode == 0:
+            return True
+    return False
+
+
 @dataclass
 class _PoiHit:
     x: float
@@ -465,47 +483,21 @@ class PlatformTray(QWidget):
 
     def _set_adaptive(self) -> None:
         """Clear manual lock and let platform-fan-control apply rules again."""
-        ok = False
+        attempts: list[list[str]] = []
         if self.fan_control:
-            r = subprocess.run(
-                ["sudo", "-n", self.fan_control, "mode", "auto"],
-                capture_output=True,
-                text=True,
-                check=False,
-                timeout=12,
-            )
-            if r.returncode != 0:
-                r = subprocess.run(
-                    [self.fan_control, "mode", "auto"],
-                    capture_output=True,
-                    text=True,
-                    check=False,
-                    timeout=12,
-                )
-            ok = r.returncode == 0
-        elif self.fan:
-            r = subprocess.run(
-                ["sudo", "-n", self.fan, "adaptive"],
-                capture_output=True,
-                text=True,
-                check=False,
-                timeout=8,
-            )
-            if r.returncode != 0:
-                r = subprocess.run(
-                    [self.fan, "adaptive"],
-                    capture_output=True,
-                    text=True,
-                    check=False,
-                    timeout=8,
-                )
-            ok = r.returncode == 0
+            attempts.append([self.fan_control, "mode", "auto"])
+        if self.fan:
+            attempts.append([self.fan, "adaptive"])
+            attempts.append([self.fan, "mode", "auto"])
+
+        ok = any(_run_privileged_ok(argv) for argv in attempts)
         if not ok:
             self.tray.showMessage(
                 "platform-tray",
-                "Could not set adaptive mode (need root / NOPASSWD)",
+                "Could not set adaptive mode "
+                "(update platform-fan / platform-fan-control and NOPASSWD sudoers)",
                 QSystemTrayIcon.MessageIcon.Warning,
-                4000,
+                5000,
             )
         else:
             self.store.add_event("mode", "control", None, "user:adaptive")

@@ -6,7 +6,7 @@
 name="zenbook-kb-lid"
 description="Zenbook Duo keyboard backlight on lid open/close"
 
-: "${command:=/usr/local/bin/kb-brightness-lid-watch}"
+: "${command:=/usr/bin/kb-brightness-lid-watch}"
 : "${command_background:=yes}"
 : "${pidfile:=/run/${RC_SVCNAME}.pid}"
 : "${output_log:=/var/log/${RC_SVCNAME}.log}"
@@ -41,7 +41,10 @@ start_pre() {
 
 stop_pre() {
 	# Save brightness before shutdown/reboot (restored at next service start).
-	if [ -x /usr/local/bin/kb-brightness-sleep ]; then
-		/usr/local/bin/kb-brightness-sleep save 2>/dev/null || true
-	fi
+	for _sleep in /usr/bin/kb-brightness-sleep /usr/local/bin/kb-brightness-sleep; do
+		if [ -x "${_sleep}" ]; then
+			"${_sleep}" save 2>/dev/null || true
+			break
+		fi
+	done
 }

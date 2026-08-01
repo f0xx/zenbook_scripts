@@ -383,7 +383,7 @@ def install_sudoers_kb_brightness() -> None:
 
 
 def install_sudoers_ux5400() -> None:
-    """Passwordless screenpad + platform-profile + fan for the install user."""
+    """Passwordless screenpad + platform-profile + fan CLIs for the install user."""
     user = resolve_run_user()
     if not user:
         return
@@ -391,6 +391,7 @@ def install_sudoers_ux5400() -> None:
         INSTALL_BIN_SCREENPAD,
         INSTALL_BIN_PLATFORM_PROFILE,
         INSTALL_BIN_FAN,
+        INSTALL_BIN_FAN_CONTROL,
         INSTALL_BIN_SCREENPAD_BOOT,
     ):
         line = f"{user} ALL=NOPASSWD:{path} *"
@@ -525,6 +526,7 @@ def install_openrc_lid_service(script_dir: Path) -> None:
         return
     _sudo(["cp", str(src), str(OPENRC_LID_INIT)])
     _sudo(["chmod", "a+x", str(OPENRC_LID_INIT)])
+    rewrite_file_prefix(OPENRC_LID_INIT)
     _sudo(["touch", "/var/log/zenbook-kb-lid.log"])
     if shutil.which("rc-update"):
         _root_run(["rc-update", "add", "zenbook-kb-lid", "default"], check=False, timeout=30)
