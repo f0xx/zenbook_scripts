@@ -18,6 +18,7 @@ from zenbook_kb.touch_map import (  # noqa: E402
     UX8406_PRESET,
     auto_rules,
     preset_rules_for_machine,
+    restore_kwin_touchpad_after_filter,
 )
 from zenbook_kb.touchpad_calibrate import (  # noqa: E402
     analyze_capture_jsonl,
@@ -75,6 +76,39 @@ class TestTouchMapPreset(unittest.TestCase):
             auto = auto_rules(devices=[], outputs=[])
         self.assertEqual(len(auto), 2)
         self.assertIsInstance(auto[0], MapRule)
+
+
+class TestKWinTouchpadRestore(unittest.TestCase):
+    def test_restore_nudges_physical_touchpad(self) -> None:
+        dev_physical = mock.Mock(
+            name="GDX1515:00 27C6:01F4 Touchpad",
+            enabled=True,
+        )
+        dev_filter = mock.Mock(
+            name="GDX1515:00 27C6:01F4 Touchpad (filter)",
+            enabled=True,
+        )
+        dev_physical.name = "GDX1515:00 27C6:01F4 Touchpad"
+        dev_filter.name = "GDX1515:00 27C6:01F4 Touchpad (filter)"
+
+        def _get(sysname: str):
+            return {"event6": dev_physical, "event14": dev_filter}.get(sysname)
+
+        with mock.patch("zenbook_kb.touch_map.kwin_available", return_value=True), mock.patch(
+            "zenbook_kb.touch_map.find_kwin_filter_sysname",
+            return_value="event14",
+        ), mock.patch(
+            "zenbook_kb.touch_map.set_device_enabled"
+        ) as set_en:
+            ok = restore_kwin_touchpad_after_filter(
+                touchpad_path=Path("/dev/input/event6"),
+                name_hint=dev_physical.name,
+            )
+        self.assertTrue(ok)
+        calls = [c.args for c in set_en.call_args_list]
+        self.assertIn(("event14", False), calls)
+        self.assertIn(("event6", False), calls)
+        self.assertIn(("event6", True), calls)
 
 
 if __name__ == "__main__":

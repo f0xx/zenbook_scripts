@@ -19,6 +19,7 @@ import signal
 import subprocess
 import sys
 import threading
+import time
 from pathlib import Path
 
 _ROOT = Path(__file__).resolve().parent.parent
@@ -97,7 +98,7 @@ from zenbook_kb.touchpad_profiles import (  # noqa: E402
 from zenbook_kb.touchpad_adaptive import load_adaptive_state  # noqa: E402
 from zenbook_kb.pidfile import (  # noqa: E402
     TOUCHPAD_PIDFILE,
-    clear_pidfile,
+    find_touchpad_live_filter_pids,
     pid_alive,
     read_pidfile,
 )
@@ -124,35 +125,42 @@ def _which_touchpad_cli() -> str | None:
 
 
 def _live_filter_pids() -> list[int]:
-    """PIDs of ``platform-touchpad run`` — prefer pidfile, else /proc scan."""
-    pid = read_pidfile(TOUCHPAD_PIDFILE, clear_stale=True)
-    if pid is not None:
-        return [pid]
-    found: list[int] = []
+    """PIDs of verified ``platform-touchpad run`` processes (cached ~1s)."""
+    global _LIVE_PID_CACHE
+    now = time.monotonic()
+    if now - _LIVE_PID_CACHE[0] < 1.0:
+        return _LIVE_PID_CACHE[1]
+    pids = find_touchpad_live_filter_pids()
+    _LIVE_PID_CACHE = (now, pids)
+    return pids
+
+
+def _invalidate_live_pid_cache() -> None:
+    global _LIVE_PID_CACHE
+    _LIVE_PID_CACHE = (0.0, [])
+
+
+_LIVE_PID_CACHE: tuple[float, list[int]] = (0.0, [])
+
+
+def _stop_live_via_cli(*, force: bool = False) -> bool:
+    cli = _which_touchpad_cli()
+    if not cli:
+        return False
+    cmd = ["sudo", "-n", cli, "stop"]
+    if force:
+        cmd.append("--force")
     try:
-        for entry in Path("/proc").iterdir():
-            if not entry.name.isdigit():
-                continue
-            try:
-                raw = (entry / "cmdline").read_bytes()
-            except OSError:
-                continue
-            parts = [p.decode("utf-8", "replace") for p in raw.split(b"\0") if p]
-            if not parts:
-                continue
-            if any("platform-touchpad-gui" in p for p in parts):
-                continue
-            if not any("platform-touchpad" in p for p in parts):
-                continue
-            if "run" not in parts:
-                continue
-            try:
-                found.append(int(entry.name))
-            except ValueError:
-                continue
-    except OSError:
-        pass
-    return found
+        r = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=12,
+        )
+        return r.returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
 
 
 def _signal_live_pid(pid: int, sig: int) -> None:
@@ -393,9 +401,7 @@ class TouchpadTuner(QMainWindow):
         self.outlier_enable.toggled.connect(self._on_knob_changed)
         self.typing_enable.toggled.connect(self._on_knob_changed)
         self.soft_enable.toggled.connect(self._on_knob_changed)
-        self.profile_enable.toggled.connect(
-            lambda *_: self._on_knob_changed(restart_now=True)
-        )
+        self.profile_enable.toggled.connect(self._on_profile_enable_toggled)
         self.profile_mode.currentIndexChanged.connect(self._on_profile_mode_changed)
         self.device_box.currentIndexChanged.connect(self._on_device_changed)
         self.btn_monitor.clicked.connect(self.start_monitor)
@@ -406,7 +412,7 @@ class TouchpadTuner(QMainWindow):
         self.btn_reset.clicked.connect(self.reset_stats)
 
         self._timer = QTimer(self)
-        self._timer.setInterval(250)
+        self._timer.setInterval(800)
         self._timer.timeout.connect(self._refresh_stats)
         self._timer.start()
 
@@ -487,8 +493,25 @@ class TouchpadTuner(QMainWindow):
         self._rebuild_pipe()
         self._on_knob_changed(restart_now=True)
 
+    def _on_profile_enable_toggled(self, *_a: object) -> None:
+        if self._loading_knobs:
+            return
+        if not self.profile_enable.isChecked() and self._is_live_running():
+            self.save_config(silent=True)
+            self.stop_live()
+            if self._is_live_running():
+                self.stop_live(force=True)
+            return
+        self._on_knob_changed(restart_now=True)
+
     def _restart_live_if_running(self) -> None:
-        if not self._is_live_running() or not self.profile_enable.isChecked():
+        if not self._is_live_running():
+            return
+        if not self.profile_enable.isChecked():
+            self.save_config(silent=True)
+            self.stop_live()
+            if self._is_live_running():
+                self.stop_live(force=True)
             return
         self.save_config(silent=True)
         self.start_live()
@@ -973,7 +996,9 @@ class TouchpadTuner(QMainWindow):
     def toggle_live(self) -> None:
         if self._is_live_running():
             self.stop_live()
-            QTimer.singleShot(350, self._verify_live_stopped)
+            if self._is_live_running():
+                self.stop_live(force=True)
+            self._sync_live_button()
         else:
             self.start_live()
 
@@ -1000,9 +1025,8 @@ class TouchpadTuner(QMainWindow):
                 "Unlisted touchpad",
                 f"{refusal}\n\n"
                 "The live filter grabs the physical pad (EVIOCGRAB) and forwards "
-                "events through a virtual device. If it stops without releasing "
-                "the grab, the pad can look dead until:\n"
-                "  sudo platform-touchpad stop\n\n"
+                "events through a virtual device. Stopping the filter releases the "
+                "grab and re-binds the physical pad in KWin automatically.\n\n"
                 "Continue anyway?",
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                 QMessageBox.StandardButton.No,
@@ -1010,7 +1034,8 @@ class TouchpadTuner(QMainWindow):
             if confirm != QMessageBox.StandardButton.Yes:
                 return
         self.save_config(silent=True)
-        self.stop_live()
+        if self._is_live_running():
+            self.stop_live()
         self.stop_monitor()
         cmd = [
             "sudo",
@@ -1059,7 +1084,7 @@ class TouchpadTuner(QMainWindow):
                 pass
         self._live_log = log_path
         self._sync_live_button()
-        QTimer.singleShot(500, self._check_live_started)
+        QTimer.singleShot(150, self._check_live_started)
 
     def _check_live_started(self) -> None:
         proc = self._live_proc
@@ -1071,7 +1096,7 @@ class TouchpadTuner(QMainWindow):
             return
         if proc is not None and proc.poll() is None:
             # Still starting
-            QTimer.singleShot(400, self._check_live_started)
+            QTimer.singleShot(150, self._check_live_started)
             return
         out = ""
         log_path = getattr(self, "_live_log", None) or _live_log_path()
@@ -1089,32 +1114,18 @@ class TouchpadTuner(QMainWindow):
         QMessageBox.warning(self, "Live filter failed", detail)
         self._sync_live_button()
 
-    def _verify_live_stopped(self) -> None:
-        if self._is_live_running():
-            # Force-kill leftovers (sudo child may ignore first SIGINT).
-            self.stop_live(force=True)
-        self._sync_live_button()
-        if self._is_live_running():
-            QMessageBox.warning(
-                self,
-                "Live filter",
-                "Filter process is still running — try again or:\n"
-                "  sudo pkill -f 'platform-touchpad run'",
-            )
-
     def stop_live(self, *, force: bool = False) -> None:
         proc = self._live_proc
         if proc is not None:
             if proc.poll() is None:
                 try:
-                    # Session leader from start_new_session — stop the group.
                     os.killpg(proc.pid, signal.SIGKILL if force else signal.SIGINT)
                 except (OSError, ProcessLookupError):
                     try:
                         proc.send_signal(
                             signal.SIGKILL if force else signal.SIGINT
                         )
-                        proc.wait(timeout=2.0)
+                        proc.wait(timeout=1.0)
                     except (OSError, subprocess.TimeoutExpired):
                         try:
                             proc.kill()
@@ -1122,16 +1133,9 @@ class TouchpadTuner(QMainWindow):
                             pass
             self._live_proc = None
 
-        sig = signal.SIGKILL if force else signal.SIGINT
-        for pid in list(_live_filter_pids()):
-            _signal_live_pid(pid, sig)
-        # Ensure stale pidfile cannot confuse OpenRC / next launch.
-        leftover = read_pidfile(TOUCHPAD_PIDFILE, clear_stale=True)
-        if leftover is None:
-            clear_pidfile(TOUCHPAD_PIDFILE)
-        else:
-            # Still alive after signals — leave file; verify step may force-kill.
-            pass
+        _stop_live_via_cli(force=force)
+        _invalidate_live_pid_cache()
+        read_pidfile(TOUCHPAD_PIDFILE, clear_stale=True)
         self._live_orphan_pids = []
         self._sync_live_button()
 

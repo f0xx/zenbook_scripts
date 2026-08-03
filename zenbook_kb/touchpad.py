@@ -1848,6 +1848,7 @@ class UInputProxy:
         # distinguishes the virtual node in logs without breaking libinput class.
         self.name_override = name
         self._fd = -1
+        self._filter_sysname: str | None = None
 
     def open(self) -> None:
         src = os.open(self.source, os.O_RDONLY)
@@ -1921,8 +1922,20 @@ class UInputProxy:
             fcntl.ioctl(ufd, UI_DEV_CREATE)
             time.sleep(0.05)
             self._fd = ufd
+            self._filter_sysname = self._detect_filter_sysname()
         finally:
             os.close(src)
+
+    @staticmethod
+    def _detect_filter_sysname() -> str | None:
+        for event_dir in sorted(Path("/sys/class/input").glob("event*")):
+            name_path = event_dir / "device" / "name"
+            if not name_path.is_file():
+                continue
+            name = name_path.read_text(encoding="utf-8", errors="replace").strip()
+            if "(filter)" in name:
+                return event_dir.name
+        return None
 
     def write_events(self, events: Sequence[Ev]) -> None:
         if self._fd < 0:
@@ -1932,13 +1945,54 @@ class UInputProxy:
             os.write(self._fd, blob)
 
     def close(self) -> None:
+        source = self.source
+        name_hint = self._touchpad_name_hint(source)
         if self._fd >= 0:
+            self._release_kwin_before_destroy(source, name_hint)
             try:
                 fcntl.ioctl(self._fd, UI_DEV_DESTROY)
             except OSError:
                 pass
             os.close(self._fd)
             self._fd = -1
+            self._release_kwin_after_destroy(source, name_hint)
+
+    @staticmethod
+    def _touchpad_name_hint(source: Path) -> str | None:
+        sys_name = Path("/sys/class/input") / source.name / "device" / "name"
+        if sys_name.is_file():
+            return sys_name.read_text(encoding="utf-8", errors="replace").strip()
+        return None
+
+    def _release_kwin_before_destroy(
+        self, source: Path, name_hint: str | None
+    ) -> None:
+        try:
+            from zenbook_kb.touch_map import release_kwin_after_live_filter
+
+            release_kwin_after_live_filter(
+                touchpad_path=source,
+                name_hint=name_hint,
+                filter_sysname=self._filter_sysname,
+                phase="pre",
+            )
+        except Exception:
+            log.debug("pre-destroy KWin release skipped", exc_info=True)
+
+    def _release_kwin_after_destroy(
+        self, source: Path, name_hint: str | None
+    ) -> None:
+        try:
+            from zenbook_kb.touch_map import release_kwin_after_live_filter
+
+            if release_kwin_after_live_filter(
+                touchpad_path=source,
+                name_hint=name_hint,
+                phase="post",
+            ):
+                log.info("restored compositor touchpad for %s", source)
+        except Exception:
+            log.debug("post-destroy KWin release skipped", exc_info=True)
 
     def __enter__(self) -> UInputProxy:
         self.open()

@@ -18,6 +18,7 @@ import json
 import os
 import signal
 import sys
+import time
 from pathlib import Path
 
 _ROOT = Path(__file__).resolve().parent.parent
@@ -68,6 +69,19 @@ from zenbook_kb.pidfile import (  # noqa: E402
     read_pidfile,
     release_pidfile,
 )
+
+
+def _restore_compositor_touchpad(info) -> None:
+    try:
+        from zenbook_kb.touch_map import release_kwin_after_live_filter
+
+        release_kwin_after_live_filter(
+            touchpad_path=info.path,
+            name_hint=info.name,
+            phase="full",
+        )
+    except Exception:
+        pass
 
 
 def _cfg_path(args: argparse.Namespace) -> Path | None:
@@ -308,24 +322,55 @@ def cmd_run(args: argparse.Namespace) -> int:
             )
     finally:
         release_pidfile(TOUCHPAD_PIDFILE)
+        _restore_compositor_touchpad(info)
 
 
-def cmd_stop(_: argparse.Namespace) -> int:
-    """Stop a live filter via pidfile (releases EVIOCGRAB)."""
-    pid = read_pidfile(TOUCHPAD_PIDFILE, clear_stale=True)
-    if pid is None:
+def cmd_stop(args: argparse.Namespace) -> int:
+    """Stop live filter PIDs and clear pidfile (releases EVIOCGRAB)."""
+    from zenbook_kb.pidfile import (
+        find_touchpad_live_filter_pids,
+        force_clear_touchpad_pidfile,
+        is_touchpad_live_filter_pid,
+        pid_alive,
+    )
+
+    force = bool(getattr(args, "force", False))
+    sig = signal.SIGKILL if force else signal.SIGINT
+    pids = find_touchpad_live_filter_pids()
+    if not pids:
+        force_clear_touchpad_pidfile()
         print("live filter not running")
         return 0
+
+    for pid in pids:
+        try:
+            os.kill(pid, sig)
+        except ProcessLookupError:
+            pass
+        except PermissionError:
+            print(f"need root to signal pid {pid}", file=sys.stderr)
+            return 1
+
+    for _ in range(25):
+        if not any(pid_alive(p) and is_touchpad_live_filter_pid(p) for p in pids):
+            break
+        time.sleep(0.02)
+
+    if any(pid_alive(p) and is_touchpad_live_filter_pid(p) for p in pids):
+        for pid in pids:
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except OSError:
+                pass
+        time.sleep(0.02)
+
+    force_clear_touchpad_pidfile()
     try:
-        os.kill(pid, signal.SIGTERM)
-    except ProcessLookupError:
-        release_pidfile(TOUCHPAD_PIDFILE)
-        print(f"stale pid {pid} cleared")
-        return 0
-    except PermissionError:
-        print(f"need root to signal pid {pid}", file=sys.stderr)
-        return 1
-    print(f"sent SIGTERM to pid {pid}")
+        info = resolve_touchpad(getattr(args, "device", None) or "auto", _load(args))
+        _restore_compositor_touchpad(info)
+    except Exception:
+        pass
+    print(f"stopped live filter pids={','.join(str(p) for p in pids)}")
     return 0
 
 
@@ -514,7 +559,12 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help=f"JSON config (default {DEFAULT_CONFIG})",
     )
-    sub.add_parser("stop", help="SIGTERM live filter (release EVIOCGRAB)")
+    p_stop = sub.add_parser("stop", help="stop live filter (release EVIOCGRAB)")
+    p_stop.add_argument(
+        "--force",
+        action="store_true",
+        help="SIGKILL if the filter does not exit promptly",
+    )
 
     p_prof = sub.add_parser("profile", help="show or set filter_profile (default|adaptive)")
     prof_sub = p_prof.add_subparsers(dest="profile_cmd", required=True)

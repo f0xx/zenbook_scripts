@@ -70,6 +70,71 @@ def pid_alive(pid: int) -> bool:
         return False
 
 
+def _read_proc_cmdline(pid: int) -> list[str]:
+    try:
+        raw = Path(f"/proc/{pid}/cmdline").read_bytes()
+    except OSError:
+        return []
+    return [p.decode("utf-8", "replace") for p in raw.split(b"\0") if p]
+
+
+def is_touchpad_live_filter_pid(pid: int) -> bool:
+    """True when *pid* is a ``platform-touchpad run`` process (not the GUI)."""
+    parts = _read_proc_cmdline(pid)
+    if not parts:
+        return False
+    if any("platform-touchpad-gui" in p for p in parts):
+        return False
+    if not any("platform-touchpad" in p for p in parts):
+        return False
+    return "run" in parts
+
+
+def find_touchpad_live_filter_pids() -> list[int]:
+    """Live ``platform-touchpad run`` PIDs — pidfile hint + /proc scan, cmdline verified."""
+    found: set[int] = set()
+    try:
+        raw = TOUCHPAD_PIDFILE.read_text(encoding="utf-8").strip()
+        pf_pid = int(raw.split()[0]) if raw else None
+    except (OSError, ValueError, IndexError):
+        pf_pid = None
+    if pf_pid is not None and is_touchpad_live_filter_pid(pf_pid):
+        found.add(pf_pid)
+    try:
+        for entry in Path("/proc").iterdir():
+            if not entry.name.isdigit():
+                continue
+            try:
+                pid = int(entry.name)
+            except ValueError:
+                continue
+            if is_touchpad_live_filter_pid(pid):
+                found.add(pid)
+    except OSError:
+        pass
+    return sorted(found)
+
+
+def force_clear_touchpad_pidfile() -> None:
+    """Remove touchpad pidfile even when root-owned (live filter runs via sudo)."""
+    if os.geteuid() == 0:
+        try:
+            TOUCHPAD_PIDFILE.unlink(missing_ok=True)
+        except OSError:
+            pass
+    else:
+        clear_pidfile(TOUCHPAD_PIDFILE)
+        if TOUCHPAD_PIDFILE.is_file():
+            try:
+                from zenbook_kb.priv import run_root
+
+                run_root(["rm", "-f", str(TOUCHPAD_PIDFILE)], check=False, timeout=2)
+            except Exception:
+                pass
+    alt = RUN_GROUP_DIR / TOUCHPAD_PIDFILE.name
+    clear_pidfile(alt)
+
+
 def read_pidfile(path: Path, *, clear_stale: bool = True) -> int | None:
     """Return live PID from ``path``, or None. Removes stale files when asked."""
     try:
@@ -87,10 +152,16 @@ def read_pidfile(path: Path, *, clear_stale: bool = True) -> int | None:
             clear_pidfile(path)
         return None
     if pid_alive(pid):
+        if path == TOUCHPAD_PIDFILE and not is_touchpad_live_filter_pid(pid):
+            if clear_stale:
+                force_clear_touchpad_pidfile()
+            return None
         return pid
     if clear_stale:
-        clear_pidfile(path)
-        log.debug("removed stale pidfile %s (was pid %s)", path, pid)
+        if path == TOUCHPAD_PIDFILE:
+            force_clear_touchpad_pidfile()
+        else:
+            clear_pidfile(path)
     return None
 
 
@@ -158,10 +229,10 @@ def acquire_pidfile(path: Path, *, replace: bool = False) -> int | None:
         # Brief wait loop without importing time at module level cost — ok
         import time
 
-        for _ in range(20):
+        for _ in range(10):
             if not pid_alive(existing):
                 break
-            time.sleep(0.05)
+            time.sleep(0.02)
         if pid_alive(existing):
             try:
                 os.kill(existing, signal.SIGKILL)

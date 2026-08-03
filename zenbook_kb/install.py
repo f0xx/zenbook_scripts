@@ -392,6 +392,7 @@ def install_sudoers_ux5400() -> None:
         INSTALL_BIN_PLATFORM_PROFILE,
         INSTALL_BIN_FAN,
         INSTALL_BIN_FAN_CONTROL,
+        INSTALL_BIN_PLATFORM_TOUCHPAD,
         INSTALL_BIN_SCREENPAD_BOOT,
     ):
         line = f"{user} ALL=NOPASSWD:{path} *"

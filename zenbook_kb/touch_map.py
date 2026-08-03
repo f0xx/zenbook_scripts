@@ -16,6 +16,7 @@ import logging
 import os
 import re
 import subprocess
+import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
@@ -25,6 +26,11 @@ log = logging.getLogger("zenbook.touch_map")
 KWIN_DEST = "org.kde.KWin"
 KWIN_IFACE = "org.kde.KWin.InputDevice"
 KWIN_PATH_TMPL = "/org/kde/KWin/InputDevice/{sysname}"
+KWIN_MANAGER_PATH = "/org/kde/KWin/InputDevice"
+KWIN_MANAGER_IFACE = "org.kde.KWin.InputDeviceManager"
+
+# Resolved once per process — session discovery + kwin probe is not cheap.
+_BUSCTL_ENV_CACHE: dict[str, str] | None = None
 
 # Reboot-stable intent (eventN changes). Applied by matching name substring.
 DEFAULT_STATE = Path.home() / ".config" / "zenbook-scripts" / "touch-map.json"
@@ -59,13 +65,123 @@ class MapRule:
     output: str
 
 
+def _discover_graphical_session_env() -> dict[str, str]:
+    """DBus/session env for seat0 (works when invoked via sudo as root)."""
+    out: dict[str, str] = {}
+    uid: int | None = None
+    user: str | None = None
+    try:
+        proc = subprocess.run(
+            ["loginctl", "list-sessions", "--no-legend"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=5,
+        )
+        for line in (proc.stdout or "").splitlines():
+            parts = line.split()
+            if len(parts) < 3 or "seat0" not in line:
+                continue
+            try:
+                uid = int(parts[1])
+            except ValueError:
+                continue
+            user = parts[2]
+            if uid > 0 and user:
+                break
+    except OSError:
+        pass
+    if uid is None:
+        return out
+    runtime = f"/run/user/{uid}"
+    out["XDG_RUNTIME_DIR"] = runtime
+    bus = Path(runtime) / "bus"
+    if bus.is_socket():
+        out["DBUS_SESSION_BUS_ADDRESS"] = f"unix:path={bus}"
+    for proc_name in ("kwin_wayland", "plasmashell", "kwin_x11", "ksmserver"):
+        try:
+            pids = subprocess.check_output(
+                ["pgrep", "-u", str(uid), "-x", proc_name],
+                text=True,
+                stderr=subprocess.DEVNULL,
+                timeout=3,
+            ).split()
+        except (OSError, subprocess.CalledProcessError):
+            continue
+        for pid in pids:
+            try:
+                raw = Path(f"/proc/{pid}/environ").read_bytes()
+            except OSError:
+                continue
+            for item in raw.split(b"\0"):
+                if b"=" not in item:
+                    continue
+                k, _, v = item.partition(b"=")
+                try:
+                    key = k.decode()
+                    val = v.decode()
+                except UnicodeDecodeError:
+                    continue
+                if key in ("DBUS_SESSION_BUS_ADDRESS", "XDG_RUNTIME_DIR"):
+                    out[key] = val
+            if "DBUS_SESSION_BUS_ADDRESS" in out:
+                break
+        if "DBUS_SESSION_BUS_ADDRESS" in out:
+            break
+    if user:
+        out["_ZENBOOK_SEAT_USER"] = user
+    return out
+
+
+def _busctl_env() -> dict[str, str]:
+    global _BUSCTL_ENV_CACHE
+    if _BUSCTL_ENV_CACHE is not None:
+        return _BUSCTL_ENV_CACHE.copy()
+
+    env = os.environ.copy()
+
+    def _kwin_ok(candidate: dict[str, str]) -> bool:
+        r = subprocess.run(
+            ["busctl", "--user", "status", KWIN_DEST],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=2,
+            env=candidate,
+        )
+        return r.returncode == 0
+
+    if not _kwin_ok(env):
+        env = {**env, **_discover_graphical_session_env()}
+        if not _kwin_ok(env):
+            seat_user = env.get("_ZENBOOK_SEAT_USER")
+            if seat_user and os.geteuid() == 0 and env.get("DBUS_SESSION_BUS_ADDRESS"):
+                env["_ZENBOOK_USE_RUNUSER"] = seat_user
+    _BUSCTL_ENV_CACHE = env.copy()
+    return env.copy()
+
+
 def _busctl(*args: str, check: bool = False) -> subprocess.CompletedProcess[str]:
+    env = _busctl_env()
+    seat_user = env.pop("_ZENBOOK_USE_RUNUSER", None)
+    env.pop("_ZENBOOK_SEAT_USER", None)
+    cmd = ["busctl", "--user", *args]
+    if seat_user:
+        return subprocess.run(
+            ["runuser", "-u", seat_user, "--", *cmd],
+            capture_output=True,
+            text=True,
+            check=check,
+            timeout=8,
+            env=env,
+        )
     return subprocess.run(
-        ["busctl", "--user", *args],
+        cmd,
         capture_output=True,
         text=True,
         check=check,
         timeout=8,
+        env=env,
     )
 
 
@@ -93,20 +209,47 @@ def _parse_busctl_variant(line: str) -> Any:
     return rest
 
 
+def _parse_busctl_string_array(text: str) -> list[str]:
+    """Parse ``busctl get-property`` string array (``as N "a" "b" …``)."""
+    return re.findall(r'"([^"]+)"', text or "")
+
+
+def _device_property(sysname: str, prop: str) -> Any:
+    path = KWIN_PATH_TMPL.format(sysname=sysname)
+    r = _busctl("get-property", KWIN_DEST, path, KWIN_IFACE, prop)
+    if r.returncode != 0:
+        return None
+    return _parse_busctl_variant(r.stdout)
+
+
 def kwin_available() -> bool:
     r = _busctl("status", KWIN_DEST)
     return r.returncode == 0
 
 
 def list_input_sysnames(limit: int = 64) -> list[str]:
-    """Discover eventN nodes that expose InputDevice on KWin."""
+    """Discover eventN nodes registered with KWin (one D-Bus call)."""
+    r = _busctl(
+        "get-property",
+        KWIN_DEST,
+        KWIN_MANAGER_PATH,
+        KWIN_MANAGER_IFACE,
+        "devicesSysNames",
+    )
+    if r.returncode == 0:
+        names = _parse_busctl_string_array(r.stdout or "")
+        if names:
+            return names[:limit]
+    # Fallback: only nodes that exist on disk (never probe event0..event63 blindly).
     found: list[str] = []
-    for i in range(limit):
-        sysname = f"event{i}"
+    for node in sorted(Path("/dev/input").glob("event*")):
+        sysname = node.name
         path = KWIN_PATH_TMPL.format(sysname=sysname)
-        r = _busctl("get-property", KWIN_DEST, path, KWIN_IFACE, "name")
-        if r.returncode == 0 and (r.stdout or "").strip():
+        probe = _busctl("get-property", KWIN_DEST, path, KWIN_IFACE, "name")
+        if probe.returncode == 0 and (probe.stdout or "").strip():
             found.append(sysname)
+        if len(found) >= limit:
+            break
     return found
 
 
@@ -152,6 +295,88 @@ def list_touch_devices(*, include_stylus: bool = True) -> list[KWinInputDevice]:
         if dev.touch or (include_stylus and dev.tablet_tool):
             out.append(dev)
     return out
+
+
+def set_device_enabled(sysname: str, enabled: bool) -> None:
+    path = KWIN_PATH_TMPL.format(sysname=sysname)
+    r = _busctl(
+        "set-property",
+        KWIN_DEST,
+        path,
+        KWIN_IFACE,
+        "enabled",
+        "b",
+        "true" if enabled else "false",
+    )
+    if r.returncode != 0:
+        err = (r.stderr or r.stdout or "").strip()
+        raise RuntimeError(f"set enabled failed for {sysname}: {err}")
+
+
+def find_kwin_filter_sysname(*, name_hint: str | None = None) -> str | None:
+    """Return KWin sysname (eventN) for the live-filter uinput node, if present."""
+    hint_base = (name_hint or "").replace(" (filter)", "").strip()
+    for cand in list_input_sysnames():
+        name = _device_property(cand, "name")
+        if not isinstance(name, str) or "(filter)" not in name:
+            continue
+        if hint_base and hint_base not in name:
+            continue
+        return cand
+    return None
+
+
+def release_kwin_after_live_filter(
+    *,
+    touchpad_path: Path | str | None = None,
+    name_hint: str | None = None,
+    filter_sysname: str | None = None,
+    phase: str = "full",
+) -> bool:
+    """Hand the pointer back to the physical pad after live-filter teardown.
+
+    ``phase=pre`` — disable the virtual (filter) pointer while uinput still exists.
+    ``phase=post`` — nudge the physical pad after uinput is destroyed.
+    ``phase=full`` — both (post-destroy path).
+    """
+    if not kwin_available():
+        return False
+    phys = Path(touchpad_path).name if touchpad_path else None
+    changed = False
+
+    if phase in ("pre", "full"):
+        fs = filter_sysname or find_kwin_filter_sysname(name_hint=name_hint)
+        if fs:
+            try:
+                set_device_enabled(fs, False)
+                changed = True
+                time.sleep(0.03)
+            except RuntimeError as exc:
+                log.warning("%s", exc)
+
+    if phase in ("post", "full") and phys:
+        try:
+            set_device_enabled(phys, False)
+            set_device_enabled(phys, True)
+            changed = True
+        except RuntimeError as exc:
+            log.warning("%s", exc)
+    return changed
+
+
+def restore_kwin_touchpad_after_filter(
+    *,
+    touchpad_path: Path | str | None = None,
+    name_hint: str | None = None,
+    filter_sysname: str | None = None,
+) -> bool:
+    """Compatibility wrapper — full post-teardown KWin release."""
+    return release_kwin_after_live_filter(
+        touchpad_path=touchpad_path,
+        name_hint=name_hint,
+        filter_sysname=filter_sysname,
+        phase="full",
+    )
 
 
 def set_output_name(sysname: str, output: str) -> None:
