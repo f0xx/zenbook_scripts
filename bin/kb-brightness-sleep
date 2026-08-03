@@ -11,22 +11,41 @@
 
 set -euo pipefail
 
-zenbook_kb_find_root() {
-    local here
-    here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-    if [[ -f "${here}/../lib/snapshot.sh" ]]; then
-        echo "$(cd "${here}/.." && pwd)"
-        return 0
+_zenbook_wrapper_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+for _root_sh in \
+    "${_zenbook_wrapper_dir}/../lib/zenbook_root.sh" \
+    /usr/share/zenbook-scripts/lib/zenbook_root.sh \
+    /usr/local/share/zenbook-scripts/lib/zenbook_root.sh; do
+    if [[ -f "${_root_sh}" ]]; then
+        # shellcheck source=lib/zenbook_root.sh
+        source "${_root_sh}"
+        break
     fi
-    if [[ -f /usr/local/share/zenbook-scripts/lib/snapshot.sh ]]; then
-        echo /usr/local/share/zenbook-scripts
-        return 0
-    fi
-    echo "zenbook-scripts lib/ not found" >&2
-    return 1
-}
-
-SCRIPT_DIR="$(zenbook_kb_find_root)"
+done
+if declare -F zenbook_share_dir >/dev/null 2>&1; then
+    SCRIPT_DIR="$(zenbook_share_dir)"
+else
+    zenbook_kb_find_root() {
+        local here
+        here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+        if [[ -f "${here}/../lib/snapshot.sh" ]]; then
+            echo "$(cd "${here}/.." && pwd)"
+            return 0
+        fi
+        if [[ -f /usr/share/zenbook-scripts/lib/snapshot.sh ]]; then
+            echo /usr/share/zenbook-scripts
+            return 0
+        fi
+        if [[ -f /usr/local/share/zenbook-scripts/lib/snapshot.sh ]]; then
+            echo /usr/local/share/zenbook-scripts
+            return 0
+        fi
+        echo "zenbook-scripts lib/ not found" >&2
+        return 1
+    }
+    SCRIPT_DIR="$(zenbook_kb_find_root)"
+fi
+unset _zenbook_wrapper_dir _root_sh
 # shellcheck source=lib/protocol.sh
 source "${SCRIPT_DIR}/lib/protocol.sh"
 # shellcheck source=lib/state.sh

@@ -631,12 +631,22 @@ def listen(
         print(f"Watchdog: {watchdog_s:.1f}s", flush=True)
 
     start = time.monotonic()
+    last_device_scan = start
 
     try:
         while True:
             if watchdog_s is not None and (time.monotonic() - start) >= watchdog_s:
                 print("Watchdog expired — exiting listener.", flush=True)
                 return 0
+            now = time.monotonic()
+            if allow_rediscover and (now - last_device_scan) >= 2.0:
+                last_device_scan = now
+                try:
+                    fresh = find_hotkey_devices(device_name)
+                except OSError:
+                    fresh = []
+                if set(fresh) != set(watched_devices):
+                    _rediscover_evdev("device set changed")
             poll_fds = list(fds)
             if fn_hidraw_fd is not None:
                 poll_fds.append(fn_hidraw_fd)

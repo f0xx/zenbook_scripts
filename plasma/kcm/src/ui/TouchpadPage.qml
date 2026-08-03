@@ -115,11 +115,6 @@ ColumnLayout {
             text: i18n("Reload")
             onClicked: root.reload()
         }
-        QQC2.Button {
-            text: i18n("Save")
-            enabled: kcm.touchpadDirty
-            onClicked: kcm.saveTouchpadKnobs()
-        }
     }
 
     QQC2.Label {

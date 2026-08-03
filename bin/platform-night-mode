@@ -21,9 +21,21 @@ import sys
 from pathlib import Path
 
 _SCRIPT_DIR = Path(__file__).resolve().parent
-_REPO_ROOT = _SCRIPT_DIR.parent
-if str(_REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(_REPO_ROOT))
+_ROOT = _SCRIPT_DIR.parent
+_SHARE_CANDIDATES = (
+    _ROOT,
+    Path("/usr/share/zenbook-scripts"),
+    Path("/usr/local/share/zenbook-scripts"),
+)
+_inserted = False
+for _share in _SHARE_CANDIDATES:
+    if (_share / "zenbook_kb" / "night_mode.py").is_file():
+        if str(_share) not in sys.path:
+            sys.path.insert(0, str(_share))
+        _inserted = True
+        break
+if not _inserted and (_ROOT / "zenbook_kb").is_dir() and str(_ROOT) not in sys.path:
+    sys.path.insert(0, str(_ROOT))
 
 from zenbook_kb.night_mode import (  # noqa: E402
     enter_night,

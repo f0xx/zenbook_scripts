@@ -14,7 +14,7 @@ Per-user power/thermal modes in `~/.config/zenbook-scripts/profiles.json`.
 
 ## UI
 
-- **Tray:** left-click → `kcmshell6 kcm_zenbookplatform`; right-click → profile submenu
+- **Tray:** left-click → `kcmshell6 kcm_zenbook_platform`; right-click → profile submenu
 - **KCM:** Profiles tab (edit JSON-backed settings), Touchpad tab (status + open tuner)
 - **Notifications:** `notify-send` / `knotify-send` on mode switch (toggle in KCM)
 

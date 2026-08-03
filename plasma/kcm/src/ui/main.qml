@@ -11,7 +11,7 @@ KCMUtils.ScrollViewKCM {
     id: root
 
     implicitWidth: Kirigami.Units.gridUnit * 44
-    implicitHeight: Kirigami.Units.gridUnit * 30
+    implicitHeight: Kirigami.Units.gridUnit * 36
 
     readonly property var tabPages: {
         var pages = [
@@ -46,7 +46,7 @@ KCMUtils.ScrollViewKCM {
         Loader {
             id: pageLoader
             Layout.fillWidth: true
-            Layout.preferredHeight: Kirigami.Units.gridUnit * 22
+            Layout.preferredHeight: item ? item.implicitHeight : Kirigami.Units.gridUnit * 12
             source: root.tabPages[Math.min(tabBar.currentIndex, root.tabPages.length - 1)].source
         }
 

@@ -44,6 +44,10 @@ class ZenbookPlatform : public KQuickConfigModule
 public:
     explicit ZenbookPlatform(QObject *parent, const KPluginMetaData &data);
 
+    void load() override;
+    void save() override;
+    void defaults() override;
+
     QString probeText() const
     {
         return m_probeText;
@@ -193,6 +197,7 @@ private:
     QJsonObject defaultProfileObject() const;
     void markSessionDirty();
     void markProfilesDirty();
+    void updateNeedsSave();
     QJsonObject defaultProfilesObject() const;
 
     QString m_probeText;

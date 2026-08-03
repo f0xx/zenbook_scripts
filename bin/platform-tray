@@ -487,8 +487,8 @@ class PlatformTray(QWidget):
 
     def _open_kcm(self) -> None:
         for argv in (
-            ["kcmshell6", "kcm_zenbookplatform"],
-            ["systemsettings", "kcm_zenbookplatform"],
+            ["kcmshell6", "kcm_zenbook_platform"],
+            ["systemsettings", "kcm_zenbook_platform"],
         ):
             if shutil.which(argv[0]):
                 try:
@@ -498,7 +498,7 @@ class PlatformTray(QWidget):
                     pass
         self.tray.showMessage(
             "platform-tray",
-            "KCM not found — build/install plasma/kcm (kcm_zenbookplatform)",
+            "KCM not found — build/install plasma/kcm (kcm_zenbook_platform)",
             QSystemTrayIcon.MessageIcon.Warning,
             5000,
         )

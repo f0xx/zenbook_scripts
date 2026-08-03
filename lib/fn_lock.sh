@@ -304,7 +304,9 @@ zenbook_kb_fn_lock_restore() {
 
 zenbook_kb_fn_lock_insmod_default() {
     local path="${1:-${ZENBOOK_KB_DEFAULT_SNAPSHOT}}"
-    local fn_lock
+    local fn_lock conf_default snap_lock
+
+    conf_default="$(zenbook_kb_fn_lock_conf_default)"
 
     if zenbook_kb_fn_lock_toggled_recently \
         && fn_lock="$(zenbook_kb_fn_lock_state_read 2>/dev/null)"; then
@@ -313,9 +315,15 @@ zenbook_kb_fn_lock_insmod_default() {
     fi
 
     if [[ -f "${path}" ]]; then
-        fn_lock="$(zenbook_kb_snapshot_read_value "${path}" fn_lock 2>/dev/null || true)"
-        if [[ "${fn_lock}" =~ ^[01]$ ]]; then
-            printf '%s' "${fn_lock}"
+        snap_lock="$(zenbook_kb_snapshot_read_value "${path}" fn_lock 2>/dev/null || true)"
+        if [[ "${snap_lock}" =~ ^[01]$ ]]; then
+            # After upgrade/reboot, stale snapshot Mode A should not override conf.d Mode B
+            # unless the user explicitly toggled Fn+Esc (fn-lock-toggled marker).
+            if [[ "${snap_lock}" != "${conf_default}" ]]; then
+                printf '%s' "${conf_default}"
+                return 0
+            fi
+            printf '%s' "${snap_lock}"
             return 0
         fi
     fi
@@ -323,7 +331,7 @@ zenbook_kb_fn_lock_insmod_default() {
         printf '%s' "${fn_lock}"
         return 0
     fi
-    zenbook_kb_fn_lock_conf_default
+    printf '%s' "${conf_default}"
 }
 
 zenbook_kb_fn_lock_needs_full_reload() {

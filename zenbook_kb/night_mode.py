@@ -227,9 +227,20 @@ def _apply_night_extras(cfg: dict[str, Any], *, user: str | None, entering: bool
     if screen.get("power_off", True):
         blank_displays(user=user)
     kbd = night.get("keyboard_backlight") or {}
-    level = int(kbd.get("level", 0))
-    if not kbd.get("enabled", False) or level <= 0:
+    level_pct = kbd.get("level_pct")
+    if level_pct is not None:
+        level = max(0, min(3, round(int(level_pct) / 100 * 3)))
+    else:
+        level = int(kbd.get("level", 0))
+    if not kbd.get("enabled", False) and level <= 0:
         for argv in (["kb-brightness", "0"],):
+            if shutil_which(argv[0]):
+                try:
+                    subprocess.run(argv, capture_output=True, timeout=5, check=False)
+                except OSError:
+                    pass
+    elif level > 0:
+        for argv in (["kb-brightness", str(level)],):
             if shutil_which(argv[0]):
                 try:
                     subprocess.run(argv, capture_output=True, timeout=5, check=False)

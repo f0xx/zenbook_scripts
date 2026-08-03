@@ -9,6 +9,7 @@ from typing import Any
 from zenbook_kb.touchpad import (
     DEFAULT_CONFIG,
     discover_touchpads,
+    filter_profile_for_device,
     filters_for_device,
     filters_from_knobs,
     knobs_from_filters,
@@ -19,7 +20,7 @@ from zenbook_kb.touchpad import (
     save_config,
     upsert_device_profile,
 )
-from zenbook_kb.touchpad_profiles import FILTER_PROFILE_DEFAULT, filter_profile_for_device
+from zenbook_kb.touchpad_profiles import FILTER_PROFILE_DEFAULT
 
 
 def _user_config_path() -> Path:

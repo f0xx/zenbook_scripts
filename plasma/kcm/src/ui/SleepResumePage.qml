@@ -55,32 +55,7 @@ ColumnLayout {
         }
     }
 
-    RowLayout {
-        spacing: Kirigami.Units.largeSpacing
-
-        QQC2.Button {
-            text: i18n("Reload")
-            icon.name: "document-revert"
-            enabled: !kcm.busy
-            onClicked: kcm.loadSession()
-        }
-        QQC2.Button {
-            text: i18n("Save")
-            icon.name: "document-save"
-            enabled: kcm.sessionDirty && !kcm.busy
-            onClicked: kcm.saveSession()
-        }
-        QQC2.Button {
-            text: i18n("Reset defaults")
-            enabled: !kcm.busy
-            onClicked: kcm.resetSessionDefaults()
-        }
-    }
-
-    QQC2.Label {
-        Layout.fillWidth: true
-        visible: kcm.sessionDirty
-        color: Kirigami.Theme.neutralTextColor
-        text: i18n("Unsaved changes")
+    Item {
+        Layout.fillHeight: true
     }
 }

@@ -15,13 +15,16 @@ _zenbook_clear_stale_pidfile() {
 	fi
 }
 
-_zenbook_clear_stale_pidfile "${PIDFILE}"
-if [[ -f "${PIDFILE}" ]]; then
-	echo "lid-watch already running (pid $(cat "${PIDFILE}"), ${PIDFILE}); remove pidfile or stop the service" >&2
-	exit 1
+# OpenRC owns pidfile + supervision; standalone runs manage their own.
+if [[ -z "${RC_SVCNAME:-}" ]]; then
+	_zenbook_clear_stale_pidfile "${PIDFILE}"
+	if [[ -f "${PIDFILE}" ]]; then
+		echo "lid-watch already running (pid $(cat "${PIDFILE}"), ${PIDFILE}); remove pidfile or stop the service" >&2
+		exit 1
+	fi
+	echo $$ >"${PIDFILE}"
+	trap 'rm -f "${PIDFILE}"' EXIT INT TERM HUP
 fi
-echo $$ >"${PIDFILE}"
-trap 'rm -f "${PIDFILE}"' EXIT INT TERM HUP
 
 zenbook_kb_run_user() {
 	if [[ -r /etc/conf.d/zenbook-kb-hotkeys ]]; then

@@ -235,6 +235,8 @@ def install_kb_brightness_tree(script_dir: Path) -> None:
         "screenpad.sh",
         "platform_profile.sh",
         "fan.sh",
+        "zenbook_root.sh",
+        "post_sideload.sh",
     ):
         src = script_dir / "lib" / name
         if src.is_file():
@@ -423,7 +425,11 @@ def install_sudoers_ux5400() -> None:
 
 def install_udev_rules(script_dir: Path) -> None:
     _sudo(["mkdir", "-p", str(INSTALL_LIBEXEC)])
-    _sudo(["cp", str(script_dir / "contrib" / "udev" / "99-zenbook-kb-hotkeys.rules"), str(UDEV_RULES)])
+    hotkeys_rules = script_dir / "contrib" / "udev" / "99-zenbook-kb-hotkeys.rules"
+    text = hotkeys_rules.read_text(encoding="utf-8")
+    text = text.replace("/usr/libexec/zenbook-kb-hotkeys-udev", str(UDEV_HELPER))
+    text = text.replace("/usr/local/libexec/zenbook-kb-hotkeys-udev", str(UDEV_HELPER))
+    _root_run(["tee", str(UDEV_RULES)], check=True, input_bytes=text.encode())
     _sudo(["cp", str(script_dir / "contrib" / "udev" / "zenbook-kb-hotkeys-udev"), str(UDEV_HELPER)])
     _sudo(["chmod", "a+x", str(UDEV_HELPER)])
     dock_rules = script_dir / "contrib" / "udev" / "99-zenbook-duo-dock.rules"

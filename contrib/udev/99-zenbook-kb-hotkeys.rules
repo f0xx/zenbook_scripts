@@ -4,14 +4,7 @@
 #   - grant read access to /dev/input/event* (group input)
 #   - restart the OpenRC service when the keyboard input device is added
 #
-# Install:
-#   sudo cp contrib/udev/99-zenbook-kb-hotkeys.rules /etc/udev/rules.d/
-#   sudo cp contrib/udev/zenbook-kb-hotkeys-udev /usr/local/libexec/
-#   sudo chmod +x /usr/local/libexec/zenbook-kb-hotkeys-udev
-#   sudo udevadm control --reload-rules
-#   sudo udevadm trigger --subsystem-match=input
-#
-# Pair with contrib/openrc/zenbook-kb-hotkeys (rc-update add … default).
+# Install via configure.py (rewrites RUN+= path to match install prefix).
 
 # USB docked keyboard (0b05:1b2c) and Bluetooth (0b05:1b2d)
 SUBSYSTEM=="input", KERNEL=="event*", ATTRS{idVendor}=="0b05", ATTRS{idProduct}=="1b2[cd]", \
@@ -20,13 +13,20 @@ SUBSYSTEM=="input", KERNEL=="event*", ATTRS{idVendor}=="0b05", ATTRS{idProduct}=
 SUBSYSTEM=="input", KERNEL=="event*", ATTRS{idVendor}=="0b05", ATTRS{idProduct}=="1b2[cd]", \
   ATTR{name}=="ASUS Zenbook Duo Keyboard", \
   GROUP="input", MODE="0660"
+SUBSYSTEM=="input", KERNEL=="event*", ATTRS{idVendor}=="0b05", ATTRS{idProduct}=="1b2c", \
+  ATTR{name}=="Asus Keyboard", \
+  GROUP="input", MODE="0660"
 
-# When the hotkey-capable input node appears, (re)start the listener service.
+# When a hotkey-capable input node appears, (re)start the listener service.
 SUBSYSTEM=="input", KERNEL=="event*", ACTION=="add", \
   ATTRS{idVendor}=="0b05", ATTRS{idProduct}=="1b2[cd]", \
   ATTR{name}=="Primax Electronics Ltd. ASUS Zenbook Duo Keyboard", \
-  RUN+="/usr/local/libexec/zenbook-kb-hotkeys-udev start"
+  RUN+="/usr/libexec/zenbook-kb-hotkeys-udev start"
 SUBSYSTEM=="input", KERNEL=="event*", ACTION=="add", \
   ATTRS{idVendor}=="0b05", ATTRS{idProduct}=="1b2[cd]", \
   ATTR{name}=="ASUS Zenbook Duo Keyboard", \
-  RUN+="/usr/local/libexec/zenbook-kb-hotkeys-udev start"
+  RUN+="/usr/libexec/zenbook-kb-hotkeys-udev start"
+SUBSYSTEM=="input", KERNEL=="event*", ACTION=="add", \
+  ATTRS{idVendor}=="0b05", ATTRS{idProduct}=="1b2c", \
+  ATTR{name}=="Asus Keyboard", \
+  RUN+="/usr/libexec/zenbook-kb-hotkeys-udev start"

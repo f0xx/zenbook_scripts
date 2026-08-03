@@ -66,23 +66,56 @@ K_PLUGIN_CLASS_WITH_JSON(ZenbookPlatform, "kcm_zenbook_platform.json")
 ZenbookPlatform::ZenbookPlatform(QObject *parent, const KPluginMetaData &data)
     : KQuickConfigModule(parent, data)
 {
-    setButtons(KQuickConfigModule::Help);
+    setButtons(KQuickConfigModule::Apply | KQuickConfigModule::Default | KQuickConfigModule::Help);
+    setSupportsInstantApply(false);
 
     m_process = new QProcess(this);
     connect(m_process, &QProcess::finished, this, &ZenbookPlatform::onProcessFinished);
 
     detectHardware();
+}
+
+void ZenbookPlatform::load()
+{
     loadSession();
     loadProfiles();
+    loadTouchpadKnobs();
     refreshProbe();
     refreshTouchpadStatus();
-    loadTouchpadKnobs();
     if (m_hasDuoDock) {
         refreshDuoStatus();
     }
     if (m_hasScreenpad) {
         refreshScreenpadStatus();
     }
+    updateNeedsSave();
+}
+
+void ZenbookPlatform::save()
+{
+    if (m_sessionDirty) {
+        saveSession();
+    }
+    if (m_profilesDirty) {
+        saveProfiles();
+    }
+    if (m_touchpadDirty) {
+        saveTouchpadKnobs();
+    }
+    updateNeedsSave();
+}
+
+void ZenbookPlatform::defaults()
+{
+    resetSessionDefaults();
+    resetProfilesDefaults();
+    loadTouchpadKnobs();
+    updateNeedsSave();
+}
+
+void ZenbookPlatform::updateNeedsSave()
+{
+    setNeedsSave(m_sessionDirty || m_profilesDirty || m_touchpadDirty);
 }
 
 void ZenbookPlatform::detectHardware()
@@ -397,6 +430,7 @@ bool ZenbookPlatform::saveSession()
     m_sessionDirty = false;
     Q_EMIT sessionDirtyChanged();
     setLastError({});
+    updateNeedsSave();
     return true;
 }
 
@@ -417,6 +451,7 @@ void ZenbookPlatform::markSessionDirty()
     }
     m_sessionDirty = true;
     Q_EMIT sessionDirtyChanged();
+    updateNeedsSave();
 }
 
 void ZenbookPlatform::setRestoreAfterPlasmashellReplace(bool value)
@@ -503,6 +538,7 @@ void ZenbookPlatform::loadProfiles()
         m_profilesDirty = false;
         Q_EMIT profilesChanged();
         Q_EMIT profilesDirtyChanged();
+        updateNeedsSave();
         return;
     }
     if (!file.open(QIODevice::ReadOnly)) {
@@ -522,6 +558,7 @@ void ZenbookPlatform::loadProfiles()
     m_profilesDirty = false;
     Q_EMIT profilesChanged();
     Q_EMIT profilesDirtyChanged();
+    updateNeedsSave();
 }
 
 QString ZenbookPlatform::profilesJson() const
@@ -556,6 +593,7 @@ bool ZenbookPlatform::saveProfiles()
     m_profilesDirty = false;
     Q_EMIT profilesDirtyChanged();
     setLastError({});
+    updateNeedsSave();
     return true;
 }
 
@@ -574,6 +612,7 @@ void ZenbookPlatform::markProfilesDirty()
     }
     m_profilesDirty = true;
     Q_EMIT profilesDirtyChanged();
+    updateNeedsSave();
 }
 
 void ZenbookPlatform::refreshTouchpadStatus()
@@ -635,6 +674,7 @@ void ZenbookPlatform::setTouchpadKnobsJson(const QString &json)
     if (!m_touchpadDirty) {
         m_touchpadDirty = true;
         Q_EMIT touchpadDirtyChanged();
+        updateNeedsSave();
     }
     Q_EMIT touchpadKnobsChanged();
 }
@@ -658,6 +698,7 @@ bool ZenbookPlatform::saveTouchpadKnobs()
     Q_EMIT touchpadDirtyChanged();
     refreshTouchpadStatus();
     setLastError({});
+    updateNeedsSave();
     return true;
 }
 
