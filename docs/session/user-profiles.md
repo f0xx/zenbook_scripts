@@ -27,10 +27,27 @@ platform-profiles show
 platform-profiles reset quiet
 ```
 
+## Scheduling (cron — no daemon)
+
+`configure.py` installs `/etc/cron.d/zenbook-profiles`:
+
+```cron
+* * * * * foxx /usr/bin/platform-profiles evaluate -q
+```
+
+Runs once per minute as `command_user` from `zenbook-kb-hotkeys` conf.d. Manual test:
+
+```bash
+platform-profiles evaluate
+platform-profiles status
+```
+
+Evaluates schedules, low-CPU and battery-timeout triggers, and night eligibility
+(lid open + awake). State: `~/.cache/zenbook-scripts/profiles-eval-state.json`.
+
 ## Not yet implemented
 
-- Background **scheduler/evaluator** daemon (cron-like start/stop + CPU/battery triggers)
-- Full **touchpad knob embed** in KCM (today: open `platform-touchpad-gui`)
-- Night **network off** (toggle stored; no netdev down yet)
+- Background **scheduler/evaluator** daemon (cron replaces this — no fat daemon)
+- Per-interface **network off** beyond `nmcli networking off`
 
 See also [night-mode.md](../daemons/night-mode.md) for closed-lid server behaviour.

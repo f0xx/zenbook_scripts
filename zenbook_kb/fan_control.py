@@ -412,6 +412,15 @@ def apply_profile(cfg: dict[str, Any], name: str) -> None:
 
 
 def run_event(cfg: dict[str, Any], event: str, state: ControllerState) -> None:
+    if event == "lid_close":
+        try:
+            from zenbook_kb.night_mode import is_active
+
+            if is_active():
+                log.info("skip fan lid_close — night mode owns lid")
+                return
+        except ImportError:
+            pass
     events = cfg.get("events") or {}
     ev = events.get(event)
     if not ev:

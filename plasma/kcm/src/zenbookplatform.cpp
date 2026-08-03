@@ -76,6 +76,7 @@ ZenbookPlatform::ZenbookPlatform(QObject *parent, const KPluginMetaData &data)
     loadProfiles();
     refreshProbe();
     refreshTouchpadStatus();
+    loadTouchpadKnobs();
     if (m_hasDuoDock) {
         refreshDuoStatus();
     }
@@ -602,6 +603,62 @@ void ZenbookPlatform::applyActiveProfile()
         return;
     }
     runScript(helper, {QStringLiteral("set"), mode}, QStringLiteral("lastCommandOutput"));
+}
+
+void ZenbookPlatform::loadTouchpadKnobs()
+{
+    const QString helper = resolveScript(QStringLiteral("platform-touchpad-kcm"));
+    if (helper.isEmpty()) {
+        m_touchpadKnobsJson = QStringLiteral("{}");
+        Q_EMIT touchpadKnobsChanged();
+        return;
+    }
+    QProcess proc;
+    proc.start(helper, {QStringLiteral("export")});
+    if (!proc.waitForFinished(8000) || proc.exitCode() != 0) {
+        setLastError(i18n("platform-touchpad-kcm export failed"));
+        return;
+    }
+    m_touchpadKnobsJson = QString::fromUtf8(proc.readAllStandardOutput()).trimmed();
+    m_touchpadDirty = false;
+    Q_EMIT touchpadKnobsChanged();
+    Q_EMIT touchpadDirtyChanged();
+    setLastError({});
+}
+
+void ZenbookPlatform::setTouchpadKnobsJson(const QString &json)
+{
+    if (m_touchpadKnobsJson == json) {
+        return;
+    }
+    m_touchpadKnobsJson = json;
+    if (!m_touchpadDirty) {
+        m_touchpadDirty = true;
+        Q_EMIT touchpadDirtyChanged();
+    }
+    Q_EMIT touchpadKnobsChanged();
+}
+
+bool ZenbookPlatform::saveTouchpadKnobs()
+{
+    const QString helper = resolveScript(QStringLiteral("platform-touchpad-kcm"));
+    if (helper.isEmpty()) {
+        setLastError(i18n("platform-touchpad-kcm not found"));
+        return false;
+    }
+    QProcess proc;
+    proc.start(helper, {QStringLiteral("import"), QStringLiteral("-")});
+    proc.write(m_touchpadKnobsJson.toUtf8());
+    proc.closeWriteChannel();
+    if (!proc.waitForFinished(8000) || proc.exitCode() != 0) {
+        setLastError(i18n("platform-touchpad-kcm import failed: %1", QString::fromUtf8(proc.readAllStandardError())));
+        return false;
+    }
+    m_touchpadDirty = false;
+    Q_EMIT touchpadDirtyChanged();
+    refreshTouchpadStatus();
+    setLastError({});
+    return true;
 }
 
 #include "zenbookplatform.moc"

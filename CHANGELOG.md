@@ -33,6 +33,10 @@ Gentoo-friendly naming where needed (`v0.0.1_hf1` → PV `0.0.1_p1`,
 - **User profiles GUI (scaffold):** `~/.config/zenbook-scripts/profiles.json`,
   `platform-profiles` CLI, KCM **Profiles** tab (schedules/triggers/night toggles),
   tray left-click → KCM, profile submenu + Plasma notifications toggle.
+- **Profile scheduling (cron):** `platform-profiles evaluate` + `/etc/cron.d/zenbook-profiles`
+  (no background watcher daemon); `profile_eval` / `profile_apply` shared logic.
+- **KCM touchpad knobs:** `platform-touchpad-kcm` export/import; **Touchpad** tab embeds
+  core filter knobs (typing inhibit, delay, outlier, soft accel).
 - **Docs:** touchpad KWin stuck-filter manual recovery; Gentoo resource-pressure
   guide (`docs/ops/resource-pressure.md`, `contrib/cgroups/README.md`).
 

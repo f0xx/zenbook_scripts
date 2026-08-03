@@ -312,6 +312,11 @@ def install_kb_brightness_tree(script_dir: Path) -> None:
         dest = zb_paths.bin_dir() / "platform-profiles"
         _sudo(["cp", str(platform_profiles), str(dest)])
         _sudo(["chmod", "a+x", str(dest)])
+    tp_kcm = script_dir / "bin" / "platform-touchpad-kcm"
+    if tp_kcm.is_file():
+        dest = zb_paths.bin_dir() / "platform-touchpad-kcm"
+        _sudo(["cp", str(tp_kcm), str(dest)])
+        _sudo(["chmod", "a+x", str(dest)])
     example_night = script_dir / "night-mode.json.example"
     if example_night.is_file():
         _sudo(["cp", str(example_night), str(INSTALL_SHARE / "night-mode.json.example")])
@@ -534,6 +539,23 @@ def install_sleep_hooks(script_dir: Path) -> None:
     if modprobe_src.is_file():
         _sudo(["cp", str(modprobe_src), str(MODPROBE_CONF)])
         print(f"Installed {MODPROBE_CONF} (oot hid-asus fn-lock defaults)")
+
+
+def install_profiles_cron(script_dir: Path, *, run_user: str | None = None) -> None:
+    """Install /etc/cron.d/zenbook-profiles — platform-profiles evaluate each minute."""
+    user = run_user or resolve_run_user()
+    if not user:
+        print("profiles cron: no run user — skip")
+        return
+    src = script_dir / "contrib" / "cron" / "zenbook-profiles.cron"
+    if not src.is_file():
+        print("profiles cron: template missing — skip")
+        return
+    text = src.read_text(encoding="utf-8").replace("@CRON_USER@", user)
+    dest = Path("/etc/cron.d/zenbook-profiles")
+    _root_run(["tee", str(dest)], check=True, input_bytes=text.encode())
+    _sudo(["chmod", "644", str(dest)])
+    print(f"Installed {dest} (user {user}, platform-profiles evaluate each minute)")
 
 
 def install_openrc_lid_service(script_dir: Path) -> None:
@@ -1126,6 +1148,7 @@ def install_all(
             enable_service=fan_control_enable,
             seed_config=True,
         )
+        install_profiles_cron(script_dir, run_user=resolve_run_user())
 
     if not with_hotkey_service:
         return None

@@ -81,6 +81,21 @@ def capture_snapshot(*, fan_cfg_path: Path | None = None) -> dict[str, Any]:
         "fan_pwm_enable": _read_text(FAN_PWM_STATE),
         "fan_control_config": str(fan_path),
     }
+    try:
+        from zenbook_kb.profile_eval import EVAL_STATE
+
+        if EVAL_STATE.is_file():
+            st = json.loads(EVAL_STATE.read_text(encoding="utf-8"))
+            if isinstance(st, dict) and st.get("applied_mode"):
+                snap["applied_profile_mode"] = st["applied_mode"]
+    except (OSError, json.JSONDecodeError):
+        pass
+    try:
+        from zenbook_kb.user_profiles import load
+
+        snap["profiles_active_mode"] = load().get("active_mode")
+    except Exception:
+        pass
     return snap
 
 
@@ -177,6 +192,53 @@ def shutil_which(name: str) -> str | None:
     return which(name)
 
 
+def _set_network(stay_up: bool) -> None:
+    if stay_up:
+        for argv in (["nmcli", "networking", "on"], ["systemctl", "start", "NetworkManager"]):
+            if shutil_which(argv[0]):
+                try:
+                    subprocess.run(argv, capture_output=True, timeout=10, check=False)
+                except OSError:
+                    pass
+        return
+    for argv in (["nmcli", "networking", "off"],):
+        if shutil_which(argv[0]):
+            try:
+                subprocess.run(argv, capture_output=True, timeout=10, check=False)
+                log.info("networking off via nmcli")
+                return
+            except OSError:
+                pass
+    log.debug("network off skipped (nmcli missing)")
+
+
+def _apply_night_extras(cfg: dict[str, Any], *, user: str | None, entering: bool) -> None:
+    """Screen/kbd/network from profiles.json night section when present."""
+    try:
+        from zenbook_kb.user_profiles import load
+
+        night = load().get("modes", {}).get("night") or {}
+    except Exception:
+        night = {}
+    if not entering:
+        _set_network(bool((night.get("network") or {}).get("stay_up", True)))
+        return
+    screen = night.get("screen") or {}
+    if screen.get("power_off", True):
+        blank_displays(user=user)
+    kbd = night.get("keyboard_backlight") or {}
+    level = int(kbd.get("level", 0))
+    if not kbd.get("enabled", False) or level <= 0:
+        for argv in (["kb-brightness", "0"],):
+            if shutil_which(argv[0]):
+                try:
+                    subprocess.run(argv, capture_output=True, timeout=5, check=False)
+                except OSError:
+                    pass
+    net_stay = bool((night.get("network") or {}).get("stay_up", True))
+    _set_network(net_stay)
+
+
 def enter_night(
     cfg: dict[str, Any] | None = None,
     *,
@@ -209,6 +271,7 @@ def enter_night(
 
     if cfg.get("blank_displays", True):
         blank_displays(user=user)
+    _apply_night_extras(cfg, user=user, entering=True)
 
     STATE_DIR.mkdir(parents=True, exist_ok=True)
     ACTIVE_MARKER.write_text("1\n", encoding="utf-8")
@@ -240,6 +303,7 @@ def exit_night(*, force: bool = False, user: str | None = None) -> bool:
 
     if user or is_active():
         wake_displays(user=user)
+    _apply_night_extras({}, user=user, entering=False)
 
     try:
         ACTIVE_MARKER.unlink(missing_ok=True)

@@ -35,6 +35,8 @@ class ZenbookPlatform : public KQuickConfigModule
     Q_PROPERTY(bool profilesDirty READ profilesDirty NOTIFY profilesDirtyChanged)
 
     Q_PROPERTY(QString touchpadStatusText READ touchpadStatusText NOTIFY touchpadStatusTextChanged)
+    Q_PROPERTY(QString touchpadKnobsJson READ touchpadKnobsJson NOTIFY touchpadKnobsChanged)
+    Q_PROPERTY(bool touchpadDirty READ touchpadDirty NOTIFY touchpadDirtyChanged)
 
     Q_PROPERTY(QString version READ version CONSTANT)
     Q_PROPERTY(QString documentationUrl READ documentationUrl CONSTANT)
@@ -120,6 +122,16 @@ public:
     {
         return m_touchpadStatusText;
     }
+    QString touchpadKnobsJson() const
+    {
+        return m_touchpadKnobsJson;
+    }
+    bool touchpadDirty() const
+    {
+        return m_touchpadDirty;
+    }
+
+    void setTouchpadKnobsJson(const QString &json);
 
     void setProfilesJson(const QString &json);
 
@@ -148,6 +160,8 @@ public:
     Q_INVOKABLE void resetProfilesDefaults();
     Q_INVOKABLE void refreshTouchpadStatus();
     Q_INVOKABLE void openTouchpadTuner();
+    Q_INVOKABLE void loadTouchpadKnobs();
+    Q_INVOKABLE bool saveTouchpadKnobs();
     Q_INVOKABLE void applyActiveProfile();
 
 Q_SIGNALS:
@@ -162,6 +176,8 @@ Q_SIGNALS:
     void profilesChanged();
     void profilesDirtyChanged();
     void touchpadStatusTextChanged();
+    void touchpadKnobsChanged();
+    void touchpadDirtyChanged();
 
 private Q_SLOTS:
     void onProcessFinished(int exitCode, QProcess::ExitStatus status);
@@ -200,6 +216,8 @@ private:
     QJsonObject m_profilesRoot;
     bool m_profilesDirty = false;
     QString m_touchpadStatusText;
+    QString m_touchpadKnobsJson;
+    bool m_touchpadDirty = false;
 
     QProcess *m_process = nullptr;
     enum class OutputTarget {
