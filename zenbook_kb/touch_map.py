@@ -326,6 +326,47 @@ def find_kwin_filter_sysname(*, name_hint: str | None = None) -> str | None:
     return None
 
 
+def activate_kwin_live_filter(
+    *,
+    touchpad_path: Path | str | None = None,
+    name_hint: str | None = None,
+    filter_sysname: str | None = None,
+) -> bool:
+    """Route KWin pointer input through the live-filter uinput node.
+
+    While EVIOCGRAB holds the physical pad, KWin must use the ``(filter)``
+    virtual device. Without this, a prior stop can leave the filter disabled
+    and the grabbed physical pad unusable — cursor blackout.
+    """
+    if not kwin_available():
+        return False
+    phys = Path(touchpad_path).name if touchpad_path else None
+    changed = False
+    fs: str | None = None
+    for _ in range(12):
+        fs = filter_sysname or find_kwin_filter_sysname(name_hint=name_hint)
+        if not fs:
+            time.sleep(0.05)
+            continue
+        try:
+            set_device_enabled(fs, True)
+            changed = True
+            break
+        except RuntimeError:
+            time.sleep(0.05)
+    if fs and changed:
+        time.sleep(0.03)
+    elif fs:
+        log.warning("could not enable KWin live-filter device %s", fs)
+    if phys:
+        try:
+            set_device_enabled(phys, False)
+            changed = True
+        except RuntimeError as exc:
+            log.warning("%s", exc)
+    return changed
+
+
 def release_kwin_after_live_filter(
     *,
     touchpad_path: Path | str | None = None,

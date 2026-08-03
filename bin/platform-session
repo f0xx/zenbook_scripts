@@ -10,6 +10,8 @@ Examples:
   platform-session show
   platform-session run sleep
   platform-session run resume
+  platform-session run lid-close
+  platform-session run lid-open
   platform-session action brightness_save
   platform-session presentation on
   platform-session plasmashell check --apply
@@ -43,6 +45,8 @@ ACTIONS = frozenset(
         "fan_sleep_post",
         "touchpad_reassert",
         "touch_map_apply",
+        "night_enter",
+        "night_exit",
     }
 )
 
@@ -394,6 +398,12 @@ def run_action(name: str) -> bool:
             return True
         return _run_bin("platform-touch-map", ["auto", "--save"])
 
+    if name == "night_enter":
+        return _run_bin("platform-night-mode", ["enter"])
+
+    if name == "night_exit":
+        return _run_bin("platform-night-mode", ["exit"])
+
     return False
 
 
@@ -458,6 +468,10 @@ def cmd_run(phase: str) -> int:
         actions = profile.get("on_hibernate") or profile.get("on_sleep") or []
     elif phase == "hibernate-resume":
         actions = profile.get("on_hibernate_resume") or profile.get("on_resume") or []
+    elif phase == "lid-close":
+        actions = profile.get("on_lid_close") or []
+    elif phase == "lid-open":
+        actions = profile.get("on_lid_open") or []
     else:
         _log(f"unknown run phase: {phase}", level="err")
         return 2

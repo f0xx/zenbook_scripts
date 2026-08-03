@@ -14,6 +14,7 @@ Deep dives for contributors. Root `README.*.md` stays operator-facing.
 | [duo/dock-and-swap.md](duo/dock-and-swap.md) | Dock eDP-2 + screen-swap / KWin |
 | [duo/touch-jump.md](duo/touch-jump.md) | Dual-eDP touch jump + `platform-touch-cal` |
 | [session/plasma-session.md](session/plasma-session.md) | `session.json`, inhibit, KCM |
+| [ops/resource-pressure.md](ops/resource-pressure.md) | RAM/swap/emerge pressure, cgroup caps |
 | [touchpad/pipeline.md](touchpad/pipeline.md) | typing-inhibit → soft_accel |
 | [touchpad/calibrate.md](touchpad/calibrate.md) | Calibrate deepen plan (0.0.4) |
 | [ux581/lightbar.md](ux581/lightbar.md) | Lightbar stub (hardware-blocked) |

@@ -124,23 +124,25 @@ def _which_touchpad_cli() -> str | None:
     return None
 
 
-def _live_filter_pids() -> list[int]:
-    """PIDs of verified ``platform-touchpad run`` processes (cached ~1s)."""
+def _live_filter_pids(*, quick: bool = True) -> list[int]:
+    """PIDs of verified ``platform-touchpad run`` processes (cached ~3s)."""
     global _LIVE_PID_CACHE
     now = time.monotonic()
-    if now - _LIVE_PID_CACHE[0] < 1.0:
-        return _LIVE_PID_CACHE[1]
-    pids = find_touchpad_live_filter_pids()
-    _LIVE_PID_CACHE = (now, pids)
+    cache_key = 1 if quick else 0
+    cached_at, cached_quick, cached_pids = _LIVE_PID_CACHE
+    if cached_quick == cache_key and now - cached_at < 3.0:
+        return cached_pids
+    pids = find_touchpad_live_filter_pids(quick=quick)
+    _LIVE_PID_CACHE = (now, cache_key, pids)
     return pids
 
 
 def _invalidate_live_pid_cache() -> None:
     global _LIVE_PID_CACHE
-    _LIVE_PID_CACHE = (0.0, [])
+    _LIVE_PID_CACHE = (0.0, -1, [])
 
 
-_LIVE_PID_CACHE: tuple[float, list[int]] = (0.0, [])
+_LIVE_PID_CACHE: tuple[float, int, list[int]] = (0.0, -1, [])
 
 
 def _stop_live_via_cli(*, force: bool = False) -> bool:
@@ -252,6 +254,7 @@ class TouchpadTuner(QMainWindow):
         self._live_restart_timer.setSingleShot(True)
         self._live_restart_timer.setInterval(450)
         self._live_restart_timer.timeout.connect(self._restart_live_if_running)
+        self._adaptive_stats_cache: tuple[float, str, str] = (0.0, "", "")
         self._shared = {
             "lock": threading.Lock(),
             "frames_in": 0,
@@ -412,7 +415,7 @@ class TouchpadTuner(QMainWindow):
         self.btn_reset.clicked.connect(self.reset_stats)
 
         self._timer = QTimer(self)
-        self._timer.setInterval(800)
+        self._timer.setInterval(2500)
         self._timer.timeout.connect(self._refresh_stats)
         self._timer.start()
 
@@ -710,6 +713,28 @@ class TouchpadTuner(QMainWindow):
         if self._worker is not None:
             self._worker.pipe = self._pipe
 
+    def _update_stats_timer(self) -> None:
+        """Faster refresh only while the local monitor worker is running."""
+        want = 1000 if self._worker and self._worker.is_alive() else 2500
+        if self._timer.interval() != want:
+            self._timer.setInterval(want)
+
+    def _adaptive_stats_line(self, info: TouchpadInfo, prof: str) -> str:
+        if prof != FILTER_PROFILE_ADAPTIVE:
+            return ""
+        now = time.monotonic()
+        key = info.key
+        cached_at, cached_key, line = self._adaptive_stats_cache
+        if cached_key == key and now - cached_at < 5.0:
+            return line
+        st = load_adaptive_state(key)
+        line = (
+            f"\nadaptive: baseline_x={st.baseline_x:.1f} "
+            f"baseline_y={st.baseline_y:.1f} samples={st.samples}"
+        )
+        self._adaptive_stats_cache = (now, key, line)
+        return line
+
     def reset_stats(self) -> None:
         with self._shared["lock"]:
             self._shared["frames_in"] = 0
@@ -723,6 +748,7 @@ class TouchpadTuner(QMainWindow):
             filt.stats.dropped_frames = 0
 
     def _refresh_stats(self) -> None:
+        self._update_stats_timer()
         with self._shared["lock"]:
             fin = self._shared["frames_in"]
             fout = self._shared["frames_out"]
@@ -730,8 +756,9 @@ class TouchpadTuner(QMainWindow):
             err = self._shared["error"]
         drop = max(0, fin - fout)
         pct = (100.0 * drop / fin) if fin else 0.0
-        live = "live" if self._is_live_running() else "idle"
-        live_pid = read_pidfile(TOUCHPAD_PIDFILE, clear_stale=True)
+        live_running = self._is_live_running()
+        live = "live" if live_running else "idle"
+        live_pid = self._live_orphan_pids[0] if self._live_orphan_pids else None
         live_extra = f" pid={live_pid}" if live_pid else ""
         mon = "monitor" if self._worker and self._worker.is_alive() else "off"
         key = self._current_key or "—"
@@ -740,12 +767,7 @@ class TouchpadTuner(QMainWindow):
         info = self._current_info()
         if info is not None:
             prof = filter_profile_for_device(self._cfg, info, path=info.path)
-            if prof == FILTER_PROFILE_ADAPTIVE:
-                st = load_adaptive_state(info.key)
-                adapt_line = (
-                    f"\nadaptive: baseline_x={st.baseline_x:.1f} "
-                    f"baseline_y={st.baseline_y:.1f} samples={st.samples}"
-                )
+            adapt_line = self._adaptive_stats_line(info, prof)
         text = (
             f"device key: {key}  profile={prof}\n"
             f"mode: monitor={mon}  live={live}{live_extra}\n"
@@ -757,7 +779,7 @@ class TouchpadTuner(QMainWindow):
         if err:
             text += f"\nerror: {err}"
         self.stats.setText(text)
-        self._sync_live_button()
+        self._sync_live_button(live_running)
 
     def _adopt_existing_live(self) -> None:
         """If a live filter is already running, track it so the button shows Stop."""
@@ -769,12 +791,15 @@ class TouchpadTuner(QMainWindow):
     def _is_live_running(self) -> bool:
         if self._live_proc is not None and self._live_proc.poll() is None:
             return True
-        # Prefer pidfile (clears stale); fall back to /proc.
-        self._live_orphan_pids = [p for p in _live_filter_pids() if pid_alive(p)]
+        self._live_orphan_pids = [
+            p for p in _live_filter_pids(quick=True) if pid_alive(p)
+        ]
         return bool(self._live_orphan_pids)
 
-    def _sync_live_button(self) -> None:
-        if self._is_live_running():
+    def _sync_live_button(self, running: bool | None = None) -> None:
+        if running is None:
+            running = self._is_live_running()
+        if running:
             self.btn_live.setText("Stop live filter")
         else:
             self.btn_live.setText("Start live filter")
@@ -1135,6 +1160,9 @@ class TouchpadTuner(QMainWindow):
 
         _stop_live_via_cli(force=force)
         _invalidate_live_pid_cache()
+        for pid in _live_filter_pids(quick=False):
+            if pid_alive(pid):
+                _signal_live_pid(pid, signal.SIGKILL if force else signal.SIGINT)
         read_pidfile(TOUCHPAD_PIDFILE, clear_stale=True)
         self._live_orphan_pids = []
         self._sync_live_button()

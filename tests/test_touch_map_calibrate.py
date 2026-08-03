@@ -16,6 +16,7 @@ if str(ROOT) not in sys.path:
 from zenbook_kb.touch_map import (  # noqa: E402
     MapRule,
     UX8406_PRESET,
+    activate_kwin_live_filter,
     auto_rules,
     preset_rules_for_machine,
     restore_kwin_touchpad_after_filter,
@@ -76,6 +77,25 @@ class TestTouchMapPreset(unittest.TestCase):
             auto = auto_rules(devices=[], outputs=[])
         self.assertEqual(len(auto), 2)
         self.assertIsInstance(auto[0], MapRule)
+
+
+class TestKWinLiveFilterActivate(unittest.TestCase):
+    def test_activate_enables_filter_disables_physical(self) -> None:
+        with mock.patch("zenbook_kb.touch_map.kwin_available", return_value=True), mock.patch(
+            "zenbook_kb.touch_map.find_kwin_filter_sysname",
+            return_value="event15",
+        ), mock.patch(
+            "zenbook_kb.touch_map.set_device_enabled"
+        ) as set_en:
+            ok = activate_kwin_live_filter(
+                touchpad_path=Path("/dev/input/event6"),
+                name_hint="GDX1515:00 27C6:01F4 Touchpad",
+                filter_sysname="event15",
+            )
+        self.assertTrue(ok)
+        calls = [c.args for c in set_en.call_args_list]
+        self.assertIn(("event15", True), calls)
+        self.assertIn(("event6", False), calls)
 
 
 class TestKWinTouchpadRestore(unittest.TestCase):

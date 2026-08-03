@@ -15,7 +15,9 @@ KCMUtils.ScrollViewKCM {
 
     readonly property var tabPages: {
         var pages = [
-            { title: i18n("Overview"), source: "OverviewPage.qml" }
+            { title: i18n("Overview"), source: "OverviewPage.qml" },
+            { title: i18n("Profiles"), source: "ProfilesPage.qml" },
+            { title: i18n("Touchpad"), source: "TouchpadPage.qml" }
         ]
         if (kcm.showDisplaysTab) {
             pages.push({ title: i18n("Displays"), source: "DisplaysPage.qml" })

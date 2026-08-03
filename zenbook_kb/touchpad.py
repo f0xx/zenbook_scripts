@@ -1923,6 +1923,7 @@ class UInputProxy:
             time.sleep(0.05)
             self._fd = ufd
             self._filter_sysname = self._detect_filter_sysname()
+            self._activate_kwin_live_filter(self.source, vname)
         finally:
             os.close(src)
 
@@ -1963,6 +1964,19 @@ class UInputProxy:
         if sys_name.is_file():
             return sys_name.read_text(encoding="utf-8", errors="replace").strip()
         return None
+
+    def _activate_kwin_live_filter(self, source: Path, vname: str) -> None:
+        try:
+            from zenbook_kb.touch_map import activate_kwin_live_filter
+
+            if activate_kwin_live_filter(
+                touchpad_path=source,
+                name_hint=vname.replace(" (filter)", "").strip() or None,
+                filter_sysname=self._filter_sysname,
+            ):
+                log.info("activated compositor live-filter pointer for %s", source)
+        except Exception:
+            log.debug("KWin live-filter activation skipped", exc_info=True)
 
     def _release_kwin_before_destroy(
         self, source: Path, name_hint: str | None

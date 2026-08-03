@@ -302,6 +302,22 @@ def install_kb_brightness_tree(script_dir: Path) -> None:
         dest = zb_paths.bin_dir() / "platform-touch-map"
         _sudo(["cp", str(touch_map), str(dest)])
         _sudo(["chmod", "a+x", str(dest)])
+    night_mode = script_dir / "bin" / "platform-night-mode"
+    if night_mode.is_file():
+        dest = zb_paths.bin_dir() / "platform-night-mode"
+        _sudo(["cp", str(night_mode), str(dest)])
+        _sudo(["chmod", "a+x", str(dest)])
+    platform_profiles = script_dir / "bin" / "platform-profiles"
+    if platform_profiles.is_file():
+        dest = zb_paths.bin_dir() / "platform-profiles"
+        _sudo(["cp", str(platform_profiles), str(dest)])
+        _sudo(["chmod", "a+x", str(dest)])
+    example_night = script_dir / "night-mode.json.example"
+    if example_night.is_file():
+        _sudo(["cp", str(example_night), str(INSTALL_SHARE / "night-mode.json.example")])
+    example_profiles = script_dir / "profiles.json.example"
+    if example_profiles.is_file():
+        _sudo(["cp", str(example_profiles), str(INSTALL_SHARE / "profiles.json.example")])
     fan_hook = script_dir / "contrib" / "openrc" / "zenbook-fan-control-hook.sh"
     if fan_hook.is_file():
         _sudo(["cp", str(fan_hook), str(INSTALL_BIN_FAN_HOOK)])

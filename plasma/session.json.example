@@ -20,6 +20,10 @@
         "auto_replace": false,
         "qsg_thread_threshold": 32
       }
+    },
+    "night": {
+      "on_lid_close": ["brightness_save", "night_enter"],
+      "on_lid_open": ["night_exit", "brightness_restore"]
     }
   }
 }

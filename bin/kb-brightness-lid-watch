@@ -60,6 +60,17 @@ _apply() {
 	esac
 }
 
+_night_mode() {
+	local state="$1"
+	local bin="${PLATFORM_NIGHT_MODE_BIN:-/usr/bin/platform-night-mode}"
+	[[ -x "${bin}" ]] || bin="/usr/local/bin/platform-night-mode"
+	[[ -x "${bin}" ]] || return 0
+	case "${state}" in
+		true)  "${bin}" lid-close ;;
+		false) "${bin}" lid-open ;;
+	esac
+}
+
 if ! busctl status "${BUS}" >/dev/null 2>&1; then
 	echo "logind (${BUS}) not available" >&2
 	exit 1
@@ -75,6 +86,7 @@ while true; do
 		continue
 	fi
 	if _apply "${current}"; then
+		_night_mode "${current}" || true
 		logger -t zenbook-kb-brightness "lid-watch: LidClosed=${current}"
 	else
 		logger -t zenbook-kb-brightness "lid-watch: action failed for LidClosed=${current}"

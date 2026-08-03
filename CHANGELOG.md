@@ -27,6 +27,22 @@ Gentoo-friendly naming where needed (`v0.0.1_hf1` → PV `0.0.1_p1`,
 - **Adaptive filter profiles** (`filter_profile`: `default` | `adaptive`):
   `adaptive_matrix` plugin with online baseline learning, spike rejection, and
   persisted state (`zenbook_kb/touchpad_adaptive.py`).
+- **Closed-lid night mode (scaffold):** `platform-night-mode` snapshots fan/thermal
+  state, applies `night` profile (quiet fan, min CPU), restores on lid open;
+  elogind drop-in for AC lid-ignore; wired from `kb-brightness-lid-watch`.
+- **User profiles GUI (scaffold):** `~/.config/zenbook-scripts/profiles.json`,
+  `platform-profiles` CLI, KCM **Profiles** tab (schedules/triggers/night toggles),
+  tray left-click → KCM, profile submenu + Plasma notifications toggle.
+- **Docs:** touchpad KWin stuck-filter manual recovery; Gentoo resource-pressure
+  guide (`docs/ops/resource-pressure.md`, `contrib/cgroups/README.md`).
+
+### Fixed (continued)
+
+- **Live filter + KWin:** enable compositor `(filter)` pointer on filter start
+  (`activate_kwin_live_filter`) — fixes cursor blackout after stop/restart cycle.
+- **platform-touchpad-gui CPU:** status timer no longer walks all of `/proc`
+  every tick (was ~0.2s × 4/s on loaded hosts); pidfile-only quick path + 2.5s
+  idle refresh.
 
 - **Duo touch→output map:** `platform-touch-map` sets KWin `outputName`
   (UX8406 ELAN9009→eDP-1, ELAN9008→eDP-2); hooked from duo-dock undock +

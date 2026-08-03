@@ -30,6 +30,12 @@ class ZenbookPlatform : public KQuickConfigModule
     Q_PROPERTY(int qsgThreadThreshold READ qsgThreadThreshold WRITE setQsgThreadThreshold NOTIFY sessionChanged)
     Q_PROPERTY(bool sessionDirty READ sessionDirty NOTIFY sessionDirtyChanged)
 
+    Q_PROPERTY(QString profilesConfigPath READ profilesConfigPath CONSTANT)
+    Q_PROPERTY(QString profilesJson READ profilesJson WRITE setProfilesJson NOTIFY profilesChanged)
+    Q_PROPERTY(bool profilesDirty READ profilesDirty NOTIFY profilesDirtyChanged)
+
+    Q_PROPERTY(QString touchpadStatusText READ touchpadStatusText NOTIFY touchpadStatusTextChanged)
+
     Q_PROPERTY(QString version READ version CONSTANT)
     Q_PROPERTY(QString documentationUrl READ documentationUrl CONSTANT)
 
@@ -104,6 +110,19 @@ public:
         return m_sessionDirty;
     }
 
+    QString profilesConfigPath() const;
+    QString profilesJson() const;
+    bool profilesDirty() const
+    {
+        return m_profilesDirty;
+    }
+    QString touchpadStatusText() const
+    {
+        return m_touchpadStatusText;
+    }
+
+    void setProfilesJson(const QString &json);
+
     QString version() const;
     QString documentationUrl() const;
 
@@ -124,6 +143,12 @@ public:
     Q_INVOKABLE void loadSession();
     Q_INVOKABLE bool saveSession();
     Q_INVOKABLE void resetSessionDefaults();
+    Q_INVOKABLE void loadProfiles();
+    Q_INVOKABLE bool saveProfiles();
+    Q_INVOKABLE void resetProfilesDefaults();
+    Q_INVOKABLE void refreshTouchpadStatus();
+    Q_INVOKABLE void openTouchpadTuner();
+    Q_INVOKABLE void applyActiveProfile();
 
 Q_SIGNALS:
     void probeTextChanged();
@@ -134,6 +159,9 @@ Q_SIGNALS:
     void busyChanged();
     void sessionChanged();
     void sessionDirtyChanged();
+    void profilesChanged();
+    void profilesDirtyChanged();
+    void touchpadStatusTextChanged();
 
 private Q_SLOTS:
     void onProcessFinished(int exitCode, QProcess::ExitStatus status);
@@ -148,6 +176,8 @@ private:
     QJsonObject buildSessionObject() const;
     QJsonObject defaultProfileObject() const;
     void markSessionDirty();
+    void markProfilesDirty();
+    QJsonObject defaultProfilesObject() const;
 
     QString m_probeText;
     QString m_duoStatusText;
@@ -167,11 +197,16 @@ private:
     int m_qsgThreadThreshold = 32;
     bool m_sessionDirty = false;
 
+    QJsonObject m_profilesRoot;
+    bool m_profilesDirty = false;
+    QString m_touchpadStatusText;
+
     QProcess *m_process = nullptr;
     enum class OutputTarget {
         Probe,
         DuoStatus,
         ScreenpadStatus,
+        TouchpadStatus,
         Command,
     };
     OutputTarget m_outputTarget = OutputTarget::Command;

@@ -90,9 +90,14 @@ def is_touchpad_live_filter_pid(pid: int) -> bool:
     return "run" in parts
 
 
-def find_touchpad_live_filter_pids() -> list[int]:
-    """Live ``platform-touchpad run`` PIDs — pidfile hint + /proc scan, cmdline verified."""
+def find_touchpad_live_filter_pids(*, quick: bool = False) -> list[int]:
+    """Live ``platform-touchpad run`` PIDs.
+
+    ``quick=True`` (GUI polling): pidfile + cmdline verify only — no /proc scan.
+    ``quick=False`` (stop/orphan hunt): also walk ``/proc`` for stray runners.
+    """
     found: set[int] = set()
+    pf_pid: int | None = None
     try:
         raw = TOUCHPAD_PIDFILE.read_text(encoding="utf-8").strip()
         pf_pid = int(raw.split()[0]) if raw else None
@@ -100,6 +105,8 @@ def find_touchpad_live_filter_pids() -> list[int]:
         pf_pid = None
     if pf_pid is not None and is_touchpad_live_filter_pid(pf_pid):
         found.add(pf_pid)
+    if quick:
+        return sorted(found)
     try:
         for entry in Path("/proc").iterdir():
             if not entry.name.isdigit():
@@ -107,6 +114,8 @@ def find_touchpad_live_filter_pids() -> list[int]:
             try:
                 pid = int(entry.name)
             except ValueError:
+                continue
+            if pid in found:
                 continue
             if is_touchpad_live_filter_pid(pid):
                 found.add(pid)

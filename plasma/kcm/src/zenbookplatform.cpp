@@ -73,7 +73,9 @@ ZenbookPlatform::ZenbookPlatform(QObject *parent, const KPluginMetaData &data)
 
     detectHardware();
     loadSession();
+    loadProfiles();
     refreshProbe();
+    refreshTouchpadStatus();
     if (m_hasDuoDock) {
         refreshDuoStatus();
     }
@@ -170,6 +172,8 @@ void ZenbookPlatform::runScript(const QString &name, const QStringList &args, co
         m_outputTarget = OutputTarget::DuoStatus;
     } else if (name == QLatin1String("screenpad") && args.value(0) == QLatin1String("status")) {
         m_outputTarget = OutputTarget::ScreenpadStatus;
+    } else if (name == QLatin1String("platform-touchpad") && args.value(0) == QLatin1String("status")) {
+        m_outputTarget = OutputTarget::TouchpadStatus;
     } else {
         m_outputTarget = OutputTarget::Command;
     }
@@ -210,6 +214,10 @@ void ZenbookPlatform::onProcessFinished(int exitCode, QProcess::ExitStatus statu
     case OutputTarget::ScreenpadStatus:
         m_screenpadStatusText = combined.trimmed();
         Q_EMIT screenpadStatusTextChanged();
+        break;
+    case OutputTarget::TouchpadStatus:
+        m_touchpadStatusText = combined.trimmed();
+        Q_EMIT touchpadStatusTextChanged();
         break;
     case OutputTarget::Command:
         m_lastCommandOutput = combined.trimmed();
@@ -448,6 +456,152 @@ void ZenbookPlatform::setQsgThreadThreshold(int value)
     m_qsgThreadThreshold = value;
     Q_EMIT sessionChanged();
     markSessionDirty();
+}
+
+QString ZenbookPlatform::profilesConfigPath() const
+{
+    const QString configDir =
+        QStandardPaths::writableLocation(QStandardPaths::GenericConfigLocation) + QStringLiteral("/zenbook-scripts");
+    return configDir + QStringLiteral("/profiles.json");
+}
+
+QJsonObject ZenbookPlatform::defaultProfilesObject() const
+{
+    const QString examplePaths[] = {
+        QStringLiteral("/usr/share/zenbook-scripts/profiles.json.example"),
+        QStringLiteral("/usr/local/share/zenbook-scripts/profiles.json.example"),
+        QStringLiteral(ZENBOOK_SCRIPTS_ROOT) + QStringLiteral("/profiles.json.example"),
+    };
+    for (const QString &path : examplePaths) {
+        QFile file(path);
+        if (!file.open(QIODevice::ReadOnly)) {
+            continue;
+        }
+        QJsonParseError parseError;
+        const QJsonDocument doc = QJsonDocument::fromJson(file.readAll(), &parseError);
+        if (parseError.error == QJsonParseError::NoError && doc.isObject()) {
+            return doc.object();
+        }
+    }
+    return QJsonObject{
+        {QStringLiteral("version"), 1},
+        {QStringLiteral("active_mode"), QStringLiteral("auto")},
+        {QStringLiteral("notifications"), QJsonObject{
+            {QStringLiteral("enabled"), true},
+            {QStringLiteral("on_mode_switch"), true},
+        }},
+    };
+}
+
+void ZenbookPlatform::loadProfiles()
+{
+    const QString path = profilesConfigPath();
+    QFile file(path);
+    if (!file.exists()) {
+        m_profilesRoot = defaultProfilesObject();
+        m_profilesDirty = false;
+        Q_EMIT profilesChanged();
+        Q_EMIT profilesDirtyChanged();
+        return;
+    }
+    if (!file.open(QIODevice::ReadOnly)) {
+        setLastError(i18n("Could not read %1", path));
+        m_profilesRoot = defaultProfilesObject();
+        Q_EMIT profilesChanged();
+        return;
+    }
+    QJsonParseError parseError;
+    const QJsonDocument doc = QJsonDocument::fromJson(file.readAll(), &parseError);
+    if (parseError.error != QJsonParseError::NoError || !doc.isObject()) {
+        setLastError(i18n("Invalid profiles JSON in %1: %2", path, parseError.errorString()));
+        m_profilesRoot = defaultProfilesObject();
+    } else {
+        m_profilesRoot = doc.object();
+    }
+    m_profilesDirty = false;
+    Q_EMIT profilesChanged();
+    Q_EMIT profilesDirtyChanged();
+}
+
+QString ZenbookPlatform::profilesJson() const
+{
+    return QString::fromUtf8(QJsonDocument(m_profilesRoot).toJson(QJsonDocument::Indented));
+}
+
+void ZenbookPlatform::setProfilesJson(const QString &json)
+{
+    QJsonParseError parseError;
+    const QJsonDocument doc = QJsonDocument::fromJson(json.toUtf8(), &parseError);
+    if (parseError.error != QJsonParseError::NoError || !doc.isObject()) {
+        setLastError(i18n("Invalid profiles JSON: %1", parseError.errorString()));
+        return;
+    }
+    m_profilesRoot = doc.object();
+    Q_EMIT profilesChanged();
+    markProfilesDirty();
+}
+
+bool ZenbookPlatform::saveProfiles()
+{
+    const QString path = profilesConfigPath();
+    QDir().mkpath(QFileInfo(path).absolutePath());
+    QFile file(path);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+        setLastError(i18n("Could not write %1", path));
+        return false;
+    }
+    file.write(QJsonDocument(m_profilesRoot).toJson(QJsonDocument::Indented));
+    file.close();
+    m_profilesDirty = false;
+    Q_EMIT profilesDirtyChanged();
+    setLastError({});
+    return true;
+}
+
+void ZenbookPlatform::resetProfilesDefaults()
+{
+    m_profilesRoot = defaultProfilesObject();
+    m_profilesDirty = true;
+    Q_EMIT profilesChanged();
+    Q_EMIT profilesDirtyChanged();
+}
+
+void ZenbookPlatform::markProfilesDirty()
+{
+    if (m_profilesDirty) {
+        return;
+    }
+    m_profilesDirty = true;
+    Q_EMIT profilesDirtyChanged();
+}
+
+void ZenbookPlatform::refreshTouchpadStatus()
+{
+    runScript(QStringLiteral("platform-touchpad"), {QStringLiteral("status")}, QStringLiteral("touchpadStatusText"));
+}
+
+void ZenbookPlatform::openTouchpadTuner()
+{
+    const QString gui = resolveScript(QStringLiteral("platform-touchpad-gui"));
+    if (gui.isEmpty()) {
+        setLastError(i18n("platform-touchpad-gui not found"));
+        return;
+    }
+    if (!QProcess::startDetached(gui, {})) {
+        setLastError(i18n("Could not start platform-touchpad-gui"));
+    }
+}
+
+void ZenbookPlatform::applyActiveProfile()
+{
+    saveProfiles();
+    const QString mode = m_profilesRoot.value(QStringLiteral("active_mode")).toString(QStringLiteral("auto"));
+    const QString helper = resolveScript(QStringLiteral("platform-profiles"));
+    if (helper.isEmpty()) {
+        setLastError(i18n("platform-profiles not found"));
+        return;
+    }
+    runScript(helper, {QStringLiteral("set"), mode}, QStringLiteral("lastCommandOutput"));
 }
 
 #include "zenbookplatform.moc"

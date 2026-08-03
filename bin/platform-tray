@@ -395,6 +395,7 @@ class PlatformTray(QWidget):
         self.fan = _which("platform-fan", "kb-fan")
         self.fan_control = _which("platform-fan-control", "kb-fan-control")
         self.profile = _which("kb-platform-profile")
+        self.profiles = _which("platform-profiles")
         self.probe = _which("platform-probe")
         self.touchpad_gui = _which("platform-touchpad-gui")
         self.store = MetricsStore()
@@ -417,19 +418,24 @@ class PlatformTray(QWidget):
 
         pp = self.report.by_id("platform_profile")
         fan_feat = self.report.by_id("fan_pwm")
-        pp_ok = bool(pp and pp.supported)
         fan_ok = bool(fan_feat and fan_feat.supported)
 
-        for name in ("quiet", "balanced", "performance"):
-            act = QAction(f"Profile: {name}", self)
-            act.setEnabled(pp_ok and bool(self.profile))
-            act.triggered.connect(lambda _c=False, n=name: self._set_profile(n))
+        kcm_act = QAction("Open Zenbook settings (KCM)…", self)
+        kcm_act.triggered.connect(self._open_kcm)
+        self.menu.addAction(kcm_act)
+        self.menu.addSeparator()
+
+        for mode, label in (
+            ("auto", "Profile: auto (adaptive)"),
+            ("quiet", "Profile: quiet"),
+            ("balanced", "Profile: balanced"),
+            ("performance", "Profile: performance"),
+            ("night", "Profile: night"),
+        ):
+            act = QAction(label, self)
+            act.setEnabled(bool(self.profiles) or mode in ("auto", "quiet", "balanced", "performance"))
+            act.triggered.connect(lambda _c=False, m=mode: self._set_user_profile(m))
             self.menu.addAction(act)
-        adaptive = QAction("Profile: auto (adaptive)", self)
-        adaptive.setEnabled(bool(self.fan_control) or bool(self.fan))
-        adaptive.setToolTip("Resume load/temp rules (clears manual lock)")
-        adaptive.triggered.connect(self._set_adaptive)
-        self.menu.addAction(adaptive)
 
         self.menu.addSeparator()
         auto = QAction("Fans: auto", self)
@@ -468,15 +474,77 @@ class PlatformTray(QWidget):
         self.menu.addAction(quit_act)
 
         self.tray.setContextMenu(self.menu)
+        self.tray.activated.connect(self._on_tray_activated)
         self.tray.show()
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.refresh_status)
         self.timer.start(5000)
         self.refresh_status()
 
+    def _on_tray_activated(self, reason: QSystemTrayIcon.ActivationReason) -> None:
+        if reason == QSystemTrayIcon.ActivationReason.Trigger:
+            self._open_kcm()
+
+    def _open_kcm(self) -> None:
+        for argv in (
+            ["kcmshell6", "kcm_zenbookplatform"],
+            ["systemsettings", "kcm_zenbookplatform"],
+        ):
+            if shutil.which(argv[0]):
+                try:
+                    subprocess.Popen(argv, start_new_session=True)
+                    return
+                except OSError:
+                    pass
+        self.tray.showMessage(
+            "platform-tray",
+            "KCM not found — build/install plasma/kcm (kcm_zenbookplatform)",
+            QSystemTrayIcon.MessageIcon.Warning,
+            5000,
+        )
+
+    def _notify_mode(self, title: str, body: str) -> None:
+        try:
+            from zenbook_kb.notify import notify_mode_switch
+
+            if notify_mode_switch(title, body):
+                return
+        except Exception:
+            pass
+        self.tray.showMessage(title, body, QSystemTrayIcon.MessageIcon.Information, 3500)
+
+    def _set_user_profile(self, mode: str) -> None:
+        if self.profiles:
+            r = subprocess.run(
+                [self.profiles, "set", mode],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=15,
+            )
+            if r.returncode != 0:
+                self.tray.showMessage(
+                    "platform-tray",
+                    (r.stderr or r.stdout or f"set {mode} failed")[:200],
+                    QSystemTrayIcon.MessageIcon.Warning,
+                    5000,
+                )
+            else:
+                self._notify_mode("Zenbook profile", mode)
+        elif mode == "auto":
+            self._set_adaptive()
+        elif self.profile and mode in ("quiet", "balanced", "performance"):
+            self._set_profile(mode)
+        else:
+            return
+        self.store.add_event("mode", "profile", None, f"user:{mode}")
+        self.store.sample_now()
+        self.refresh_status()
+
     def _set_profile(self, name: str) -> None:
         if self.profile:
             _run([self.profile, "set", name])
+        self._notify_mode("Zenbook profile", name)
         self.store.add_event("mode", "profile", None, f"user:{name}")
         self.store.sample_now()
         self.refresh_status()
@@ -500,7 +568,8 @@ class PlatformTray(QWidget):
                 5000,
             )
         else:
-            self.store.add_event("mode", "control", None, "user:adaptive")
+            self._notify_mode("Zenbook profile", "auto (adaptive)")
+        self.store.add_event("mode", "control", None, "user:adaptive")
         self.store.sample_now()
         self.refresh_status()
 
@@ -626,17 +695,21 @@ class PlatformTray(QWidget):
     def refresh_status(self) -> None:
         self.store.sample_now()
         bits: list[str] = []
-        mode_path = Path("/var/lib/zenbook-scripts/fan-control-mode")
-        try:
-            mode = mode_path.read_text(encoding="utf-8").strip().lower()
-        except OSError:
-            mode = "auto"
-        if mode == "manual":
-            bits.append("manual")
-        else:
-            bits.append("adaptive")
-        if self.profile:
-            bits.append(_run([self.profile, "get"]) or "?")
+        if self.profiles:
+            line = _run([self.profiles, "status"])
+            for part in line.split():
+                if part.startswith("active:"):
+                    bits.append(part.split(":", 1)[-1])
+                    break
+        if not bits:
+            mode_path = Path("/var/lib/zenbook-scripts/fan-control-mode")
+            try:
+                mode = mode_path.read_text(encoding="utf-8").strip().lower()
+            except OSError:
+                mode = "auto"
+            bits.append("manual" if mode == "manual" else "adaptive")
+            if self.profile:
+                bits.append(_run([self.profile, "get"]) or "?")
         if self.fan:
             rpm = _run([self.fan, "rpm"])
             if rpm.isdigit():

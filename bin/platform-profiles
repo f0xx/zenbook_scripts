@@ -1,0 +1,193 @@
+#!/usr/bin/env python3
+"""User power/thermal profiles — load, save, apply, status (tray + KCM).
+
+Config: ~/.config/zenbook-scripts/profiles.json
+
+Examples:
+  platform-profiles status
+  platform-profiles show
+  platform-profiles set auto|quiet|balanced|performance|night
+  platform-profiles save -
+  platform-profiles reset quiet
+  platform-profiles reset-all
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from pathlib import Path
+
+_SCRIPT_DIR = Path(__file__).resolve().parent
+_REPO_ROOT = _SCRIPT_DIR.parent
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
+from zenbook_kb.notify import notify_mode_switch  # noqa: E402
+from zenbook_kb.user_profiles import (  # noqa: E402
+    BUILTIN_MODES,
+    load,
+    mode_summary,
+    reset_all,
+    reset_mode,
+    save,
+    set_active_mode,
+    status_lines,
+    user_config_path,
+)
+
+
+def _apply_mode(mode: str) -> bool:
+    """Best-effort hardware apply for manual modes."""
+    import shutil
+    import subprocess
+
+    doc = load()
+    m = doc["modes"].get(mode) or {}
+    if mode == "auto":
+        for argv in (
+            ["platform-fan-control", "mode", "auto"],
+            ["platform-fan", "adaptive"],
+        ):
+            bin_ = shutil.which(argv[0])
+            if not bin_:
+                continue
+            for prefix in (["sudo", "-n"], []):
+                try:
+                    r = subprocess.run(
+                        [*prefix, bin_, *argv[1:]],
+                        capture_output=True,
+                        text=True,
+                        timeout=12,
+                        check=False,
+                    )
+                    if r.returncode == 0:
+                        return True
+                except OSError:
+                    pass
+        return False
+    if mode == "night":
+        if not m.get("enabled"):
+            return True
+        from zenbook_kb.night_mode import enter_night, load_night_config
+
+        nc = load_night_config()
+        nc["enabled"] = True
+        return enter_night(nc, force=True)
+    fan_profile = m.get("fan_profile")
+    if not fan_profile:
+        return False
+    cli = shutil.which("platform-fan-control")
+    if not cli:
+        return False
+    for prefix in (["sudo", "-n"], []):
+        try:
+            r = subprocess.run(
+                [*prefix, cli, "apply", str(fan_profile)],
+                capture_output=True,
+                text=True,
+                timeout=12,
+                check=False,
+            )
+            if r.returncode == 0:
+                pp = shutil.which("kb-platform-profile")
+                map_ = {
+                    "powersave": "quiet",
+                    "balanced": "balanced",
+                    "performance": "performance",
+                }
+                if pp and fan_profile in map_:
+                    subprocess.run(
+                        [pp, "set", map_[fan_profile]],
+                        capture_output=True,
+                        timeout=8,
+                        check=False,
+                    )
+                return True
+        except OSError:
+            pass
+    return False
+
+
+def cmd_status(_: argparse.Namespace) -> int:
+    for line in status_lines():
+        print(line)
+    return 0
+
+
+def cmd_show(args: argparse.Namespace) -> int:
+    doc = load()
+    if args.compact:
+        print(json.dumps(doc, separators=(",", ":")))
+    else:
+        print(json.dumps(doc, indent=2))
+    return 0
+
+
+def cmd_set(args: argparse.Namespace) -> int:
+    mode = args.mode
+    doc = set_active_mode(mode)
+    save(doc)
+    applied = _apply_mode(mode)
+    summary = mode_summary(doc)
+    notify_mode_switch("Zenbook profile", summary, cfg=doc)
+    print(f"active_mode={mode} ({summary}) apply={'ok' if applied else 'partial'}")
+    return 0 if applied or mode == "auto" else 1
+
+
+def cmd_save(args: argparse.Namespace) -> int:
+    raw = sys.stdin.read() if args.path == "-" else Path(args.path).read_text(encoding="utf-8")
+    doc = json.loads(raw)
+    path = save(doc)
+    print(path)
+    return 0
+
+
+def cmd_reset(args: argparse.Namespace) -> int:
+    if args.all:
+        doc = reset_all(load())
+    elif args.mode:
+        doc = reset_mode(args.mode, load())
+    else:
+        print("specify mode name or --all", file=sys.stderr)
+        return 2
+    save(doc)
+    print(f"reset {'all' if args.all else args.mode}")
+    return 0
+
+
+def main() -> int:
+    p = argparse.ArgumentParser(description=__doc__)
+    sub = p.add_subparsers(dest="cmd", required=True)
+
+    sub.add_parser("status", help="one-line summary").set_defaults(func=cmd_status)
+
+    sp = sub.add_parser("show", help="dump JSON")
+    sp.add_argument("--compact", action="store_true")
+    sp.set_defaults(func=cmd_show)
+
+    sp = sub.add_parser("set", help="activate mode")
+    sp.add_argument("mode", choices=BUILTIN_MODES)
+    sp.set_defaults(func=cmd_set)
+
+    sp = sub.add_parser("save", help="write JSON from file or stdin (-)")
+    sp.add_argument("path", nargs="?", default="-")
+    sp.set_defaults(func=cmd_save)
+
+    sp = sub.add_parser("reset", help="reset mode defaults")
+    sp.add_argument("mode", nargs="?", choices=BUILTIN_MODES)
+    sp.add_argument("--all", action="store_true")
+    sp.set_defaults(func=cmd_reset)
+
+    sub.add_parser("path", help="print config path")
+
+    args = p.parse_args()
+    if args.cmd == "path":
+        print(user_config_path())
+        return 0
+    return int(args.func(args))
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -29,7 +29,7 @@ Status legend: **done** · **now** · **next** · **later**
 | Gentoo KCM via `USE=plasma` | **done** (tree) | emerge builds/installs KCM; Displays tab gated |
 | Touchpad GUI calibrate (capture → knobs) | **now** | Guided type/palm/mixed shipped; BT transport profiles + field table remain |
 | UX8406 dual-eDP touch (Plasma/Wayland) | **now** | **`platform-touch-map`** field-validated (ELAN9008→top, ELAN9009→bottom); commit + docs |
-| Closed-lid **night** profile (AC, no suspend) | **likely 0.0.4** | Optional — intercept lid→suspend before Plasma/PowerDevil/elogind; see §4.6 |
+| Closed-lid **night** profile (AC, no suspend) | **scaffold (0.0.4)** | `platform-night-mode` + elogind drop-in; see §4.6 |
 | UX5400 GDX1515 cursor jumps | **done** | PR [#13](https://github.com/f0xx/zenbook_scripts/pull/13) — live filter + grab safety; was mislabeled “WM/DE” |
 | UX581 lightbar (HID `0b05:0124`) | **later** | **blocked on hardware**; side branch `zenbook_ux581` |
 | UX5400 AccelSpeed polish | **later** | same pipeline; lower priority than UX8406 |
@@ -46,13 +46,17 @@ Status legend: **done** · **now** · **next** · **later**
 | 4.3 | **Dual-eDP touch map** | **field OK** | `platform-touch-map` (KWin `outputName` + `kcminputrc` `OutputUuid`); preset corrected on UX8406. Tag after commit. |
 | 4.4 | **Fan manual lock** | **done (tree)** | Tray/CLI sticky profile + `fan-control-mode`; validated UX5400. |
 | 4.5 | **BT Fn-row + hotkeys robustness** | **done (tree)** | Vendor `0x3d`→F4; hotkeys survives BT↔dock transition; pidfile for non-root OpenRC. |
-| 4.6 | **Closed-lid night (AC server)** | **likely, not mandatory** | Lid down ≠ suspend on AC: blank displays, quiet fan, min CPU, network stays up; restore on lid open. See below. |
+| 4.6 | **Closed-lid night (AC server)** | **scaffold shipped** | `platform-night-mode`, snapshot restore, elogind drop-in; enable in `night-mode.json`. |
 | 4.7 | **UX5400 GDX1515 live filter** | **done (main)** | PR [#13](https://github.com/f0xx/zenbook_scripts/pull/13): sporadic jumps over long sessions → `exec_delay` + `outlier_reject`; `--force` gate; UX5400 install seeds GDX1515 profile. |
 | 4.8 | **UX581 lightbar** | **blocked** | Hardware-gated; `zenbook_ux581`. |
 | 4.9 | **Adaptive touchpad filter** | **in progress** | Branch `feature/adaptive-touchpad-filter` → merge to 4.x branch first. |
 | — | **Release hygiene** | **open** | Commit/push unreleased tree, sync CHANGELOG, Gentoo `9999`, operator redeploy notes. |
 
-### 4.6 Closed-lid night profile (idea — likely 0.0.4, optional)
+### 4.6 Closed-lid night profile (scaffold — 0.0.4)
+
+**Status:** shipped as opt-in scaffold — `platform-night-mode`, `night-mode.json`,
+`contrib/elogind/99-zenbook-night-mode.conf`, `docs/daemons/night-mode.md`.
+Set `"enabled": true` after installing the elogind drop-in.
 
 **Goal:** On **AC power**, closing the lid does **not** suspend. Instead apply a
 **night** profile: panel(s) off, keyboard backlight off, fan quiet / powersave,
@@ -77,8 +81,8 @@ elogind drop-in, or inhibit) so suspend never starts; then apply our own
 | `platform-session` | Per-user `session.json` profile: `on_lid_close` / `on_lid_open` action lists |
 | Duo | Optional: disable eDP-2 in night mode when undocked |
 
-**Not mandatory for 0.0.4 tag** — document + spike is enough if time is short;
-full implementation can slip to 0.0.5 without blocking release.
+**Not mandatory for 0.0.4 tag** — scaffold + docs ship; field validation on UX5400
+can follow. Full PowerDevil/KScreen polish can slip to 0.0.5 without blocking release.
 
 ### 4.7 UX5400 GDX1515 live filter (shipped — PR #13)
 
