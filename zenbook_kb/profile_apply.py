@@ -11,10 +11,18 @@ from zenbook_kb.user_profiles import load
 log = logging.getLogger("zenbook.profile_apply")
 
 
+def _exit_night_if_active() -> None:
+    from zenbook_kb.night_mode import exit_night, is_active
+
+    if is_active():
+        exit_night(force=False)
+
+
 def apply_mode(mode: str) -> bool:
     doc = load()
     m = doc["modes"].get(mode) or {}
     if mode == "auto":
+        _exit_night_if_active()
         for argv in (
             ["platform-fan-control", "mode", "auto"],
             ["platform-fan", "adaptive"],
@@ -48,6 +56,7 @@ def apply_mode(mode: str) -> bool:
         nc["enabled"] = True
         nc["blank_displays"] = bool((m.get("screen") or {}).get("power_off", True))
         return enter_night(nc, force=True)
+    _exit_night_if_active()
     fan_profile = m.get("fan_profile")
     if not fan_profile:
         return False

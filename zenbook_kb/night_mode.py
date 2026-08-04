@@ -50,6 +50,23 @@ def default_config_path() -> Path:
     return DEFAULT_CONFIG
 
 
+def effective_night_config(cfg: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Merge system night-mode.json with profiles.json night when schedule is active."""
+    merged = dict(cfg or load_night_config())
+    try:
+        from zenbook_kb.profile_eval import _schedule_active
+        from zenbook_kb.user_profiles import load as load_profiles
+
+        prof = load_profiles().get("modes", {}).get("night") or {}
+        if prof.get("enabled") and _schedule_active(prof):
+            merged["enabled"] = True
+            screen = prof.get("screen") or {}
+            merged["blank_displays"] = bool(screen.get("power_off", merged.get("blank_displays", True)))
+    except Exception:
+        pass
+    return merged
+
+
 def load_night_config(path: Path | None = None) -> dict[str, Any]:
     target = path or default_config_path()
     if not target.is_file():
@@ -58,6 +75,17 @@ def load_night_config(path: Path | None = None) -> dict[str, Any]:
     if not isinstance(raw, dict):
         raise ValueError(f"{target}: root must be object")
     return raw
+
+
+def _remove_state_file(path: Path) -> None:
+    try:
+        path.unlink(missing_ok=True)
+        return
+    except OSError:
+        pass
+    from zenbook_kb.priv import run_root
+
+    run_root(["rm", "-f", str(path)], check=False, allow_ask=False)
 
 
 def is_active() -> bool:
@@ -100,8 +128,11 @@ def capture_snapshot(*, fan_cfg_path: Path | None = None) -> dict[str, Any]:
 
 
 def write_snapshot(data: dict[str, Any]) -> Path:
+    from zenbook_kb.priv import write_sysfs
+
     STATE_DIR.mkdir(parents=True, exist_ok=True)
-    SNAPSHOT_PATH.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    payload = json.dumps(data, indent=2) + "\n"
+    write_sysfs(SNAPSHOT_PATH, payload, allow_ask=False)
     return SNAPSHOT_PATH
 
 
@@ -257,7 +288,7 @@ def enter_night(
     user: str | None = None,
 ) -> bool:
     """Apply night profile; snapshot prior fan/thermal state."""
-    cfg = cfg or load_night_config()
+    cfg = effective_night_config(cfg)
     if not cfg.get("enabled") and not force:
         log.info("night mode disabled in config")
         return False
@@ -285,7 +316,9 @@ def enter_night(
     _apply_night_extras(cfg, user=user, entering=True)
 
     STATE_DIR.mkdir(parents=True, exist_ok=True)
-    ACTIVE_MARKER.write_text("1\n", encoding="utf-8")
+    from zenbook_kb.priv import write_sysfs
+
+    write_sysfs(ACTIVE_MARKER, "1\n", allow_ask=False)
     log.info("night mode entered (snapshot %s)", SNAPSHOT_PATH)
     return True
 
@@ -316,10 +349,7 @@ def exit_night(*, force: bool = False, user: str | None = None) -> bool:
         wake_displays(user=user)
     _apply_night_extras({}, user=user, entering=False)
 
-    try:
-        ACTIVE_MARKER.unlink(missing_ok=True)
-    except OSError:
-        pass
+    _remove_state_file(ACTIVE_MARKER)
     log.info("night mode exited")
     return True
 

@@ -54,7 +54,7 @@ def notify_mode_switch(
     if notify_send := shutil.which("notify-send"):
         return _run(
             [
-                notify-send,
+                notify_send,
                 "-a",
                 "zenbook-scripts",
                 "-i",

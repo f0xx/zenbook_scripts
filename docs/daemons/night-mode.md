@@ -17,8 +17,14 @@ override that separately.
    sudo rc-service elogind restart   # or reboot
    ```
 
-2. **Plasma PowerDevil** (recommended) — System Settings → Power Management:
-   - On AC, when lid closed → **Turn off screen** (not Suspend)
+2. **Plasma PowerDevil** (recommended) — on AC, lid closed → **Turn off screen**:
+
+   ```bash
+   platform-night-setup --powerdevil-only
+   # or: kwriteconfig6 … LidAction=64 under [AC][SuspendAndShutdown]
+   ```
+
+   (`64` = TurnOffScreen in PowerDevil 6.x)
 
 3. **Config** — copy and enable:
 
@@ -27,8 +33,18 @@ override that separately.
    # edit: "enabled": true
    ```
 
-4. **Fan profile** — add a `night` profile to `fan-control.json` (see
-   `fan-control.json.example`) or point `fan_profile` at `powersave`.
+4. **Fan profile** — merge from example (or run full optional setup):
+
+   ```bash
+   platform-night-setup --fan-only
+   # adds profiles.night to /etc/zenbook-scripts/fan-control.json
+   ```
+
+   One-shot for all optional host bits:
+
+   ```bash
+   sudo platform-night-setup
+   ```
 
 ## Commands
 

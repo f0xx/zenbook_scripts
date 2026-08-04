@@ -1,0 +1,59 @@
+#!/usr/bin/env python3
+"""Apply optional closed-lid / scheduled night-mode host setup.
+
+  platform-night-setup              # elogind + fan night profile + PowerDevil AC lid
+  platform-night-setup --fan-only
+  platform-night-setup --powerdevil-only
+
+Does not enable 24/7 closed-lid night in night-mode.json — timing stays in
+profiles.json (KCM Profiles → Night schedule).
+"""
+
+from __future__ import annotations
+
+import argparse
+import sys
+from pathlib import Path
+
+_SCRIPT_DIR = Path(__file__).resolve().parent
+_ROOT = _SCRIPT_DIR.parent
+for _share in (_ROOT, Path("/usr/share/zenbook-scripts"), Path("/usr/local/share/zenbook-scripts")):
+    if (_share / "zenbook_kb" / "night_setup.py").is_file():
+        if str(_share) not in sys.path:
+            sys.path.insert(0, str(_share))
+        break
+
+from zenbook_kb.night_setup import (  # noqa: E402
+    configure_powerdevil_ac_lid,
+    install_elogind_dropin,
+    merge_fan_night_profile,
+    reload_powerdevil,
+    run_optional_setup,
+    seed_night_mode_json,
+)
+
+
+def main() -> int:
+    p = argparse.ArgumentParser(description=__doc__)
+    p.add_argument("--fan-only", action="store_true")
+    p.add_argument("--powerdevil-only", action="store_true")
+    p.add_argument("--home", type=Path, default=Path.home(), help="user home for PowerDevil")
+    args = p.parse_args()
+
+    if args.fan_only:
+        ok = merge_fan_night_profile()
+        print("merged fan profile night" if ok else "fan profile night unchanged or skipped")
+        return 0
+    if args.powerdevil_only:
+        configure_powerdevil_ac_lid(home=args.home)
+        reload_powerdevil(home=args.home)
+        print(f"PowerDevil AC lid → turn off screen ({args.home}/.config/powerdevilrc)")
+        return 0
+
+    for line in run_optional_setup(script_dir=_ROOT, user_home=args.home):
+        print(line)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

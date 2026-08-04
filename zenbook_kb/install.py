@@ -309,6 +309,11 @@ def install_kb_brightness_tree(script_dir: Path) -> None:
         dest = zb_paths.bin_dir() / "platform-night-mode"
         _sudo(["cp", str(night_mode), str(dest)])
         _sudo(["chmod", "a+x", str(dest)])
+    night_setup = script_dir / "bin" / "platform-night-setup"
+    if night_setup.is_file():
+        dest = zb_paths.bin_dir() / "platform-night-setup"
+        _sudo(["cp", str(night_setup), str(dest)])
+        _sudo(["chmod", "a+x", str(dest)])
     platform_profiles = script_dir / "bin" / "platform-profiles"
     if platform_profiles.is_file():
         dest = zb_paths.bin_dir() / "platform-profiles"
