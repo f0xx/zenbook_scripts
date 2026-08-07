@@ -29,7 +29,21 @@ from zenbook_kb.touchpad_calibrate import (  # noqa: E402
 
 
 class TestTouchpadCalibrate(unittest.TestCase):
-    def test_detect_transport(self) -> None:
+    def test_pointer_touchpad_name(self) -> None:
+        from zenbook_kb.touch_map import _is_pointer_touchpad_name
+
+        self.assertTrue(
+            _is_pointer_touchpad_name(
+                "Primax Electronics Ltd. ASUS Zenbook Duo Keyboard Touchpad"
+            )
+        )
+        self.assertFalse(
+            _is_pointer_touchpad_name(
+                "Primax Electronics Ltd. ASUS Zenbook Duo Keyboard Touchpad (filter)"
+            )
+        )
+        self.assertFalse(_is_pointer_touchpad_name("ELAN9009:00 04F3:425A"))
+
         self.assertEqual(
             detect_transport(phys="usb-0000:00:14.0-6/input5"),
             "usb",

@@ -5,6 +5,7 @@
 #include <KQuickConfigModule>
 
 #include <QProcess>
+#include <QQueue>
 
 class ZenbookPlatform : public KQuickConfigModule
 {
@@ -164,6 +165,8 @@ public:
     Q_INVOKABLE void resetProfilesDefaults();
     Q_INVOKABLE void refreshTouchpadStatus();
     Q_INVOKABLE void openTouchpadTuner();
+    Q_INVOKABLE void startTouchpadLiveFilter();
+    Q_INVOKABLE void stopTouchpadLiveFilter();
     Q_INVOKABLE void loadTouchpadKnobs();
     Q_INVOKABLE bool saveTouchpadKnobs();
     Q_INVOKABLE void applyActiveProfile();
@@ -185,11 +188,31 @@ Q_SIGNALS:
 
 private Q_SLOTS:
     void onProcessFinished(int exitCode, QProcess::ExitStatus status);
+    void verifyLiveFilterStarted();
 
 private:
+    enum class OutputTarget {
+        Probe,
+        DuoStatus,
+        ScreenpadStatus,
+        TouchpadStatus,
+        Command,
+    };
+
+    struct PendingScript {
+        QString name;
+        QStringList args;
+        OutputTarget target;
+    };
+
     void detectHardware();
     QString resolveScript(const QString &name) const;
+    QString touchpadConfigPath() const;
+    QString runScriptSync(const QString &name, const QStringList &args) const;
+    OutputTarget outputTargetFor(const QString &name, const QStringList &args) const;
+    void startScript(const QString &name, const QStringList &args, OutputTarget target);
     void runScript(const QString &name, const QStringList &args, const QString &outputProperty);
+    void drainPendingScripts();
     void setBusy(bool busy);
     void setLastError(const QString &error);
     void applySessionObject(const QJsonObject &root);
@@ -225,12 +248,6 @@ private:
     bool m_touchpadDirty = false;
 
     QProcess *m_process = nullptr;
-    enum class OutputTarget {
-        Probe,
-        DuoStatus,
-        ScreenpadStatus,
-        TouchpadStatus,
-        Command,
-    };
+    QQueue<PendingScript> m_pendingScripts;
     OutputTarget m_outputTarget = OutputTarget::Command;
 };

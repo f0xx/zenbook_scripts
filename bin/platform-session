@@ -380,17 +380,9 @@ def run_action(name: str) -> bool:
         return _run_bin("platform-fan-control", ["event", "sleep_post"])
 
     if name == "touchpad_reassert":
-        pid = _read_pidfile(TOUCHPAD_PIDFILE)
-        if pid is None:
-            _log("touchpad_reassert: no live platform-touchpad pidfile; no-op")
-            return True
-        try:
-            os.kill(pid, signal.SIGHUP)
-            _log(f"touchpad_reassert: sent SIGHUP to pid {pid}")
-        except OSError as exc:
-            _log(f"touchpad_reassert: SIGHUP to pid {pid} failed: {exc}", level="warning")
-            return False
-        return True
+        # Re-enable physical pads in KWin after sleep/resume. SIGHUP was never
+        # handled by the live filter and left eventN disabled (cursor blackout).
+        return _run_bin("platform-touchpad", ["restore-kwin"])
 
     if name == "touch_map_apply":
         # Re-bind Duo digitizers → eDP after sleep (KWin may clear outputName).

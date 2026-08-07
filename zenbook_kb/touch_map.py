@@ -41,6 +41,11 @@ UX8406_PRESET: list[tuple[str, str]] = [
     ("ELAN9008", "eDP-1"),
     ("ELAN9009", "eDP-2"),
 ]
+# When keyboard is docked, eDP-2 is off — map both digitizers to the active panel.
+UX8406_DOCKED_PRESET: list[tuple[str, str]] = [
+    ("ELAN9008", "eDP-1"),
+    ("ELAN9009", "eDP-1"),
+]
 
 
 @dataclass
@@ -286,6 +291,23 @@ def get_device(sysname: str) -> KWinInputDevice | None:
     )
 
 
+def _is_pointer_touchpad_name(name: str) -> bool:
+    low = (name or "").lower()
+    return "touchpad" in low and "(filter)" not in low
+
+
+def list_pointer_touchpads() -> list[KWinInputDevice]:
+    """Evdev pointer touchpads in KWin (not touchscreens — ``touch`` may be false)."""
+    out: list[KWinInputDevice] = []
+    for sysname in list_input_sysnames():
+        dev = get_device(sysname)
+        if not dev:
+            continue
+        if _is_pointer_touchpad_name(dev.name):
+            out.append(dev)
+    return out
+
+
 def list_touch_devices(*, include_stylus: bool = True) -> list[KWinInputDevice]:
     out: list[KWinInputDevice] = []
     for sysname in list_input_sysnames():
@@ -311,6 +333,134 @@ def set_device_enabled(sysname: str, enabled: bool) -> None:
     if r.returncode != 0:
         err = (r.stderr or r.stdout or "").strip()
         raise RuntimeError(f"set enabled failed for {sysname}: {err}")
+
+
+def set_disable_while_typing(sysname: str, *, enabled: bool) -> None:
+    path = KWIN_PATH_TMPL.format(sysname=sysname)
+    r = _busctl(
+        "set-property",
+        KWIN_DEST,
+        path,
+        KWIN_IFACE,
+        "disableWhileTyping",
+        "b",
+        "true" if enabled else "false",
+    )
+    if r.returncode != 0:
+        err = (r.stderr or r.stdout or "").strip()
+        raise RuntimeError(f"set disableWhileTyping failed for {sysname}: {err}")
+
+
+def _device_group_id(sysname: str) -> str | None:
+    gid = _device_property(sysname, "deviceGroupId")
+    return str(gid) if isinstance(gid, str) and gid else None
+
+
+def _is_companion_mouse_name(name: str) -> bool:
+    """Secondary ``… Mouse`` node paired with ``… Touchpad`` (GDX1515 / i2c quirk)."""
+    low = (name or "").lower()
+    if "touchpad" in low or "(filter)" in low:
+        return False
+    return low.endswith(" mouse") or " mouse" in low
+
+
+def _sysfs_rel_bits(sysname: str) -> int:
+    """Evdev REL capability bitmask from sysfs (0 = no REL_X/REL_Y on this node)."""
+    cap = Path(f"/sys/class/input/{sysname}/device/capabilities/rel")
+    if not cap.is_file():
+        return 0
+    try:
+        return int(cap.read_text(encoding="utf-8", errors="replace").strip(), 16)
+    except (OSError, ValueError):
+        return 0
+
+
+def _find_companion_mouse_sysname(
+    *,
+    group_id: str,
+    exclude: frozenset[str] = frozenset(),
+) -> str | None:
+    for sysname in list_input_sysnames():
+        if sysname in exclude:
+            continue
+        name = _device_property(sysname, "name")
+        if not isinstance(name, str) or not _is_companion_mouse_name(name):
+            continue
+        if _device_group_id(sysname) != group_id:
+            continue
+        if _sysfs_rel_bits(sysname) == 0:
+            continue
+        return sysname
+    return None
+
+
+def _quash_sibling_touch_nodes(*, group_id: str, keep: frozenset[str]) -> int:
+    """Disable pure-touch siblings (ScreenPad digitizer) that share the pad group."""
+    if not group_id:
+        return 0
+    quashed = 0
+    for sysname in list_input_sysnames():
+        if sysname in keep:
+            continue
+        if _device_group_id(sysname) != group_id:
+            continue
+        if not bool(_device_property(sysname, "touch")):
+            continue
+        name = _device_property(sysname, "name") or ""
+        if "(filter)" in str(name):
+            continue
+        try:
+            set_device_enabled(sysname, False)
+            quashed += 1
+        except RuntimeError as exc:
+            log.warning("%s", exc)
+    return quashed
+
+
+def _quash_companion_mouse_nodes(*, group_id: str, keep_sysname: str) -> int:
+    """Disable redundant Mouse nodes sharing libinput group with the touchpad."""
+    if not group_id:
+        return 0
+    quashed = 0
+    for sysname in list_input_sysnames():
+        if sysname == keep_sysname:
+            continue
+        name = _device_property(sysname, "name")
+        if not isinstance(name, str) or not _is_companion_mouse_name(name):
+            continue
+        if _device_group_id(sysname) != group_id:
+            continue
+        try:
+            set_device_enabled(sysname, False)
+            quashed += 1
+            log.info("disabled companion mouse node %s (%s)", sysname, name)
+        except RuntimeError as exc:
+            log.warning("%s", exc)
+    return quashed
+
+
+def _restore_raw_kwin_touchpad(dev: KWinInputDevice) -> int:
+    """Re-enable the touchpad node; disable duplicate Mouse node in same group."""
+    changed = 0
+    gid = _device_group_id(dev.sysname) or ""
+    if not dev.enabled:
+        try:
+            set_device_enabled(dev.sysname, True)
+            changed += 1
+        except RuntimeError as exc:
+            log.warning("%s", exc)
+    changed += _quash_companion_mouse_nodes(group_id=gid, keep_sysname=dev.sysname)
+    try:
+        set_disable_while_typing(dev.sysname, enabled=False)
+        changed += 1
+    except RuntimeError as exc:
+        log.warning("%s", exc)
+    return changed
+
+
+def _finalize_kwin_touchpad(dev: KWinInputDevice) -> int:
+    """Compatibility alias — see ``_restore_raw_kwin_touchpad``."""
+    return _restore_raw_kwin_touchpad(dev)
 
 
 def find_kwin_filter_sysname(*, name_hint: str | None = None) -> str | None:
@@ -364,6 +514,24 @@ def activate_kwin_live_filter(
             changed = True
         except RuntimeError as exc:
             log.warning("%s", exc)
+    gid = _device_group_id(phys) if phys else None
+    if gid:
+        keep = frozenset({x for x in (phys, fs) if x})
+        for sysname in list_input_sysnames():
+            if sysname in keep:
+                continue
+            name = _device_property(sysname, "name")
+            if not isinstance(name, str):
+                continue
+            same_group = _device_group_id(sysname) == gid
+            if same_group and _is_companion_mouse_name(name):
+                try:
+                    set_device_enabled(sysname, False)
+                    changed = True
+                except RuntimeError as exc:
+                    log.warning("%s", exc)
+        if fs:
+            changed += bool(_quash_sibling_touch_nodes(group_id=gid, keep=frozenset({fs})))
     return changed
 
 
@@ -395,14 +563,77 @@ def release_kwin_after_live_filter(
             except RuntimeError as exc:
                 log.warning("%s", exc)
 
-    if phase in ("post", "full") and phys:
-        try:
-            set_device_enabled(phys, False)
-            set_device_enabled(phys, True)
-            changed = True
-        except RuntimeError as exc:
-            log.warning("%s", exc)
+    if phase in ("post", "full"):
+        # eventN changes on USB/BT swap — re-enable every matching pointer pad.
+        hint = (name_hint or "").strip()
+        for dev in list_pointer_touchpads():
+            if hint and hint not in dev.name:
+                continue
+            try:
+                set_device_enabled(dev.sysname, False)
+                set_device_enabled(dev.sysname, True)
+                changed = True
+            except RuntimeError as exc:
+                log.warning("%s", exc)
+            else:
+                if _finalize_kwin_touchpad(dev):
+                    changed = True
+        if phys:
+            try:
+                set_device_enabled(phys, False)
+                set_device_enabled(phys, True)
+                changed = True
+            except RuntimeError as exc:
+                log.warning("%s", exc)
+            else:
+                dev = get_device(phys)
+                if dev and _is_pointer_touchpad_name(dev.name):
+                    if _finalize_kwin_touchpad(dev):
+                        changed = True
     return changed
+
+
+def restore_all_compositor_touchpads(*, include_stylus: bool = False) -> int:
+    """Re-enable physical touchpads and disable stale ``(filter)`` nodes in KWin."""
+    if not kwin_available():
+        return 0
+    restored = 0
+    seen: set[str] = set()
+    for dev in list_touch_devices(include_stylus=include_stylus):
+        seen.add(dev.sysname)
+        name = dev.name or ""
+        if "(filter)" in name:
+            try:
+                set_device_enabled(dev.sysname, False)
+                restored += 1
+            except RuntimeError as exc:
+                log.warning("%s", exc)
+            continue
+        if dev.touch and not dev.enabled:
+            try:
+                set_device_enabled(dev.sysname, True)
+                restored += 1
+            except RuntimeError as exc:
+                log.warning("%s", exc)
+    # Keyboard / i2c touchpads: KWin often reports touch=false (pointer class).
+    for dev in list_pointer_touchpads():
+        if dev.sysname in seen:
+            continue
+        if "(filter)" in (dev.name or ""):
+            try:
+                set_device_enabled(dev.sysname, False)
+                restored += 1
+            except RuntimeError as exc:
+                log.warning("%s", exc)
+            continue
+        if not dev.enabled:
+            try:
+                set_device_enabled(dev.sysname, True)
+                restored += 1
+            except RuntimeError as exc:
+                log.warning("%s", exc)
+        restored += _finalize_kwin_touchpad(dev)
+    return restored
 
 
 def restore_kwin_touchpad_after_filter(
@@ -464,12 +695,17 @@ def _dmi_product() -> str:
     return ""
 
 
-def preset_rules_for_machine() -> list[MapRule]:
+def preset_rules_for_machine(*, docked: bool = False) -> list[MapRule]:
     product = _dmi_product().upper()
     if "UX8406" in product or "UX8402" in product:
-        return [MapRule(m, o) for m, o in UX8406_PRESET]
+        preset = UX8406_DOCKED_PRESET if docked else UX8406_PRESET
+        return [MapRule(m, o) for m, o in preset]
     # Generic: pair sorted touchscreens (not stylus) to sorted eDP*
     return []
+
+
+def docked_rules_for_machine() -> list[MapRule]:
+    return preset_rules_for_machine(docked=True)
 
 
 def load_state(path: Path | None = None) -> dict[str, Any]:

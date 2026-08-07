@@ -2,7 +2,14 @@ Source: zenbook-scripts
 Section: utils
 Priority: optional
 Maintainer: f0xx <noreply@users.noreply.github.com>
-Build-Depends: debhelper-compat (= 12)
+Build-Depends: debhelper-compat (= 12),
+               cmake (>= 3.16),
+               extra-cmake-modules (>= 6.0.0),
+               qt6-base-dev (>= 6.5.0),
+               qt6-declarative-dev (>= 6.5.0),
+               libkf6kcmutils-dev (>= 6.0.0),
+               libkf6coreaddons-dev (>= 6.0.0),
+               libkf6i18n-dev (>= 6.0.0)
 Standards-Version: 4.6.2
 Rules-Requires-Root: no
 Homepage: https://github.com/f0xx/zenbook_scripts
@@ -24,5 +31,23 @@ Description: ASUS ZenBook Duo keyboard and platform utilities
  This package installs userspace scripts only. The optional out-of-tree
  hid-asus kernel module is not built here; see kernel/README.md upstream.
  .
- Plasma 6 System Settings integration (KCM) is not included in this binary;
- build plasma/kcm separately on Ubuntu 24.04+ (see packaging/debian/README.md).
+ For Plasma 6 System Settings (KCM), install the zenbook-scripts-plasma
+ package (Ubuntu 24.04+ / Debian with KF6).
+
+Package: zenbook-scripts-plasma
+Architecture: any
+Depends: ${misc:Depends},
+         ${shlibs:Depends},
+         zenbook-scripts (= ${source:Version}),
+         qml6-module-qtquick,
+         qml6-module-qtquick-controls,
+         qml6-module-qtquick-layouts,
+         libkf6kcmutils6,
+         libkf6coreaddons6,
+         libkf6i18n6,
+         libkirigami6
+Description: Plasma 6 System Settings module for zenbook-scripts
+ KCM plugin (kcm_zenbook_platform) for profiles, touchpad, Duo displays,
+ and sleep/resume policy. Requires zenbook-scripts CLI package.
+ .
+ Build from the same source as zenbook-scripts; not useful without it.

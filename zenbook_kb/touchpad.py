@@ -61,6 +61,16 @@ UI_SET_PROPBIT = 0x4004556E
 
 UINPUT_MAX_NAME_SIZE = 80
 DEFAULT_CONFIG = Path("/etc/zenbook-scripts/touchpad.json")
+USER_CONFIG = Path.home() / ".config" / "zenbook-scripts" / "touchpad.json"
+
+
+def effective_config_path(path: Path | None = None) -> Path:
+    """Live/KCM path: explicit arg, then user override, then system default."""
+    if path is not None:
+        return path
+    if USER_CONFIG.is_file():
+        return USER_CONFIG
+    return DEFAULT_CONFIG
 DEFAULT_EXEC_DELAY_MS = 25.0
 DEFAULT_MAX_DELTA = 1200
 DEFAULT_TYPING_WINDOW_MS = 350.0
@@ -906,16 +916,17 @@ def build_pipeline(cfg: dict[str, Any] | None = None) -> Pipeline:
         elif name in ("adaptive_matrix", "adaptive-matrix", "adaptive"):
             from zenbook_kb.touchpad_adaptive import AdaptiveMatrixFilter
 
-            out.append(
-                AdaptiveMatrixFilter(
-                    device_key=str(cfg.get("device_key") or "auto"),
-                    learn_rate=float(item.get("learn_rate", 0.08)),
-                    spike_sigma=float(item.get("spike_sigma", 3.5)),
-                    predict_weight=float(item.get("predict_weight", 0.35)),
-                    min_baseline=float(item.get("min_baseline", 4.0)),
-                    persist_every=int(item.get("persist_every", 120)),
-                )
+            filt = AdaptiveMatrixFilter(
+                device_key=str(cfg.get("device_key") or "auto"),
+                learn_rate=float(item.get("learn_rate", 0.08)),
+                spike_sigma=float(item.get("spike_sigma", 3.5)),
+                predict_weight=float(item.get("predict_weight", 0.35)),
+                min_baseline=float(item.get("min_baseline", 4.0)),
+                persist_every=int(item.get("persist_every", 120)),
             )
+            if activity is not None:
+                filt = WhenTypingGate(filt, activity)
+            out.append(filt)
         elif name in ("smooth",):
             log.warning("smooth filter not implemented; skip")
         else:
@@ -1120,6 +1131,44 @@ def device_key_for_path(path: Path) -> str | None:
     return TouchpadInfo(path, name, phys, uniq).key
 
 
+def _normalize_device_entry(entry: dict[str, Any]) -> dict[str, Any]:
+    from zenbook_kb.touchpad_profiles import normalize_filter_profile
+
+    out: dict[str, Any] = {"enabled": bool(entry.get("enabled", True))}
+    logical = entry.get("logical")
+    if logical:
+        out["logical"] = str(logical)
+    transports = entry.get("transports")
+    if isinstance(transports, dict) and transports:
+        out["transports"] = {}
+        for tkey, tentry in transports.items():
+            if not isinstance(tentry, dict):
+                continue
+            sub: dict[str, Any] = {}
+            if isinstance(tentry.get("filters"), list) and tentry["filters"]:
+                sub["filters"] = list(tentry["filters"])
+            if tentry.get("filter_profile"):
+                sub["filter_profile"] = normalize_filter_profile(tentry["filter_profile"])
+            if sub:
+                out["transports"][str(tkey)] = sub
+    if isinstance(entry.get("filters"), list) and entry["filters"]:
+        out["filters"] = list(entry["filters"])
+    elif entry.get("filter_profile"):
+        out["filter_profile"] = normalize_filter_profile(entry["filter_profile"])
+    elif not out.get("transports"):
+        out["filters"] = default_filters()
+    return out
+
+
+def transport_for_info(info: TouchpadInfo | None) -> str | None:
+    if info is None:
+        return None
+    from zenbook_kb.touchpad_calibrate import detect_transport
+
+    t = detect_transport(name=info.name, phys=info.phys, uniq=info.uniq)
+    return None if t == "unknown" else t
+
+
 def normalize_config(raw: dict[str, Any] | None) -> dict[str, Any]:
     """Return version-2 config; migrate legacy single-device files."""
     if not raw:
@@ -1130,10 +1179,7 @@ def normalize_config(raw: dict[str, Any] | None) -> dict[str, Any]:
         for key, entry in raw["devices"].items():
             if not isinstance(entry, dict):
                 continue
-            out["devices"][str(key)] = {
-                "filters": entry.get("filters") or default_filters(),
-                "enabled": bool(entry.get("enabled", True)),
-            }
+            out["devices"][str(key)] = _normalize_device_entry(entry)
         return out
 
     # v1: { "device": "...", "filters": [...] }
@@ -1199,7 +1245,7 @@ def normalize_config(raw: dict[str, Any] | None) -> dict[str, Any]:
 
 
 def load_config(path: Path | None = None) -> dict[str, Any]:
-    path = path or DEFAULT_CONFIG
+    path = effective_config_path(path)
     if not path.is_file():
         return empty_config_v2()
     try:
@@ -1220,25 +1266,54 @@ def save_config(cfg: dict[str, Any], path: Path) -> None:
 def _match_device_entry(
     cfg: dict[str, Any], info: TouchpadInfo | None, *, path: Path | None = None
 ) -> tuple[str | None, dict[str, Any] | None]:
+    from zenbook_kb.touchpad_profiles import resolve_transport_entry
+
     cfg = normalize_config(cfg)
     devices: dict[str, Any] = cfg.get("devices") or {}
+    transport = transport_for_info(info)
+    key: str | None = None
+    entry: dict[str, Any] | None = None
     if info is not None:
-        if info.key in devices:
-            return info.key, devices[info.key]
-        # name-only legacy / partial match
-        for key, entry in devices.items():
-            if key == info.name or key.startswith(info.name + "|"):
-                return key, entry
-    if path is not None:
+        logical = info.name
+        devices_map: dict[str, Any] = devices
+        # Prefer nested logical+transport over stale flat composite keys (name|phys).
+        if logical in devices_map:
+            dent = devices_map[logical]
+            if isinstance(dent, dict):
+                subs = dent.get("transports")
+                if isinstance(subs, dict) and transport and transport in subs:
+                    key, entry = logical, dent
+                    entry = resolve_transport_entry(entry, transport)
+                    return key, entry
+        if info.key in devices_map:
+            key, entry = info.key, devices_map[info.key]
+        elif logical in devices_map:
+            key, entry = logical, devices_map[logical]
+        else:
+            for dk, dent in devices.items():
+                if not isinstance(dent, dict):
+                    continue
+                if (
+                    dk == info.name
+                    or dk.startswith(info.name + "|")
+                    or info.key.startswith(dk + "|")
+                    or dent.get("logical") == info.name
+                ):
+                    key, entry = dk, dent
+                    break
+    if entry is None and path is not None:
         path_s = str(path)
         if path_s in devices:
-            return path_s, devices[path_s]
-        key = device_key_for_path(path)
-        if key and key in devices:
-            return key, devices[key]
-    if "default" in devices:
-        return "default", devices["default"]
-    return None, None
+            key, entry = path_s, devices[path_s]
+        else:
+            pkey = device_key_for_path(path)
+            if pkey and pkey in devices:
+                key, entry = pkey, devices[pkey]
+    if entry is None and "default" in devices:
+        key, entry = "default", devices["default"]
+    if entry is not None:
+        entry = resolve_transport_entry(entry, transport)
+    return key, entry
 
 
 def filters_for_device(
@@ -1313,23 +1388,47 @@ def upsert_device_profile(
     filter_profile: str | None = None,
     enabled: bool = True,
     make_default: bool = False,
+    transport: str | None = None,
 ) -> dict[str, Any]:
     from zenbook_kb.touchpad_profiles import (
-        FILTER_PROFILE_ADAPTIVE,
         normalize_filter_profile,
+        should_nest_transport,
     )
 
     out = normalize_config(cfg)
-    entry: dict[str, Any] = {"enabled": enabled}
-    if filters is not None:
-        entry["filters"] = filters
-    if filter_profile:
-        entry["filter_profile"] = normalize_filter_profile(filter_profile)
-    if "filters" not in entry and "filter_profile" not in entry:
-        entry["filters"] = default_filters()
-    out["devices"][key] = entry
+    storage_key = key
+    if transport and should_nest_transport(transport):
+        storage_key = key.split("|", 1)[0] if "|" in key else key
+        device_entry = dict(out["devices"].get(storage_key) or {})
+        device_entry["logical"] = storage_key
+        device_entry["enabled"] = enabled
+        sub: dict[str, Any] = {}
+        if filters is not None:
+            sub["filters"] = filters
+        if filter_profile:
+            sub["filter_profile"] = normalize_filter_profile(filter_profile)
+        if "filters" not in sub and "filter_profile" not in sub:
+            sub["filters"] = default_filters()
+        transports = dict(device_entry.get("transports") or {})
+        transports[transport] = sub
+        device_entry["transports"] = transports
+        out["devices"][storage_key] = device_entry
+        # Drop legacy flat composite keys superseded by nested transports.
+        prefix = storage_key + "|"
+        for dk in list(out["devices"].keys()):
+            if dk.startswith(prefix):
+                del out["devices"][dk]
+    else:
+        entry: dict[str, Any] = {"enabled": enabled}
+        if filters is not None:
+            entry["filters"] = filters
+        if filter_profile:
+            entry["filter_profile"] = normalize_filter_profile(filter_profile)
+        if "filters" not in entry and "filter_profile" not in entry:
+            entry["filters"] = default_filters()
+        out["devices"][storage_key] = entry
     if make_default:
-        out["default_device"] = key
+        out["default_device"] = storage_key
     return out
 
 
@@ -1740,9 +1839,11 @@ def resolve_touchpad(
                 return info
         raise FileNotFoundError(f"touchpad node not found: {selector}")
 
-    # Exact stable key
+    # Exact stable key or logical device name (optionally nested transports)
     for info in pads:
         if info.key == selector or info.name == selector:
+            return info
+        if "|" not in selector and info.key.startswith(selector + "|"):
             return info
 
     # Substring match on name/key

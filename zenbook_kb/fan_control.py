@@ -189,6 +189,11 @@ def read_lid_open() -> bool | None:
 
 
 def find_asus_hwmon() -> Path | None:
+    from zenbook_kb.fan_hwmon import find_fan_hwmon
+
+    row = find_fan_hwmon("asus")
+    if row:
+        return row.path
     root = ASUS_WMI / "hwmon"
     if root.is_dir():
         for d in root.iterdir():
@@ -202,11 +207,29 @@ def find_asus_hwmon() -> Path | None:
     return None
 
 
-def read_rpm() -> int | None:
-    hw = find_asus_hwmon()
-    if not hw:
+def fan_backend_name() -> str | None:
+    from zenbook_kb.fan_hwmon import find_fan_hwmon
+
+    row = find_fan_hwmon()
+    return row.backend if row else None
+
+
+def _fan_hwmon_pwm_path() -> Path | None:
+    from zenbook_kb.fan_hwmon import find_fan_hwmon
+
+    row = find_fan_hwmon()
+    if not row or not row.has_pwm:
         return None
-    raw = _read_text(hw / "fan1_input")
+    return row.path
+
+
+def read_rpm() -> int | None:
+    from zenbook_kb.fan_hwmon import find_fan_hwmon
+
+    row = find_fan_hwmon()
+    if not row or not row.has_rpm:
+        return None
+    raw = _read_text(row.path / "fan1_input")
     if raw is None:
         return None
     try:
@@ -338,7 +361,7 @@ def restore_user_sysfs() -> None:
         except Exception as exc:  # noqa: BLE001
             log.warning("restore platform_profile failed: %s", exc)
     want_pwm = _read_text(pwm_state)
-    hw = find_asus_hwmon()
+    hw = _fan_hwmon_pwm_path()
     if want_pwm is not None and hw and (hw / "pwm1_enable").is_file():
         try:
             _write_sysfs(hw / "pwm1_enable", want_pwm + "\n")
@@ -374,21 +397,21 @@ def apply_profile(cfg: dict[str, Any], name: str) -> None:
         # Adaptive must not flip fan-control-mode via CLI persist side-effects.
         no_pwm_persist = {"ZENBOOK_FAN_PWM_PERSIST": "0"}
         if pwm in ("full", "max", "on", 0, "0"):
-            hw = find_asus_hwmon()
+            hw = _fan_hwmon_pwm_path()
             if hw:
                 _write_sysfs(hw / "pwm1_enable", "0")
             elif bins:
                 _run_cli([str(bins[0]), "full"], env=no_pwm_persist)
             else:
-                log.warning("asus hwmon missing; skip pwm=full")
+                log.warning("fan hwmon missing; skip pwm=full")
         elif pwm in ("auto", 2, "2"):
-            hw = find_asus_hwmon()
+            hw = _fan_hwmon_pwm_path()
             if hw:
                 _write_sysfs(hw / "pwm1_enable", "2")
             elif bins:
                 _run_cli([str(bins[0]), "auto"], env=no_pwm_persist)
             else:
-                log.warning("asus hwmon missing; skip pwm=auto")
+                log.warning("fan hwmon missing; skip pwm=auto")
         elif pwm in ("manual", 1, "1"):
             raise RuntimeError("pwm=manual/curves not supported on this model")
         else:
@@ -431,23 +454,34 @@ def run_event(cfg: dict[str, Any], event: str, state: ControllerState) -> None:
 
     mode = get_control_mode()
     if mode == CONTROL_MODE_MANUAL:
-        # Honour explicit user lock: do not chase AC/lid rules. Sleep may still
-        # cool briefly; resume restores the saved CLI/tray choice.
-        if event == "sleep_pre":
+        # Honour explicit user lock: skip adaptive AC/lid chasing. Still cool on
+        # lid close / suspend; restore saved CLI choice only when lid is open.
+        if event in ("sleep_pre", "lid_close"):
             profile = ev.get("profile")
             if profile:
                 apply_profile(cfg, profile)
             run = ev.get("run")
             if run:
                 subprocess.run(run, shell=True, check=False)
-            log.info("manual lock: sleep_pre applied (temporary)")
+            log.info("manual lock: %s applied (temporary)", event)
             return
         if event == "sleep_post":
+            lid = read_lid_open()
+            if lid is False:
+                log.info("manual lock: sleep_post deferred — lid still closed")
+                return
             restore_user_sysfs()
             run = ev.get("run")
             if run:
                 subprocess.run(run, shell=True, check=False)
             log.info("manual lock: sleep_post restored user choice")
+            return
+        if event == "lid_open":
+            restore_user_sysfs()
+            run = ev.get("run")
+            if run:
+                subprocess.run(run, shell=True, check=False)
+            log.info("manual lock: lid_open restored user choice")
             return
         log.info("manual lock: skip event %s", event)
         return
@@ -519,6 +553,7 @@ def format_status(cfg: dict[str, Any], sample: Sample, state: ControllerState) -
         f"temp_c:   {sample.temp_c if sample.temp_c is not None else 'n/a'}",
         f"lid:      {('open' if sample.lid_open else 'closed') if sample.lid_open is not None else 'n/a'}",
         f"rpm:      {sample.rpm if sample.rpm is not None else 'n/a'}",
+        f"fan:      {fan_backend_name() or 'n/a'}",
         f"profile:  {state.last_profile or 'n/a'}",
     ]
     if PLATFORM_PROFILE.is_file():

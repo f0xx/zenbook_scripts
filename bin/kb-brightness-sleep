@@ -148,12 +148,12 @@ _fan_hook() {
 
 case "${1:-}" in
     pre|suspend|sleep)
-        _pre
+        _pre || true
         _fan_hook pre
         ;;
     post|resume|restore)
-        _post
         _fan_hook post
+        _post || true
         ;;
     save)
         _save

@@ -1,6 +1,6 @@
 # Adaptive touchpad filtering (experimental)
 
-**Status:** scaffold on `feature/adaptive-touchpad-filter` — field validation pending.
+**Status:** required for **0.0.4** — learn-only spikes; no position rewrite.
 
 ## Problem
 
@@ -25,10 +25,8 @@ Per-frame (single-finger only; MT passthrough like other stages):
 ```
 raw (x,y) → Δx,Δy
          → subtract predict_weight × EWMA(velocity)
-         → if |residual| > spike_sigma × EWMA(|residual|): DROP (no learn)
-         → else: update baselines + velocity EWMA
-         → apply 2×2 matrix to residual (diagonal scales from learned noise)
-         → emit corrected position
+         → if |residual| > spike_sigma × EWMA(|residual|): DROP frame (update tracker)
+         → else: update baselines + velocity EWMA; **pass frame through unmodified**
 ```
 
 **Not** soft_accel-style scalar gain — matrix entries derive from historical

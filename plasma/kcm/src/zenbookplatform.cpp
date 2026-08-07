@@ -13,7 +13,9 @@
 #include <QJsonObject>
 #include <QProcess>
 #include <QProcessEnvironment>
+#include <QQueue>
 #include <QStandardPaths>
+#include <QTimer>
 
 #ifndef ZENBOOK_SCRIPTS_ROOT
 #define ZENBOOK_SCRIPTS_ROOT "/usr/share/zenbook-scripts"
@@ -80,13 +82,17 @@ void ZenbookPlatform::load()
     loadSession();
     loadProfiles();
     loadTouchpadKnobs();
-    refreshProbe();
-    refreshTouchpadStatus();
+    m_probeText = runScriptSync(QStringLiteral("platform-probe"), {});
+    Q_EMIT probeTextChanged();
+    m_touchpadStatusText = runScriptSync(QStringLiteral("platform-touchpad"), {QStringLiteral("status")});
+    Q_EMIT touchpadStatusTextChanged();
     if (m_hasDuoDock) {
-        refreshDuoStatus();
+        m_duoStatusText = runScriptSync(QStringLiteral("platform-duo-dock"), {QStringLiteral("status")});
+        Q_EMIT duoStatusTextChanged();
     }
     if (m_hasScreenpad) {
-        refreshScreenpadStatus();
+        m_screenpadStatusText = runScriptSync(QStringLiteral("screenpad"), {QStringLiteral("status")});
+        Q_EMIT screenpadStatusTextChanged();
     }
     updateNeedsSave();
 }
@@ -185,33 +191,73 @@ void ZenbookPlatform::setLastError(const QString &error)
     Q_EMIT lastErrorChanged();
 }
 
+QString ZenbookPlatform::runScriptSync(const QString &name, const QStringList &args) const
+{
+    const QString script = resolveScript(name);
+    if (script.isEmpty()) {
+        return i18n("Could not find %1 in PATH or zenbook-scripts bin.", name);
+    }
+    QProcess proc;
+    proc.setProgram(script);
+    proc.setArguments(args);
+    proc.setProcessEnvironment(QProcessEnvironment::systemEnvironment());
+    proc.start();
+    if (!proc.waitForFinished(20000)) {
+        proc.kill();
+        return i18n("Timed out running %1", name);
+    }
+    const QString stdoutText = QString::fromUtf8(proc.readAllStandardOutput());
+    const QString stderrText = QString::fromUtf8(proc.readAllStandardError());
+    const QString combined =
+        stdoutText + (stderrText.isEmpty() ? QString() : QStringLiteral("\n") + stderrText.trimmed());
+    if (proc.exitStatus() != QProcess::NormalExit || proc.exitCode() != 0) {
+        return i18n("Failed (exit %1):\n%2", proc.exitCode(), combined.trimmed());
+    }
+    return combined.trimmed();
+}
+
 void ZenbookPlatform::runScript(const QString &name, const QStringList &args, const QString &outputProperty)
 {
     Q_UNUSED(outputProperty)
-
+    const OutputTarget target = outputTargetFor(name, args);
     if (m_busy) {
-        setLastError(i18n("Another command is still running."));
+        m_pendingScripts.enqueue(PendingScript{name, args, target});
         return;
     }
+    startScript(name, args, target);
+}
 
+ZenbookPlatform::OutputTarget ZenbookPlatform::outputTargetFor(const QString &name, const QStringList &args) const
+{
+    if (name == QLatin1String("platform-probe")) {
+        return OutputTarget::Probe;
+    }
+    if (name == QLatin1String("platform-duo-dock") && args.value(0) == QLatin1String("status")) {
+        return OutputTarget::DuoStatus;
+    }
+    if (name == QLatin1String("screenpad") && args.value(0) == QLatin1String("status")) {
+        return OutputTarget::ScreenpadStatus;
+    }
+    if (name == QLatin1String("platform-touchpad") && args.value(0) == QLatin1String("status")) {
+        return OutputTarget::TouchpadStatus;
+    }
+    return OutputTarget::Command;
+}
+
+void ZenbookPlatform::startScript(const QString &name, const QStringList &args, OutputTarget target)
+{
     const QString script = resolveScript(name);
     if (script.isEmpty()) {
         setLastError(i18n("Could not find %1 in PATH or zenbook-scripts bin.", name));
+        if (target == OutputTarget::TouchpadStatus) {
+            m_touchpadStatusText = i18n("(platform-touchpad not found)");
+            Q_EMIT touchpadStatusTextChanged();
+        }
+        drainPendingScripts();
         return;
     }
 
-    if (name == QLatin1String("platform-probe")) {
-        m_outputTarget = OutputTarget::Probe;
-    } else if (name == QLatin1String("platform-duo-dock") && args.value(0) == QLatin1String("status")) {
-        m_outputTarget = OutputTarget::DuoStatus;
-    } else if (name == QLatin1String("screenpad") && args.value(0) == QLatin1String("status")) {
-        m_outputTarget = OutputTarget::ScreenpadStatus;
-    } else if (name == QLatin1String("platform-touchpad") && args.value(0) == QLatin1String("status")) {
-        m_outputTarget = OutputTarget::TouchpadStatus;
-    } else {
-        m_outputTarget = OutputTarget::Command;
-    }
-
+    m_outputTarget = target;
     setLastError({});
     setBusy(true);
 
@@ -219,6 +265,15 @@ void ZenbookPlatform::runScript(const QString &name, const QStringList &args, co
     m_process->setArguments(args);
     m_process->setProcessEnvironment(QProcessEnvironment::systemEnvironment());
     m_process->start();
+}
+
+void ZenbookPlatform::drainPendingScripts()
+{
+    if (m_busy || m_pendingScripts.isEmpty()) {
+        return;
+    }
+    const PendingScript next = m_pendingScripts.dequeue();
+    startScript(next.name, next.args, next.target);
 }
 
 void ZenbookPlatform::onProcessFinished(int exitCode, QProcess::ExitStatus status)
@@ -236,25 +291,32 @@ void ZenbookPlatform::onProcessFinished(int exitCode, QProcess::ExitStatus statu
         setLastError({});
     }
 
+    const QString statusBody = combined.trimmed();
+
     switch (m_outputTarget) {
     case OutputTarget::Probe:
-        m_probeText = combined.trimmed();
+        m_probeText = statusBody;
         Q_EMIT probeTextChanged();
         break;
     case OutputTarget::DuoStatus:
-        m_duoStatusText = combined.trimmed();
+        m_duoStatusText = statusBody.isEmpty() ? i18n("(no status)") : statusBody;
         Q_EMIT duoStatusTextChanged();
         break;
     case OutputTarget::ScreenpadStatus:
-        m_screenpadStatusText = combined.trimmed();
+        m_screenpadStatusText = statusBody.isEmpty() ? i18n("(no status)") : statusBody;
         Q_EMIT screenpadStatusTextChanged();
         break;
     case OutputTarget::TouchpadStatus:
-        m_touchpadStatusText = combined.trimmed();
+        if (status != QProcess::NormalExit || exitCode != 0) {
+            m_touchpadStatusText =
+                i18n("Status failed (exit %1):\n%2", exitCode, statusBody.isEmpty() ? i18n("(no output)") : statusBody);
+        } else {
+            m_touchpadStatusText = statusBody.isEmpty() ? i18n("(no status output)") : statusBody;
+        }
         Q_EMIT touchpadStatusTextChanged();
         break;
     case OutputTarget::Command:
-        m_lastCommandOutput = combined.trimmed();
+        m_lastCommandOutput = statusBody;
         Q_EMIT lastCommandOutputChanged();
         break;
     }
@@ -264,7 +326,11 @@ void ZenbookPlatform::onProcessFinished(int exitCode, QProcess::ExitStatus statu
         refreshDuoStatus();
     } else if (m_outputTarget == OutputTarget::Command && prog.endsWith(QLatin1String("screenpad"))) {
         refreshScreenpadStatus();
+    } else if (m_outputTarget == OutputTarget::Command && prog.endsWith(QLatin1String("platform-touchpad"))) {
+        refreshTouchpadStatus();
     }
+
+    drainPendingScripts();
 }
 
 void ZenbookPlatform::refreshProbe()
@@ -632,6 +698,80 @@ void ZenbookPlatform::openTouchpadTuner()
     }
 }
 
+QString ZenbookPlatform::touchpadConfigPath() const
+{
+    const QString userCfg =
+        QStandardPaths::writableLocation(QStandardPaths::GenericConfigLocation)
+        + QStringLiteral("/zenbook-scripts/touchpad.json");
+    if (QFile::exists(userCfg)) {
+        return userCfg;
+    }
+    return QStringLiteral("/etc/zenbook-scripts/touchpad.json");
+}
+
+void ZenbookPlatform::startTouchpadLiveFilter()
+{
+    const QString script = resolveScript(QStringLiteral("platform-touchpad"));
+    if (script.isEmpty()) {
+        setLastError(i18n("platform-touchpad not found"));
+        return;
+    }
+    const QString cfg = touchpadConfigPath();
+    const QStringList args = {QStringLiteral("-n"),
+                              script,
+                              QStringLiteral("run"),
+                              QStringLiteral("--replace"),
+                              QStringLiteral("--config"),
+                              cfg};
+    if (!QProcess::startDetached(QStringLiteral("sudo"), args)) {
+        setLastError(i18n("Could not start live filter (sudo failed)"));
+        return;
+    }
+    setLastError({});
+    QTimer::singleShot(700, this, &ZenbookPlatform::verifyLiveFilterStarted);
+}
+
+void ZenbookPlatform::verifyLiveFilterStarted()
+{
+    const QString status =
+        runScriptSync(QStringLiteral("platform-touchpad"), {QStringLiteral("status")});
+    m_touchpadStatusText = status;
+    Q_EMIT touchpadStatusTextChanged();
+    const bool running = status.contains(QStringLiteral("live:     running"))
+        || status.contains(QStringLiteral("live:\trunning"));
+    if (!running) {
+        setLastError(
+            i18n("Live filter did not start — need passwordless sudo "
+                 "(sudo -n platform-touchpad run) or install contrib/udev/99-uinput.rules "
+                 "and add your user to the input group."));
+    }
+}
+
+void ZenbookPlatform::stopTouchpadLiveFilter()
+{
+    const QString script = resolveScript(QStringLiteral("platform-touchpad"));
+    if (script.isEmpty()) {
+        setLastError(i18n("platform-touchpad not found"));
+        return;
+    }
+    QProcess proc;
+    proc.start(QStringLiteral("sudo"), {QStringLiteral("-n"), script, QStringLiteral("stop")});
+    if (!proc.waitForFinished(10000)) {
+        proc.kill();
+        setLastError(i18n("Timed out stopping live filter"));
+        refreshTouchpadStatus();
+        return;
+    }
+    const QString combined =
+        QString::fromUtf8(proc.readAllStandardOutput() + proc.readAllStandardError()).trimmed();
+    if (proc.exitStatus() != QProcess::NormalExit || proc.exitCode() != 0) {
+        setLastError(i18n("Stop failed (exit %1): %2", proc.exitCode(), combined));
+    } else {
+        setLastError({});
+    }
+    refreshTouchpadStatus();
+}
+
 void ZenbookPlatform::applyActiveProfile()
 {
     saveProfiles();
@@ -697,6 +837,10 @@ bool ZenbookPlatform::saveTouchpadKnobs()
     m_touchpadDirty = false;
     Q_EMIT touchpadDirtyChanged();
     refreshTouchpadStatus();
+    // Restart live filter when profile knobs changed and daemon was running.
+    if (m_touchpadStatusText.contains(QStringLiteral("live:     running"))) {
+        startTouchpadLiveFilter();
+    }
     setLastError({});
     updateNeedsSave();
     return true;

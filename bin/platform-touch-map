@@ -33,6 +33,7 @@ from zenbook_kb.touch_map import (  # noqa: E402
     MapRule,
     apply_rules,
     auto_rules,
+    docked_rules_for_machine,
     format_status,
     kwin_available,
     load_state,
@@ -73,6 +74,27 @@ def cmd_auto(args: argparse.Namespace) -> int:
         state = {"version": 1, "rules": [{"match": r.match, "output": r.output} for r in rules]}
         path = save_state(state)
         print(f"saved: {path}")
+    return 0
+
+
+def cmd_apply_docked(args: argparse.Namespace) -> int:
+    if not kwin_available() and not args.dry_run:
+        print("KWin D-Bus not available", file=sys.stderr)
+        return 1
+    rules = docked_rules_for_machine()
+    if not rules:
+        print("no docked preset for this machine", file=sys.stderr)
+        return 2
+    print("docked rules:")
+    for r in rules:
+        print(f"  {r.match} → {r.output}")
+    applied = apply_rules(rules, dry_run=bool(args.dry_run))
+    for row in applied:
+        tag = "would map" if args.dry_run else "mapped"
+        print(f"{tag}: {row['sysname']}  {row['name']}  →  {row['output']}")
+    if not applied:
+        print("no matching KWin touch devices", file=sys.stderr)
+        return 1
     return 0
 
 
@@ -198,6 +220,11 @@ def main(argv: list[str] | None = None) -> int:
     p_auto.add_argument("--save", action="store_true", help=f"write {DEFAULT_STATE}")
     p_apply = sub.add_parser("apply", help="re-apply saved (or auto) rules")
     p_apply.add_argument("--dry-run", action="store_true")
+    p_apply_docked = sub.add_parser(
+        "apply-docked",
+        help="map UX8406 digitizers to eDP-1 when keyboard is docked (eDP-2 off)",
+    )
+    p_apply_docked.add_argument("--dry-run", action="store_true")
     p_set = sub.add_parser("set", help="map devices matching NAME substring to OUTPUT")
     p_set.add_argument("match")
     p_set.add_argument("output")
@@ -215,6 +242,7 @@ def main(argv: list[str] | None = None) -> int:
         "status": cmd_status,
         "auto": cmd_auto,
         "apply": cmd_apply,
+        "apply-docked": cmd_apply_docked,
         "set": cmd_set,
         "clear": cmd_clear,
         "kcm": cmd_kcm,

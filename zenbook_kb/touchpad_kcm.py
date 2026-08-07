@@ -9,6 +9,7 @@ from typing import Any
 from zenbook_kb.touchpad import (
     DEFAULT_CONFIG,
     discover_touchpads,
+    effective_config_path,
     filter_profile_for_device,
     filters_for_device,
     filters_from_knobs,
@@ -18,18 +19,14 @@ from zenbook_kb.touchpad import (
     pick_default_device,
     resolve_touchpad,
     save_config,
+    transport_for_info,
     upsert_device_profile,
 )
-from zenbook_kb.touchpad_profiles import FILTER_PROFILE_DEFAULT
+from zenbook_kb.touchpad_profiles import FILTER_PROFILE_ADAPTIVE, FILTER_PROFILE_DEFAULT, merge_gui_knobs
 
 
 def _user_config_path() -> Path:
-    user = Path.home() / ".config" / "zenbook-scripts" / "touchpad.json"
-    if user.is_file():
-        return user
-    if DEFAULT_CONFIG.is_file():
-        return DEFAULT_CONFIG
-    return user
+    return effective_config_path(None)
 
 
 def _default_info():
@@ -71,10 +68,14 @@ def import_knobs(data: dict[str, Any]) -> Path:
     if info is None:
         raise RuntimeError("no touchpad")
     cfg = load_config(_user_config_path() if _user_config_path().is_file() else None)
-    filters = filters_from_knobs(
+    prof = str(data.get("filter_profile") or FILTER_PROFILE_DEFAULT)
+    outlier_on = bool(data.get("outlier_enabled", True))
+    if prof == FILTER_PROFILE_ADAPTIVE:
+        outlier_on = False
+    knob_filters = filters_from_knobs(
         delay_enabled=bool(data.get("delay_enabled", True)),
         delay_ms=float(data.get("delay_ms", 25)),
-        outlier_enabled=bool(data.get("outlier_enabled", True)),
+        outlier_enabled=outlier_on,
         max_delta=int(data.get("max_delta", 1200)),
         typing_enabled=bool(data.get("typing_enabled", True)),
         typing_window_ms=float(data.get("typing_window_ms", 350)),
@@ -83,7 +84,10 @@ def import_knobs(data: dict[str, Any]) -> Path:
         soft_accel_mode=str(data.get("soft_accel_mode", "linear")),
         soft_accel_pivot=int(data.get("soft_accel_pivot", 40)),
     )
-    prof = str(data.get("filter_profile") or FILTER_PROFILE_DEFAULT)
+    if prof == FILTER_PROFILE_ADAPTIVE:
+        filters = merge_gui_knobs(FILTER_PROFILE_ADAPTIVE, knob_filters)
+    else:
+        filters = merge_gui_knobs(FILTER_PROFILE_DEFAULT, knob_filters)
     cfg = upsert_device_profile(
         cfg,
         info.key,
@@ -91,6 +95,7 @@ def import_knobs(data: dict[str, Any]) -> Path:
         filter_profile=prof,
         enabled=bool(data.get("profile_enabled", False)),
         make_default=True,
+        transport=transport_for_info(info),
     )
     path = _user_config_path()
     path.parent.mkdir(parents=True, exist_ok=True)

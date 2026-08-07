@@ -188,7 +188,7 @@ PY
 
 zenbook_kb_fn_lock_read_for_save() {
     local path="${1:-${ZENBOOK_KB_DEFAULT_SNAPSHOT}}"
-    local hidraw fn_lock existing
+    local hidraw fn_lock existing=""
 
     if [[ -f "${path}" ]]; then
         existing="$(zenbook_kb_snapshot_read_value "${path}" fn_lock 2>/dev/null || true)"

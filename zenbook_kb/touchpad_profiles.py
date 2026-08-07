@@ -107,8 +107,7 @@ def entry_uses_adaptive(entry: dict[str, Any] | None) -> bool:
     if not entry:
         return False
     if normalize_filter_profile(entry.get("filter_profile")) == FILTER_PROFILE_ADAPTIVE:
-        filters = entry.get("filters")
-        return not (isinstance(filters, list) and filters)
+        return True
     filters = entry.get("filters")
     if not isinstance(filters, list):
         return False
@@ -128,15 +127,59 @@ def normalize_filter_profile(name: object) -> str:
     return FILTER_PROFILE_DEFAULT
 
 
+NESTED_TRANSPORTS = frozenset({"usb", "bluetooth"})
+
+
+def should_nest_transport(transport: str | None) -> bool:
+    return str(transport or "").lower() in NESTED_TRANSPORTS
+
+
+def resolve_transport_entry(
+    entry: dict[str, Any] | None,
+    transport: str | None,
+) -> dict[str, Any] | None:
+    """Merge per-transport overrides (``transports.usb`` / ``.bluetooth``) into entry."""
+    if not entry:
+        return entry
+    transports = entry.get("transports")
+    if not isinstance(transports, dict) or not transport:
+        return entry
+    sub = transports.get(transport)
+    if not isinstance(sub, dict):
+        return {k: v for k, v in entry.items() if k != "transports"}
+    merged = {
+        k: v
+        for k, v in entry.items()
+        if k not in ("transports", "filters", "filter_profile")
+    }
+    merged.update(sub)
+    return merged
+
+
+def _filters_have_adaptive_matrix(filters: list[dict[str, Any]]) -> bool:
+    for item in filters:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("plugin") or "").lower()
+        if name in ("adaptive_matrix", "adaptive-matrix", "adaptive"):
+            return item.get("enabled", True) is not False
+    return False
+
+
 def resolve_device_filters(entry: dict[str, Any] | None) -> list[dict[str, Any]]:
     """Device entry → filter chain.
 
     Explicit ``filters`` list wins. Otherwise ``filter_profile`` selects a preset.
+    Adaptive profile + GUI/KCM knob list (no ``adaptive_matrix``) is merged onto
+    the adaptive preset so soft_accel and typing knobs still apply.
     """
     if not entry:
         return default_profile_filters()
+    profile = normalize_filter_profile(entry.get("filter_profile", FILTER_PROFILE_DEFAULT))
     filters = entry.get("filters")
     if isinstance(filters, list) and filters:
+        if profile == FILTER_PROFILE_ADAPTIVE and not _filters_have_adaptive_matrix(filters):
+            return merge_gui_knobs(FILTER_PROFILE_ADAPTIVE, filters)
         return list(filters)
     return profile_filters(entry.get("filter_profile", FILTER_PROFILE_DEFAULT))
 

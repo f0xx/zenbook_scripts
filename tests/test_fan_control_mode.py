@@ -100,8 +100,39 @@ class TestFanControlMode(unittest.TestCase):
         set_control_mode("manual")
         cfg = {"events": {"sleep_post": {"profile": None}}}
         state = ControllerState()
-        with mock.patch.object(fc, "restore_user_sysfs") as restore:
+        with mock.patch.object(fc, "read_lid_open", return_value=True), mock.patch.object(
+            fc, "restore_user_sysfs"
+        ) as restore:
             run_event(cfg, "sleep_post", state)
+        restore.assert_called_once()
+
+    def test_manual_lid_close_applies_powersave(self) -> None:
+        set_control_mode("manual")
+        cfg = {
+            "profiles": {"powersave": {"platform_profile": "quiet", "pwm": "auto"}},
+            "events": {"lid_close": {"profile": "powersave"}},
+        }
+        state = ControllerState()
+        with mock.patch.object(fc, "apply_profile") as apply:
+            run_event(cfg, "lid_close", state)
+        apply.assert_called_once_with(cfg, "powersave")
+
+    def test_manual_sleep_post_deferred_when_lid_closed(self) -> None:
+        set_control_mode("manual")
+        cfg = {"events": {"sleep_post": {"profile": None}}}
+        state = ControllerState()
+        with mock.patch.object(fc, "read_lid_open", return_value=False), mock.patch.object(
+            fc, "restore_user_sysfs"
+        ) as restore:
+            run_event(cfg, "sleep_post", state)
+        restore.assert_not_called()
+
+    def test_manual_lid_open_restores(self) -> None:
+        set_control_mode("manual")
+        cfg = {"events": {"lid_open": {"profile": None}}}
+        state = ControllerState()
+        with mock.patch.object(fc, "restore_user_sysfs") as restore:
+            run_event(cfg, "lid_open", state)
         restore.assert_called_once()
 
 

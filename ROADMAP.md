@@ -2,136 +2,121 @@
 
 Status legend: **done** · **now** · **next** · **later**
 
-## Where we are (2026-07)
+## Where we are (2026-08)
 
 | Area | Status | Notes |
 |------|--------|--------|
 | Docked UX8406 backlight + Fn chords | **done** | `kb-brightness`, oot `hid-asus`, hotkeys; [`README.fn_row_policy.md`](README.fn_row_policy.md) |
-| ScreenPad (UX5400) | **done** | `screenpad*`; oneshot OpenRC stop fixed |
+| ScreenPad (UX5400) | **done** | `screenpad*`; configure path fix for `/usr/share` |
 | ACPI `platform_profile` CLI | **done** | `kb-platform-profile` |
 | Fan RPM + auto/full PWM | **done** | `platform-fan` (`kb-fan` wrapper) |
 | Adaptive AC/battery/lid/sleep daemon | **done** | `platform-fan-control` + JSON; OpenRC `-c` order fixed |
 | Machine-global config (not per-user) | **done** | `/etc/zenbook-scripts/fan-control.json` |
 | Capability probe / dry-run | **done** | `platform-probe` (`--json` / `--feature` / `--recommend-use`) |
-| Rename away from `kb-fan` | **done** | `platform-fan*`; wrappers remain |
 | Qt6 tray + thermal metrics | **done** | `platform-tray` / `platform-metrics` — **validated UX5400** |
-| Source-only oot hid-asus | **done** | preflight + `USE=kernel` / `--with-kernel` (no prebuilt `.ko`) |
-| Non-interactive sudo | **done** | `sudo -n` via `zenbook_kb/priv.py` + lib helpers |
-| Vendor-agnostic install hints | **done** | probe → Gentoo USE recommendations |
-| EPP / RAPL in fan-control profiles | **done** | `epp` / `rapl` / `intel_pstate` + `platform-power` |
 | Touchpad palm filter MVP | **done** | per-device profiles + Qt6 tuner; UX8406 primary |
-| Touchpad typing-inhibit + soft-accel | **done** | shipped in **0.0.2** |
-| Package / announce **0.0.2** | **done** | tag + published release + Gentoo Manifest/ebuild |
+| Touchpad typing-inhibit + soft-accel | **done** | shipped in **0.0.2**; soft_accel default off unless enabled |
 | Plasma KCM + PowerDevil / session | **done** (0.0.3) | `platform-session` + KCM MVP; tag `v0.0.3` |
-| Ubuntu `.deb` + packaging checks | **done** (CLI) | Smoke-built on Ubuntu 24.04 Server (augury1); KF6/KCM not in Noble |
-| Alpine `apk` + packaging rules | **done** (smoke) | APK built on cast04 |
-| Contributor research library | **done** (seed) | [`docs/`](docs/README.md) — Fn-row RE, daemon atlas, Duo/session/touchpad |
-| Gentoo KCM via `USE=plasma` | **done** (tree) | emerge builds/installs KCM; Displays tab gated |
-| Touchpad GUI calibrate (capture → knobs) | **now** | Guided type/palm/mixed shipped; BT transport profiles + field table remain |
-| UX8406 dual-eDP touch (Plasma/Wayland) | **now** | **`platform-touch-map`** field-validated (ELAN9008→top, ELAN9009→bottom); commit + docs |
-| Closed-lid **night** profile (AC, no suspend) | **scaffold (0.0.4)** | `platform-night-mode` + elogind drop-in; see §4.6 |
-| UX5400 GDX1515 cursor jumps | **done** | PR [#13](https://github.com/f0xx/zenbook_scripts/pull/13) — live filter + grab safety; was mislabeled “WM/DE” |
+| Gentoo KCM via `USE=plasma` | **done** | emerge builds/installs KCM; Displays tab gated |
+| Touchpad GUI calibrate (capture → knobs) | **done** | Guided sequences + nested USB/BT profiles |
+| UX5400 GDX1515 cursor jumps | **done** | PR [#13](https://github.com/f0xx/zenbook_scripts/pull/13) |
+| UX8406 dual-eDP touch (Plasma/Wayland) | **done** | `platform-touch-map`; undocked ELAN9008→eDP-1, ELAN9009→eDP-2 |
+| UX8406 docked touch map | **done (tree)** | `platform-touch-map apply-docked` → both ELAN → eDP-1 when keyboard docked |
+| UX8406 dock BT↔USB touchpad handoff | **done (tree)** | `platform-duo-dock` + udev: stop filter, `restore-kwin`, optional OpenRC restart |
+| KWin pointer touchpad restore | **done (tree)** | `restore-kwin` re-enables Primax/i2c pads (`touch=false` in KWin) |
+| KCM help + load-on-open | **done (tree)** | Handbook HTML/docbook; probe/displays/touchpad status sync on `load()` |
+| Adaptive filter (learn-only) | **done (tree)** | Typing-gated `adaptive_matrix`; no position rewrite; nested transport config |
+| Touchpad config precedence | **done (tree)** | `transports.usb`/`.bluetooth` beats stale flat `name\|phys` keys |
+| Closed-lid **night** profile (AC) | **scaffold** | `platform-night-mode` + elogind drop-in; see §4.6 |
+| Generic non-ASUS fan backends | **done (tree)** | `fan_hwmon.py` — thinkpad / dell / hp / pwm |
+| UX5400 AccelSpeed polish | **done (tree)** | `touchpad.json.example.ux5400` nonlinear soft_accel |
+| Ubuntu KF6 / KCM `.deb` | **done (tree)** | `zenbook-scripts-plasma` via `packaging/debian/build-kcm.sh` |
 | UX581 lightbar (HID `0b05:0124`) | **later** | **blocked on hardware**; side branch `zenbook_ux581` |
-| UX5400 AccelSpeed polish | **later** | same pipeline; lower priority than UX8406 |
-| Generic non-ASUS fan backends | **later** | thinkpad/hp/dell hwmon profiles |
-| Ubuntu KF6 / KCM `.deb` | **later** | needs 26.04+ or Kubuntu KF6 stack |
+| **0.0.4 tag + merge to main** | **done** | Tagged `v0.0.4` 2026-08-07 |
 
-## After **0.0.3** — next RC (**0.0.4**)
+## After **0.0.3** — **0.0.4** RC
 
 | # | Track | Status | Intent |
 |---|--------|--------|--------|
 | 4.0 | **KCM in emerge + Displays gate** | **done** | `USE=plasma` builds KCM; tab gated by Duo/ScreenPad. |
-| 4.1 | **Touchpad Calibrate deepen** | **mostly done** | Guided sequences + analyzer + apply/restart shipped; nested USB/BT profiles + operator field table remain. |
-| 4.2 | **`docs/` research library** | **seeded** | Expand as RE continues; see [`docs/README.md`](docs/README.md). |
-| 4.3 | **Dual-eDP touch map** | **field OK** | `platform-touch-map` (KWin `outputName` + `kcminputrc` `OutputUuid`); preset corrected on UX8406. Tag after commit. |
-| 4.4 | **Fan manual lock** | **done (tree)** | Tray/CLI sticky profile + `fan-control-mode`; validated UX5400. |
-| 4.5 | **BT Fn-row + hotkeys robustness** | **done (tree)** | Vendor `0x3d`→F4; hotkeys survives BT↔dock transition; pidfile for non-root OpenRC. |
-| 4.6 | **Closed-lid night (AC server)** | **scaffold shipped** | `platform-night-mode`, snapshot restore, elogind drop-in; enable in `night-mode.json`. |
-| 4.7 | **UX5400 GDX1515 live filter** | **done (main)** | PR [#13](https://github.com/f0xx/zenbook_scripts/pull/13): sporadic jumps over long sessions → `exec_delay` + `outlier_reject`; `--force` gate; UX5400 install seeds GDX1515 profile. |
+| 4.1 | **Touchpad Calibrate deepen** | **done** | Guided sequences, analyzer, nested USB/BT transports. |
+| 4.2 | **`docs/` research library** | **seeded** | [`docs/README.md`](docs/README.md) |
+| 4.3 | **Dual-eDP touch map** | **done** | `platform-touch-map`; undock + session `touch_map_apply`. |
+| 4.3b | **Duo dock touch + touchpad handoff** | **done (tree)** | Docked panel map; BT↔USB cursor unfreeze — see §4.3b. |
+| 4.4 | **Fan manual lock** | **done** | Tray/CLI sticky profile + `fan-control-mode`. |
+| 4.5 | **BT Fn-row + hotkeys robustness** | **done** | Vendor `0x3d`→F4; dock transitions; `zenbook-kb-lid` OpenRC quiet stop. |
+| 4.6 | **Closed-lid night (AC server)** | **scaffold** | `platform-night-mode`; enable in `night-mode.json`. |
+| 4.7 | **UX5400 GDX1515 live filter** | **done** | PR [#13](https://github.com/f0xx/zenbook_scripts/pull/13). |
 | 4.8 | **UX581 lightbar** | **blocked** | Hardware-gated; `zenbook_ux581`. |
-| 4.9 | **Adaptive touchpad filter** | **in progress** | Branch `feature/adaptive-touchpad-filter` → merge to 4.x branch first. |
-| — | **Release hygiene** | **open** | Commit/push unreleased tree, sync CHANGELOG, Gentoo `9999`, operator redeploy notes. |
+| 4.9 | **Adaptive touchpad filter** | **done (tree)** | Learn-only, typing-gated; KCM profile selector — see §4.9. |
+| 4.10 | **UX5400 AccelSpeed polish** | **done (tree)** | GDX1515 nonlinear preset + doc. |
+| 4.11 | **Generic fan backends** | **done (tree)** | `fan_hwmon.py`. |
+| 4.12 | **Ubuntu KF6 `.deb` + KCM** | **done (tree)** | `zenbook-scripts-plasma`. |
+| — | **Release hygiene** | **done** | CHANGELOG, Gentoo `0.0.4` ebuild, merge → `main`, tag `v0.0.4`. |
 
-### 4.6 Closed-lid night profile (scaffold — 0.0.4)
+### 4.3b Duo dock: touchscreens + keyboard touchpad (2026-08)
 
-**Status:** shipped as opt-in scaffold — `platform-night-mode`, `night-mode.json`,
-`contrib/elogind/99-zenbook-night-mode.conf`, `docs/daemons/night-mode.md`.
-Set `"enabled": true` after installing the elogind drop-in.
+**Symptom:** Undocked touch OK; **dock keyboard back** → lower-panel touch wrong and/or **cursor frozen** on USB Primax pad.
 
-**Goal:** On **AC power**, closing the lid does **not** suspend. Instead apply a
-**night** profile: panel(s) off, keyboard backlight off, fan quiet / powersave,
-CPU/EPP minimum, **network stays up**. Lid open restores the prior thermal +
-display state (same persistence pattern as fan manual lock / saved profile).
+**Root causes (fixed in tree):**
 
-**Why it is not “just PowerDevil”:** Lid-close usually propagates as suspend
-through **elogind** (`HandleLidSwitch`) and/or **Plasma PowerDevil** before our
-daemons run. We need to **intercept or override** that path early (session hook,
-elogind drop-in, or inhibit) so suspend never starts; then apply our own
-`lid_close` actions via `platform-session` / `platform-fan-control` /
-`kb-brightness-sleep` (already have lid events — today they assume sleep follows).
+1. **Touchscreens:** eDP-2 disabled on dock but saved map still had ELAN9009→eDP-2.
+   → `platform-touch-map apply-docked` maps both ELAN digitizers → **eDP-1**.
+2. **Pointer touchpad:** Live filter (or prior session) left KWin **`enabled=false`**
+   on the new USB `eventN` node. KWin classifies keyboard touchpads as pointer
+   (`touch=false`), so old `restore-kwin` skipped them.
+   → `restore_all_compositor_touchpads()` + `list_pointer_touchpads()`;
+   `platform-touchpad restore-kwin`; wired from `platform-duo-dock` and udev.
 
-**Likely integration points:**
+**Operator recovery:**
 
-| Layer | Role |
-|-------|------|
-| elogind / logind | `HandleLidSwitchExternalPower=ignore` (or `lock`) — stop kernel/session suspend on AC |
-| PowerDevil / KCM | Lid closed → **Turn off screen** (not Suspend) when on AC |
-| `zenbook-kb-lid` / `kb-brightness-lid-watch` | Already watches `LidClosed`; extend for night vs sleep |
-| `platform-fan-control` | `events.lid_close` → night profile; `lid_open` → restore saved manual/auto |
-| `platform-session` | Per-user `session.json` profile: `on_lid_close` / `on_lid_open` action lists |
-| Duo | Optional: disable eDP-2 in night mode when undocked |
-
-**Not mandatory for 0.0.4 tag** — scaffold + docs ship; field validation on UX5400
-can follow. Full PowerDevil/KScreen polish can slip to 0.0.5 without blocking release.
-
-### 4.7 UX5400 GDX1515 live filter (shipped — PR #13)
-
-**Symptom:** integrated **GDX1515** pad on UX5400EA — sporadic cursor jumps that
-build up over long Plasma sessions; reboot was the only relief without filtering.
-Looked like a WM/compositor bug; root cause is pad glitches, not KWin.
-
-**Shipped (`fix/touchpad-live-filter-safety` → main):**
-
-- GDX1515 whitelisted for live filter (no `--force`); `touchpad.json.example.ux5400`
-  seeded on UX5400 install
-- `live_filter_refusal_reason()` + CLI/GUI `--force` for unknown pads
-- Grab recovery docs + `platform-touchpad stop`; GUI profile off by default
-- `install.py` global fix for platform-profile boot paths
-
-Optional follow-up: long-session soak on UX5400; enable `zenbook-platform-touchpad`
-OpenRC if you want always-on.
-
-### 4.9 Adaptive filtering (experimental — `feature/adaptive-touchpad-filter`)
-
-**Goal:** selectable **filter profiles** — `default` (static chain, unchanged) vs
-`adaptive` (online amplitude learning + 2×2 axis matrix, spike-aware).
-
-Not palm-only: extended event filtering that **self-adopts to leftovers** after
-static stages miss — learns typical motion amplitudes, ignores sporadic spikes,
-optional predictive velocity subtract. Persists state per device under
-`~/.config/zenbook-scripts/adaptive-touchpad/`.
-
-**Merge order (required):**
-
-```text
-feature/adaptive-touchpad-filter  →  feature/0.0.4-touch-map-calibrate  →  main
+```bash
+platform-touchpad stop
+platform-touchpad restore-kwin
+platform-touch-map apply-docked    # when USB pogo docked
+platform-touch-map apply           # when undocked / BT
 ```
 
-Do **not** PR 0.0.4 to main until adaptive branch merges or is explicitly dropped.
+**Caution:** Keep live filter **off** until USB raw pad is stable after dock.
+OpenRC `zenbook-platform-touchpad` restart on handoff is optional — only if you
+already run the service.
+
+### 4.9 Adaptive filtering (done in tree — field soak pending)
+
+**Profiles:** `default` (static outlier chain) vs `adaptive` (`adaptive_matrix`).
+
+**Shipped behaviour (Aug 2026):**
+
+- Adaptive runs **only during typing-inhibit window** (same gate as outlier).
+- **Learn-only** — no frame drop, no position rewrite (fixes sticky cursor).
+- State under `~/.config/zenbook-scripts/adaptive-touchpad/`.
+- KCM + nested `transports.usb` / `.bluetooth` in `touchpad.json`.
+
+**Still to validate:** UX8406 long-session soak with live filter **on** after
+dock handoff fixes; optional re-enable attenuation behind a knob if palm glitches
+return without sticky side effects.
 
 See [`docs/touchpad/adaptive-filtering.md`](docs/touchpad/adaptive-filtering.md).
 
-Visual roadmap: Cursor canvas `platform-roadmap.canvas.tsx` (toward 0.0.4) — optional; see dependency graph below.
+### 4.6 Closed-lid night profile (scaffold)
 
-## After **0.0.2** — shipped as **0.0.3** (`feature/plasma-kcm-powerdevil`)
+Opt-in: `platform-night-mode`, `night-mode.json`, elogind drop-in.
+Not mandatory for 0.0.4 tag.
 
-| # | Track | Intent |
-|---|--------|--------|
-| 3.1 | **Plasma KCM + PowerDevil / session** | **Shipped in 0.0.3.** |
-| 3.2 | **Ubuntu / Debian** | **CLI `.deb` smoke on 24.04.** |
-| 3.3 | **Alpine** | **APK smoke on cast04.** |
-| 3.4 | **UX5400 GDX1515 jumps** | Shipped in 0.0.4 prep via PR [#13](https://github.com/f0xx/zenbook_scripts/pull/13) (was “WM/DE TBD”). |
-| 3.5 | **UX581 lightbar** | Still blocked on hardware. |
+### 4.10–4.12 (done in tree)
+
+- **4.10:** `touchpad.json.example.ux5400`, `docs/touchpad/ux5400-accel.md`
+- **4.11:** `zenbook_kb/fan_hwmon.py`
+- **4.12:** Debian `zenbook-scripts-plasma` build script
+
+### Release gate (0.0.4) — **shipped 2026-08-07**
+
+```text
+feature/adaptive-touchpad-filter ─► merge main ─► tag v0.0.4
+```
+
+Field validation: UX5400 GDX1515 live filter (motion); UX8406 dock handoff (tree).
+KCM full pass still open (Help, Displays, Start/Stop live filter).
 
 ## Gentoo USE mapping
 
@@ -153,100 +138,70 @@ platform-probe --recommend-use
 
 ## 0.0.4 dependency graph
 
-Legend: **solid** = shipped or in tree · **dashed** = optional / deferred · **blocked** = needs hardware
-
 ```mermaid
 flowchart TB
   subgraph done ["Done (0.0.4)"]
     KCM["4.0 KCM emerge + Displays gate"]
     FANLOCK["4.4 Fan manual lock"]
-    CAL["4.1 Calibrate guided capture"]
+    CAL["4.1 Calibrate + nested USB/BT"]
     TOUCH["4.3 platform-touch-map"]
-    FNROW["4.5 BT Fn-row + hotkeys fix"]
+    DOCK["4.3b Dock touch + pointer restore"]
+    FNROW["4.5 BT Fn-row + hotkeys + lid"]
     GDX["4.7 UX5400 GDX1515 filter"]
+    ADAPT["4.9 Adaptive learn-only"]
+    ACCEL["4.10 UX5400 AccelSpeed"]
+    FAN["4.11 Generic fan backends"]
+    DEB["4.12 Ubuntu KF6 deb + KCM"]
+    KCMHELP["KCM handbook + sync load"]
   end
 
-  subgraph open ["Open for tag"]
-    REL["Release hygiene<br/>commit · CHANGELOG · 9999"]
-    DOCS["4.2 docs expand"]
-    CAL2["4.1 BT transport profiles<br/>field table"]
-  end
-
-  subgraph likely ["Likely 0.0.4 — optional"]
-    NIGHT["4.6 Closed-lid night<br/>block suspend on AC"]
+  subgraph now ["Now"]
+    REL["Release hygiene + merge + tag"]
+    SOAK["UX8406 dock/filter field soak"]
   end
 
   subgraph defer ["Deferred / blocked"]
     UX581["4.8 UX581 lightbar"]
+    NIGHT["4.6 Closed-lid night field soak"]
   end
 
-  KCM --> REL
-  FANLOCK --> REL
-  CAL --> CAL2
-  CAL --> REL
-  TOUCH --> REL
-  FNROW --> REL
-  GDX --> REL
-  DOCS -.-> REL
-
-  NIGHT -.->|needs| SESS["platform-session"]
-  NIGHT -.->|needs| LID["kb-lid / elogind"]
-  NIGHT -.->|needs| FAN["platform-fan-control lid_*"]
-  SESS --> NIGHT
-  LID --> NIGHT
-  FAN --> NIGHT
-
+  done --> REL
+  SOAK -.-> REL
+  NIGHT -.-> defer
   UX581 -.-> defer
 ```
 
-**Brief task blurbs**
-
-| ID | Task | Depends on | Notes |
-|----|------|------------|-------|
-| 4.0 | KCM in emerge | KF6, `USE=plasma` | **Done** — no manual `build.sh` on emerge |
-| 4.1 | Calibrate deepen | `platform-touchpad` capture, GUI | **Mostly done** — USB/BT nested keys optional |
-| 4.2 | Docs library | contributor RE | Seeded; grow incrementally |
-| 4.3 | Dual-eDP touch | KWin D-Bus, `kcminputrc` | **Field OK** on UX8406; swap preset in tree |
-| 4.4 | Fan manual lock | tray, fan-control, `/var/lib` | **Done** — UX5400 validated |
-| 4.5 | BT keyboard path | bt-fn-row, hotkeys, pidfile | **Done** — dock + undock transitions |
-| 4.6 | Closed-lid night | elogind ignore, session, fan lid events | **Likely, not mandatory** — see §4.6 |
-| 4.7 | UX5400 GDX1515 live filter | PR #13, `platform-touchpad` | **Done** — optional UX5400 soak |
-| 4.8 | UX581 lightbar | HID `0b05:0124` HW | Blocked |
-| — | Release | all committed tracks | Tag `v0.0.4` when ready |
-
-## Dependency sketch (components)
+## Component sketch
 
 ```
 platform-probe ──────────────► install decisions (USE / configure flags)
        │
-       ├─► platform-fan ◄──── asus-nb-wmi OR generic pwm hwmon
-       │         ▲
-       │         │
-       └─► platform-fan-control ─► platform_profile + platform-fan
-                    │                      │
-                    │                      └─► platform-power (EPP/RAPL/pstate)
-                    │                                 ▲
-                    │                                 │ profile JSON keys
-                    ▼                                 │
-              platform-tray (qt6) ────────────────────┘
-                    │
-                    ├─► metrics SQLite graph  (validated UX5400)
-                    ├─► platform-touchpad-gui ──► platform-touchpad
-                    │         │                         │
-                    │         │                         ├─ typing-inhibit
-                    │         │                         ├─ exec-delay
-                    │         │                         ├─ outlier-reject
-                    │         │                         └─ soft-accel
-                    │         └─ per-device touchpad.json v2
-                    │
-                    └─► (done) announced 0.0.2
-                              └─► (done) 0.0.3 Plasma KCM + session + Duo BT
-                              └─► (now) 0.0.4: touch-map · fan lock · calibrate · BT fixes
-                              └─► (likely opt) closed-lid night on AC
-                              └─► (later) UX581 · Ubuntu KF6
+       ├─► platform-duo-dock ──► kscreen eDP-2 + touch-map + touchpad handoff
+       │         └─► udev 99-zenbook-duo-dock.rules
+       │
+       ├─► platform-touch-map ──► KWin outputName (screens + restore-kwin pads)
+       │
+       ├─► platform-touchpad ──► EVIOCGRAB + uinput filter chain
+       │         ├─ default: typing_inhibit → exec_delay → outlier → soft_accel
+       │         └─ adaptive: typing-gated adaptive_matrix (learn-only)
+       │
+       ├─► platform-fan-control ─► platform-fan / platform-power
+       │
+       └─► platform-tray / KCM (USE=plasma)
+                 └─► platform-touchpad-gui / platform-touchpad-kcm
 
-screenpad* / zenbook-screenpad (oneshot)     UX5400 only
-screenpad-sync (daemon)                      optional brightness mirror
+screenpad* (UX5400)          zenbook-kb-lid / zenbook-kb-hotkeys (OpenRC)
+contrib/udev/99-uinput.rules   optional: /dev/uinput group for user-started filter
 ```
+
+## After **0.0.4** — **next**
+
+| Track | Intent |
+|-------|--------|
+| Live filter + dock automation | SIGHUP transport switch or safe auto-restart only when filter was running |
+| KCM live sparkline | Touchpad tab ΔX/ΔY monitor (noted in KCM UI) |
+| Packaging maintainers | Debian/Alpine VM build notes in `packaging/MAINTAINERS.md` |
+| UX581 lightbar | HID feature reports when hardware available |
+| Plasma resume watcher | QSG thread threshold auto-`plasmashell --replace` (session.json) |
 
 Contributor research: [`docs/`](docs/README.md). See also [PLANNED.md](PLANNED.md) and [CHANGELOG.md](CHANGELOG.md).

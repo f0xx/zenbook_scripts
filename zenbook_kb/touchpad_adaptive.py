@@ -180,6 +180,25 @@ class AdaptiveMatrixFilter(Filter):
         by = max(self.min_baseline, self.state.baseline_y)
         return abs(dx) > self.spike_sigma * bx or abs(dy) > self.spike_sigma * by
 
+    def _should_attenuate_spike(self, dx: float, dy: float) -> bool:
+        """Clamp only small isolated glitches — never stall fast or ongoing motion."""
+        if not self._is_spike(dx, dy):
+            return False
+        speed = abs(dx) + abs(dy)
+        if speed > max(50.0, self.spike_sigma * self.min_baseline * 2.5):
+            return False
+        vel_speed = abs(self.state.vel_x) + abs(self.state.vel_y)
+        if vel_speed > 6.0 and speed >= vel_speed * 0.3:
+            return False
+        return True
+
+    def _clamp_delta(self, dx: float, dy: float) -> tuple[float, float]:
+        bx = max(self.min_baseline, self.state.baseline_x)
+        by = max(self.min_baseline, self.state.baseline_y)
+        cap_x = self.spike_sigma * bx * 0.85
+        cap_y = self.spike_sigma * by * 0.85
+        return max(-cap_x, min(cap_x, dx)), max(-cap_y, min(cap_y, dy))
+
     def _update_matrix(self) -> None:
         """Diagonal scales shrink when baseline noise on an axis is high."""
         bx = max(self.min_baseline, self.state.baseline_x)
@@ -264,40 +283,17 @@ class AdaptiveMatrixFilter(Filter):
         dx = float(x - lx)
         dy = float(y - ly)
 
-        # Predictive residual: subtract EWMA velocity before spike test.
-        pred_dx = self.predict_weight * self.state.vel_x
-        pred_dy = self.predict_weight * self.state.vel_y
-        resid_dx = dx - pred_dx
-        resid_dy = dy - pred_dy
-
-        if self._is_spike(resid_dx, resid_dy):
-            self.spikes_dropped += 1
-            # Pass raw position through — dropping frames freezes the cursor
-            # (UX5400 GDX1515: sticky centre until finger lift).
-            self._last = (x, y)
-            self.stats.note(1, 1)
-            return frame
-
-        # Decay stale velocity when movement slows (avoids over-prediction).
-        speed = (dx * dx + dy * dy) ** 0.5
-        if speed < max(self.min_baseline, self.state.baseline_x, self.state.baseline_y):
-            decay = 0.5
-            self.state.vel_x *= decay
-            self.state.vel_y *= decay
-
-        # Learn from accepted residuals (ignore spikes above).
-        self.state.baseline_x = self._ewma(self.state.baseline_x, abs(resid_dx))
-        self.state.baseline_y = self._ewma(self.state.baseline_y, abs(resid_dy))
+        # Learn-only: never drop or rewrite — attenuation caused sticky cursor on UX8406.
+        if not self._is_spike(dx, dy):
+            self.state.baseline_x = self._ewma(self.state.baseline_x, abs(dx))
+            self.state.baseline_y = self._ewma(self.state.baseline_y, abs(dy))
+            self.learn_updates += 1
         self.state.vel_x = self._ewma(self.state.vel_x, dx)
         self.state.vel_y = self._ewma(self.state.vel_y, dy)
         self.state.samples += 1
-        self.learn_updates += 1
         self._update_matrix()
 
-        adx, ady = self._apply_matrix(resid_dx, resid_dy)
-        nx = int(round(lx + pred_dx + adx))
-        ny = int(round(ly + pred_dy + ady))
-        self._last = (nx, ny)
+        self._last = (x, y)
         self._maybe_persist()
         self.stats.note(1, 1)
-        return self._rewrite_frame(frame, nx, ny, use_mt=use_mt)
+        return frame

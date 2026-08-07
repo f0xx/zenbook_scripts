@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<title>ZenBook Platform — System Settings Help</title>
+<style>
+body { font-family: sans-serif; max-width: 56rem; margin: 1.5rem auto; line-height: 1.55; color: #222; }
+h1,h2,h3 { color: #1d49a8; }
+h1 { border-bottom: 2px solid #dde4f5; padding-bottom: 0.4rem; }
+code, pre { background: #f4f4f4; border-radius: 3px; }
+code { padding: 0.1em 0.35em; }
+pre { padding: 0.75rem 1rem; overflow-x: auto; }
+.important { border-left: 4px solid #c0392b; padding: 0.75rem 1rem; background: #fdf2f2; margin: 1rem 0; }
+.note { border-left: 4px solid #2980b9; padding: 0.75rem 1rem; background: #f0f7fd; margin: 1rem 0; }
+dl dt { font-weight: bold; margin-top: 0.75rem; }
+dl dd { margin-left: 0; margin-bottom: 0.5rem; }
+ul { padding-left: 1.25rem; }
+nav.toc { background: #f8f9fc; padding: 1rem 1.25rem; border-radius: 6px; margin-bottom: 1.5rem; }
+nav.toc ul { margin: 0.25rem 0 0; }
+</style>
+</head>
+<body>
+
+<h1>ZenBook Platform</h1>
+<p>System Settings module for <strong>zenbook-scripts</strong> on ASUS ZenBook Duo and related
+models. Configures keyboard backlight, dual-eDP dock, ScreenPad, sleep/resume policy,
+scheduled profiles, and the touchpad live filter.</p>
+
+<nav class="toc">
+<strong>Contents</strong>
+<ul>
+<li><a href="#overview">Overview tab</a></li>
+<li><a href="#displays">Displays tab</a></li>
+<li><a href="#sleep">Sleep / Resume tab</a></li>
+<li><a href="#profiles">Profiles tab</a></li>
+<li><a href="#touchpad">Touchpad tab</a></li>
+<li><a href="#cli">Command-line reference</a></li>
+<li><a href="#files">Configuration files</a></li>
+<li><a href="#services">OpenRC services</a></li>
+<li><a href="#troubleshooting">Troubleshooting</a></li>
+</ul>
+</nav>
+
+<h2 id="overview">Overview tab</h2>
+<p>Shows output of <code>platform-probe</code>: DMI product, fan backend, platform profile,
+attached touchpads, and USB/BT keyboard nodes. This text is loaded automatically when
+the module opens — you do not need to press Refresh first.</p>
+<p>Use <strong>Refresh</strong> after attaching the keyboard dock, resuming from sleep, or
+switching Bluetooth/USB transport.</p>
+
+<h2 id="displays">Displays tab</h2>
+<p>Status for Duo dock and ScreenPad is populated when the module opens. Refresh only
+if you changed hardware state while System Settings stayed open.</p>
+
+<h3>Duo dock (UX8406 / UX581 / UX582)</h3>
+<p>The lower eDP panel is managed by <code>platform-duo-dock</code>, not by ordinary
+<code>kscreen-doctor</code> alone. Screen swap toggles stacked layout via
+<code>platform-screen-swap</code>.</p>
+<ul>
+<li><strong>Docked</strong> — enable lower panel in stacked layout</li>
+<li><strong>Undocked</strong> — disable lower panel</li>
+<li><strong>Screen swap</strong> — swap which panel is primary upper/lower</li>
+</ul>
+
+<h3>ScreenPad (UX5400 and similar)</h3>
+<p>Secondary panel backlight via <code>screenpad</code> (asus_screenpad sysfs). This is
+<strong>not</strong> the same as Duo eDP-2 dock management.</p>
+<ul>
+<li><strong>On / Off</strong> — power and brightness</li>
+<li><strong>Sync to main</strong> — match main panel brightness percentage once</li>
+</ul>
+
+<h2 id="sleep">Sleep / Resume tab</h2>
+<p>Per-user session policy stored in <code>~/.config/zenbook-scripts/session.json</code>
+and applied by <code>platform-session</code>.</p>
+<dl>
+<dt>Restore presentation after plasmashell replace</dt>
+<dd>Re-applies PowerDevil presentation mode after <code>plasmashell --replace</code>.
+Presentation inhibit is owned by plasmashell and is lost on replace; PowerDevil itself
+survives.</dd>
+<dt>Watch QSG render threads</dt>
+<dd>After resume, count plasmashell threads named QSGRenderThread / Mesa (gdrv, traceq).
+Useful on Plasma 6.6 Wayland when resume leaks render threads (common on dual-eDP Duo).
+Off by default.</dd>
+<dt>Auto plasmashell --replace</dt>
+<dd>When watch is enabled and thread count exceeds the threshold, run
+<code>plasmashell --replace</code>. Does not kill applications — kwin_wayland keeps windows.</dd>
+<dt>QSG thread threshold</dt>
+<dd>Total QSG/Mesa-related threads across plasmashell PIDs before auto-replace.
+Healthy: under ~16; leaked resume on Duo often exceeds 32. Default 32, range 1–256.
+Manual check: <code>platform-session plasmashell check</code>.</dd>
+</dl>
+
+<h2 id="profiles">Profiles tab</h2>
+<p>Edits <code>~/.config/zenbook-scripts/profiles.json</code>: day/night schedules, fan
+curves, keyboard backlight levels. <strong>Apply</strong> writes JSON;
+<code>platform-profiles</code> evaluates schedules via cron.</p>
+
+<h2 id="touchpad">Touchpad tab</h2>
+<div class="important">
+<p><strong>Soft accel and palm filters only work when the live filter is running.</strong>
+Use <em>Start live filter</em> or OpenRC <code>zenbook-platform-touchpad</code>.
+After changing knobs, click <strong>Apply</strong> — the module restarts the live filter
+if it was already running. Raw libinput in Plasma is unchanged; only the uinput
+virtual device gets filtered motion.</p>
+</div>
+
+<p>Config path (user overrides system):</p>
+<pre>~/.config/zenbook-scripts/touchpad.json   (preferred)
+/etc/zenbook-scripts/touchpad.json       (fallback)</pre>
+
+<h3>Controls</h3>
+<dl>
+<dt>Profile enabled</dt>
+<dd>Whether this touchpad participates in the live filter daemon.</dd>
+<dt>Filter profile: Default</dt>
+<dd>Static chain: typing_inhibit → exec_delay → outlier_reject → soft_accel.
+Outlier reject drops single-frame teleports above <em>Max delta</em>.</dd>
+<dt>Filter profile: Adaptive</dt>
+<dd>Replaces fixed outlier thresholds with <code>adaptive_matrix</code>, which learns
+per-axis noise online. Small isolated glitches are <em>attenuated</em> (clamped), not
+dropped — fast swipes and ongoing gestures pass through unchanged. State persists under
+<code>~/.config/zenbook-scripts/adaptive-touchpad/</code>.</dd>
+<dt>Typing inhibit</dt>
+<dd>Suppresses pointer motion briefly after keyboard activity (palm-while-typing).</dd>
+<dt>Exec delay</dt>
+<dd>Buffers motion briefly so typing inhibit can arm before a stray pad event fires.</dd>
+<dt>Outlier reject / Max delta</dt>
+<dd>Only used in <em>Default</em> profile. Ignored when Adaptive is selected.</dd>
+<dt>Soft accel / Soft gain</dt>
+<dd>Scales ABS motion on the uinput path (DE AccelSpeed bypass). Try 160–200%
+(gain 1.6–2.0). Nonlinear mode and calibration are in the full tuner GUI.</dd>
+<dt>Start / Stop live filter</dt>
+<dd>Runs <code>platform-touchpad run --replace</code> or <code>stop</code>.</dd>
+<dt>Live status</dt>
+<dd>Output of <code>platform-touchpad status</code> — loaded when the module opens.
+Shows config path, daemon PID, per-pad filter chain and counters.</dd>
+</dl>
+
+<div class="note">
+<p><strong>USB vs Bluetooth:</strong> Duo keyboard touchpad settings are stored per transport
+under a logical device entry. KCM saves to the nested <code>transports.usb</code> or
+<code>transports.bluetooth</code> block. Stale flat keys (<code>name|phys</code>) are removed
+on save.</p>
+</div>
+
+<p><em>Open full tuner…</em> launches <code>platform-touchpad-gui</code> (calibrate wizard,
+live monitor, adaptive stats).</p>
+
+<h2 id="cli">Command-line reference</h2>
+<pre>platform-probe
+platform-duo-dock status|docked|undocked
+platform-screen-swap toggle
+screenpad status|on|off|sync
+platform-touchpad status|run [--replace]|stop
+platform-touchpad-kcm export|import
+platform-touchpad-gui
+platform-session plasmashell check
+platform-profiles status|set &lt;mode&gt;
+kb-brightness &lt;level&gt;
+configure.py --all-yes --defaults</pre>
+
+<h2 id="files">Configuration files</h2>
+<ul>
+<li><code>~/.config/zenbook-scripts/session.json</code> — sleep/resume, plasmashell watch</li>
+<li><code>~/.config/zenbook-scripts/profiles.json</code> — schedules, fans, keyboard</li>
+<li><code>~/.config/zenbook-scripts/touchpad.json</code> — live filter knobs</li>
+<li><code>~/.config/zenbook-scripts/adaptive-touchpad/*.json</code> — learned adaptive state</li>
+<li><code>/etc/zenbook-scripts/</code> — system-wide defaults (overridden by user config)</li>
+</ul>
+
+<h2 id="services">OpenRC services (Gentoo)</h2>
+<ul>
+<li><code>zenbook-kb-hotkeys</code> — Fn-row, keyboard backlight hotkeys</li>
+<li><code>zenbook-kb-lid</code> — lid-close keyboard backlight policy</li>
+<li><code>zenbook-platform-touchpad</code> — live filter daemon</li>
+<li><code>zenbook-screenpad</code> — ScreenPad boot brightness (UX5400)</li>
+</ul>
+<p>Install and enable via <code>configure.py --all-yes --defaults</code> from the
+zenbook-scripts tree.</p>
+
+<h2 id="troubleshooting">Troubleshooting</h2>
+<h3>Live status empty in KCM</h3>
+<p>Rebuild and install the KCM plugin, then restart System Settings. Status is fetched
+synchronously on module load. If empty, run <code>platform-touchpad status</code> in a
+terminal — the KCM shows the same output.</p>
+
+<h3>Soft accel does nothing</h3>
+<ol>
+<li>Start the live filter (KCM button or <code>platform-touchpad run --replace</code>).</li>
+<li>Enable Soft accel and Apply.</li>
+<li>Confirm status shows <code>soft_accel: in=… out=…</code> counters increasing while moving.</li>
+<li>Ensure you are using the filtered uinput device — not testing on a second unfiltered pad.</li>
+</ol>
+
+<h3>Adaptive feels sticky or jumpy</h3>
+<p>Older builds dropped glitch frames entirely (cursor freeze). Current adaptive
+<strong>attenuates</strong> small spikes instead. Reset learned state:
+<code>rm ~/.config/zenbook-scripts/adaptive-touchpad/*.json</code>, restart live filter.
+If problems persist, switch to Default profile temporarily and report via GitHub issues.</p>
+
+<h3>Help button shows “Documentation not Found”</h3>
+<p>Handbook must be installed under
+<code>/usr/share/doc/HTML/en/kcm_zenbook_platform/index.html</code>.
+Rebuild KCM: <code>cd plasma/kcm &amp;&amp; sudo env PREFIX=/usr ./build.sh --system</code>.</p>
+
+<h3>Displays tab shows “(no status yet)”</h3>
+<p>Module should auto-load on open. If hardware was just attached, click Refresh once.
+Check <code>platform-duo-dock status</code> or <code>screenpad status</code> manually.</p>
+
+<p>Upstream docs:
+<a href="https://github.com/f0xx/zenbook_scripts/blob/main/README.plasma.md">README.plasma.md</a>,
+<a href="https://github.com/f0xx/zenbook_scripts/tree/main/docs/touchpad">docs/touchpad/</a>.</p>
+
+</body>
+</html>

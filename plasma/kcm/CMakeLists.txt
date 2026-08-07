@@ -24,6 +24,8 @@ find_package(KF6 ${KF6_MIN_VERSION} REQUIRED COMPONENTS
     KCMUtils
 )
 
+find_package(KF6DocTools ${KF6_MIN_VERSION} QUIET)
+
 # Gentoo installs Plasma KCMs under Qt's plugin dir (lib64/qt6/plugins), not
 # plain lib64/plugins — otherwise System Settings / kcmshell6 --list miss them.
 if(DEFINED Qt6_DIR)
@@ -41,3 +43,13 @@ if(NOT ZENBOOK_SCRIPTS_ROOT)
 endif()
 
 add_subdirectory(src)
+
+# Handbook: DocBook → HTML when kdoctools + DTD available; always install static fallback.
+install(FILES doc/index.html DESTINATION ${KDE_INSTALL_DOCBUNDLEDIR}/en/kcm_zenbook_platform RENAME index.html)
+
+if(KF6DocTools_FOUND)
+    kdoctools_create_handbook(
+        doc/index.docbook
+        INSTALL_DESTINATION ${KDE_INSTALL_DOCBUNDLEDIR}/en SUBDIR kcm_zenbook_platform
+    )
+endif()

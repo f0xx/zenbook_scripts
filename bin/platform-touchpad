@@ -40,6 +40,7 @@ from zenbook_kb.touchpad import (  # noqa: E402
     DEFAULT_EXEC_DELAY_MS,
     DEFAULT_MAX_DELTA,
     Ev,
+    effective_config_path,
     UInputProxy,
     apply_pipeline_knobs,
     bind_soft_accel_bounds,
@@ -55,6 +56,7 @@ from zenbook_kb.touchpad import (  # noqa: E402
     resolve_touchpad,
     run_selftest,
     save_config,
+    transport_for_info,
     upsert_device_profile,
 )
 from zenbook_kb.touchpad_profiles import (  # noqa: E402
@@ -73,13 +75,17 @@ from zenbook_kb.pidfile import (  # noqa: E402
 
 def _restore_compositor_touchpad(info) -> None:
     try:
-        from zenbook_kb.touch_map import release_kwin_after_live_filter
+        from zenbook_kb.touch_map import (
+            release_kwin_after_live_filter,
+            restore_all_compositor_touchpads,
+        )
 
         release_kwin_after_live_filter(
             touchpad_path=info.path,
             name_hint=info.name,
             phase="full",
         )
+        restore_all_compositor_touchpads()
     except Exception:
         pass
 
@@ -163,6 +169,7 @@ def _pump(
 
     signal.signal(signal.SIGINT, _stop)
     signal.signal(signal.SIGTERM, _stop)
+    signal.signal(signal.SIGHUP, _stop)
 
     frame: list[Ev] = []
     frames_in = frames_out = 0
@@ -224,6 +231,7 @@ def cmd_capture(args: argparse.Namespace) -> int:
 
     signal.signal(signal.SIGINT, _stop)
     signal.signal(signal.SIGTERM, _stop)
+    signal.signal(signal.SIGHUP, _stop)
 
     meta = {
         "t": __import__("time").time(),
@@ -374,8 +382,29 @@ def cmd_stop(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_restore_kwin(_args: argparse.Namespace) -> int:
+    """Re-enable physical touchpads in KWin after a crashed/stale live filter."""
+    from zenbook_kb.touch_map import restore_all_compositor_touchpads
+
+    n = restore_all_compositor_touchpads()
+    pads = []
+    try:
+        from zenbook_kb.touch_map import list_pointer_touchpads
+
+        pads = [
+            f"{d.sysname} ({d.name})"
+            for d in list_pointer_touchpads()
+        ]
+    except Exception:
+        pass
+    print(f"restored {n} KWin input device(s)")
+    if pads:
+        print("pointer touchpads:", ", ".join(pads))
+    return 0
+
+
 def cmd_status(args: argparse.Namespace) -> int:
-    cfg_path = Path(args.config) if args.config else DEFAULT_CONFIG
+    cfg_path = Path(args.config) if args.config else effective_config_path(None)
     cfg = load_config(cfg_path if cfg_path.is_file() else None)
     pads = discover_touchpads()
     live_pid = read_pidfile(TOUCHPAD_PIDFILE, clear_stale=True)
@@ -436,6 +465,7 @@ def cmd_profile(args: argparse.Namespace) -> int:
                 info.key,
                 filter_profile=FILTER_PROFILE_ADAPTIVE,
                 enabled=device_profile_enabled(cfg, info, path=info.path),
+                transport=transport_for_info(info),
             )
         else:
             cfg = upsert_device_profile(
@@ -443,6 +473,7 @@ def cmd_profile(args: argparse.Namespace) -> int:
                 info.key,
                 filters=filters_for_device(cfg, info, path=info.path),
                 enabled=device_profile_enabled(cfg, info, path=info.path),
+                transport=transport_for_info(info),
             )
         save_config(cfg, cfg_path if cfg_path else DEFAULT_CONFIG)
         print(f"set {info.key} filter_profile={name} → {cfg_path or DEFAULT_CONFIG}")
@@ -565,6 +596,10 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="SIGKILL if the filter does not exit promptly",
     )
+    sub.add_parser(
+        "restore-kwin",
+        help="re-enable physical touchpads in KWin (after crashed live filter)",
+    )
 
     p_prof = sub.add_parser("profile", help="show or set filter_profile (default|adaptive)")
     prof_sub = p_prof.add_subparsers(dest="profile_cmd", required=True)
@@ -590,6 +625,8 @@ def main(argv: list[str] | None = None) -> int:
             return cmd_status(args)
         if args.cmd == "stop":
             return cmd_stop(args)
+        if args.cmd == "restore-kwin":
+            return cmd_restore_kwin(args)
         if args.cmd == "selftest":
             return cmd_selftest(args)
         if args.cmd == "sim":

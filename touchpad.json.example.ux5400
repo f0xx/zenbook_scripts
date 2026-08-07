@@ -9,7 +9,13 @@
         { "plugin": "typing_inhibit", "window_ms": 350, "enabled": true },
         { "plugin": "exec_delay", "ms": 25, "enabled": true },
         { "plugin": "outlier_reject", "max_delta": 1200, "enabled": true },
-        { "plugin": "soft_accel", "gain": 1.6, "mode": "linear", "pivot": 40, "enabled": false }
+        {
+          "plugin": "soft_accel",
+          "gain": 1.45,
+          "mode": "nonlinear",
+          "pivot": 30,
+          "enabled": true
+        }
       ]
     }
   }

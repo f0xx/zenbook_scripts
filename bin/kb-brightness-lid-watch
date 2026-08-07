@@ -4,27 +4,16 @@
 
 set -euo pipefail
 
-PIDFILE="${ZENBOOK_LID_PIDFILE:-/run/zenbook-kb-lid.pid}"
-
-_zenbook_clear_stale_pidfile() {
-	local pf="$1" pid=""
-	[[ -f "${pf}" ]] || return 0
-	pid="$(tr -d '[:space:]' < "${pf}" 2>/dev/null || true)"
-	if [[ -z "${pid}" ]] || ! kill -0 "${pid}" 2>/dev/null; then
-		rm -f "${pf}"
-	fi
+_zenbook_find_bin() {
+	local name="$1" c
+	for c in "/usr/bin/${name}" "/usr/local/bin/${name}"; do
+		if [[ -x "${c}" ]]; then
+			echo "${c}"
+			return 0
+		fi
+	done
+	return 1
 }
-
-# OpenRC owns pidfile + supervision; standalone runs manage their own.
-if [[ -z "${RC_SVCNAME:-}" ]]; then
-	_zenbook_clear_stale_pidfile "${PIDFILE}"
-	if [[ -f "${PIDFILE}" ]]; then
-		echo "lid-watch already running (pid $(cat "${PIDFILE}"), ${PIDFILE}); remove pidfile or stop the service" >&2
-		exit 1
-	fi
-	echo $$ >"${PIDFILE}"
-	trap 'rm -f "${PIDFILE}"' EXIT INT TERM HUP
-fi
 
 zenbook_kb_run_user() {
 	if [[ -r /etc/conf.d/zenbook-kb-hotkeys ]]; then
@@ -41,9 +30,10 @@ if [[ -n "${USER}" && "${USER}" != root ]]; then
 	export ZENBOOK_CALIB_USER="${USER}"
 fi
 
-SLEEP_BIN="${KB_BRIGHTNESS_SLEEP_BIN:-/usr/bin/kb-brightness-sleep}"
-if [[ ! -x "${SLEEP_BIN}" ]]; then
-	SLEEP_BIN="/usr/local/bin/kb-brightness-sleep"
+SLEEP_BIN="${KB_BRIGHTNESS_SLEEP_BIN:-$(_zenbook_find_bin kb-brightness-sleep || true)}"
+if [[ -z "${SLEEP_BIN}" ]]; then
+	echo "kb-brightness-sleep not found under /usr/bin or /usr/local/bin" >&2
+	exit 1
 fi
 BUS=org.freedesktop.login1
 PATH_OBJ=/org/freedesktop/login1
@@ -65,9 +55,8 @@ _apply() {
 
 _night_mode() {
 	local state="$1"
-	local bin="${PLATFORM_NIGHT_MODE_BIN:-/usr/bin/platform-night-mode}"
-	[[ -x "${bin}" ]] || bin="/usr/local/bin/platform-night-mode"
-	[[ -x "${bin}" ]] || return 0
+	local bin="${PLATFORM_NIGHT_MODE_BIN:-$(_zenbook_find_bin platform-night-mode || true)}"
+	[[ -n "${bin}" ]] || return 0
 	case "${state}" in
 		true)  "${bin}" lid-close ;;
 		false) "${bin}" lid-open ;;
@@ -80,7 +69,7 @@ if ! busctl status "${BUS}" >/dev/null 2>&1; then
 fi
 
 last="$(_lid_closed)"
-logger -t zenbook-kb-brightness "lid-watch: started (LidClosed=${last} pidfile=${PIDFILE})"
+logger -t zenbook-kb-brightness "lid-watch: started (LidClosed=${last})"
 
 while true; do
 	sleep 0.4
