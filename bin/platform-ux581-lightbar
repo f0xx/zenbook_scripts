@@ -1,0 +1,620 @@
+#!/usr/bin/env python3
+"""Probe / drive UX581 front lightbar (I2C HID 0b05:0124 via hidraw).
+
+Protocol matches andykarpov/expertbook-led (ALED0217): 33-byte feature report
+0x20, byte 1 = sub-command. UX582 reports 7 zones — static RGB needs report
+0x5A and/or a 21-byte 0x20 payload (5-zone expertbook RGB is B9450-class only).
+
+Examples:
+  platform-ux581-lightbar effect 5 --brightness 12 --infinite
+  platform-ux581-lightbar effects     # colour-ish presets (no solid RGB on 7-zone)
+  platform-ux581-lightbar effect 6 --infinite --brightness 24
+  platform-ux581-lightbar bus-reset        # Linux: I2C/HID rebind (no Windows)
+  platform-ux581-lightbar off
+"""
+
+from __future__ import annotations
+
+import argparse
+import os
+import sys
+import time
+from pathlib import Path
+
+VENDOR_ID = 0x0B05
+PRODUCT_ID = 0x0124
+REPORT_ID = 0x20
+REPORT_LEN = 33
+REPORT_5A_ID = 0x5A
+REPORT_5A_LEN = 17  # 1 + 16 (HID descriptor)
+
+RGB_GAIN = 0x20
+
+# UX581/UX582 (7 LEDs): early hidapitester research found effects 1–20 only;
+# no constant solid fill. Subcmd 0x80 is ExpertBook B9450 (5 zones) — on UX582
+# it triggers a spurious pulse (often blue), ignoring RGB bytes. Never subcmd 6.
+EFFECT_HINTS: dict[int, str] = {
+    1: "short blue pulse",
+    2: "longer blue pulse",
+    6: "red blink",
+    16: "red-yellowish",
+    20: "last built-in effect",
+}
+
+# Subcmd 5 = how many LEDs are active (UX581 research). Value 1 = leftmost only.
+# After bad rgb/0x5A probes, subcmd 5 often leaves static per-segment colours; prefer
+# hidapitester-minimal: brightness → (infinite) → effect only.
+SUBCMD_ACTIVE_LEDS = 0x05
+SUBCMD_NEVER = 0x06  # bricks controller — do not send
+# Physical segments on UX581/UX582 (community photos); GET byte3 can lie when confused.
+UX582_LED_SEGMENTS = 7
+
+
+def _hid_ioctl_cmd(length: int, *, set_feature: bool) -> int:
+    base = 0xC0094806 if set_feature else 0xC0094807
+    return base | (length << 16)
+
+
+def _find_hidraw() -> Path | None:
+    for hidraw in sorted(Path("/sys/class/hidraw").glob("hidraw*")):
+        uevent = hidraw / "device" / "uevent"
+        if not uevent.is_file():
+            continue
+        text = uevent.read_text(encoding="utf-8", errors="replace").upper()
+        if f"{VENDOR_ID:04X}" in text and f"{PRODUCT_ID:04X}" in text:
+            return Path("/dev") / hidraw.name
+    return None
+
+
+class _Session:
+    def __init__(self, path: Path) -> None:
+        self.path = path
+        self._fd: int | None = None
+
+    def __enter__(self) -> _Session:
+        self._fd = os.open(self.path, os.O_RDWR)
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        if self._fd is not None:
+            os.close(self._fd)
+            self._fd = None
+
+    def _ioctl(self, buf: bytearray, *, set_feature: bool) -> bytes:
+        import fcntl
+
+        assert self._fd is not None
+        cmd = _hid_ioctl_cmd(len(buf), set_feature=set_feature)
+        fcntl.ioctl(self._fd, cmd, buf)
+        return bytes(buf)
+
+    def send_20(self, body: list[int]) -> bytes:
+        buf = bytearray(REPORT_LEN)
+        buf[0] = REPORT_ID
+        for i, val in enumerate(body):
+            if i + 1 >= REPORT_LEN:
+                break
+            buf[i + 1] = val & 0xFF
+        return self._ioctl(buf, set_feature=True)
+
+    def get_20(self) -> bytes:
+        buf = bytearray(REPORT_LEN)
+        buf[0] = REPORT_ID
+        return self._ioctl(buf, set_feature=False)
+
+    def send_5a(self, payload: list[int], *, offset: int | None = None) -> bytes:
+        buf = bytearray(REPORT_5A_LEN)
+        buf[0] = REPORT_5A_ID
+        if offset is not None:
+            buf[1] = offset & 0xFF
+            start = 2
+        else:
+            start = 1
+        for i, val in enumerate(payload):
+            pos = start + i
+            if pos >= REPORT_5A_LEN:
+                break
+            buf[pos] = val & 0xFF
+        return self._ioctl(buf, set_feature=True)
+
+    def query_zones(self) -> int:
+        self.send_20([0xC1, 0x02])
+        time.sleep(0.15)
+        out = self.get_20()
+        if out[0] != REPORT_ID or out[1] != 0xC1 or out[2] != 0x02:
+            raise OSError(f"led-count: bad GET {out.hex()}")
+        return int(out[3])
+
+
+def _expand_colors(colors: list[int], zones: int) -> list[int]:
+    if len(colors) == 3:
+        return list(colors) * zones
+    if len(colors) == zones * 3:
+        return list(colors)
+    raise ValueError(f"need 3 or {zones * 3} RGB values, got {len(colors)}")
+
+
+def cmd_effects(_: argparse.Namespace) -> int:
+    print("Built-in hardware effects (subcmd 1, param 1–20). UX582: 7 LED zones.")
+    print("Solid RGB fill is not available via known HID on this model.")
+    print("(ExpertBook B9450 5-zone 0x80 RGB misbehaves here — blue pulse.)")
+    print()
+    for n in range(1, 21):
+        hint = EFFECT_HINTS.get(n, "")
+        suffix = f"  — {hint}" if hint else ""
+        print(f"  {n:2d}{suffix}")
+    print()
+    print("Example: platform-ux581-lightbar effect 6 --brightness 24 --infinite")
+    return 0
+
+
+def cmd_rgb(args: argparse.Namespace) -> int:
+    dev = _find_hidraw()
+    if not dev:
+        print("lightbar HID not found", file=sys.stderr)
+        return 1
+
+    with _Session(dev) as session:
+        try:
+            zones = session.query_zones()
+        except OSError as exc:
+            print(exc, file=sys.stderr)
+            return 1
+
+    if zones != 5:
+        print(
+            f"Static RGB is not supported on this lightbar (led_zones={zones}).",
+            file=sys.stderr,
+        )
+        print(
+            "Subcmd 0x80 (ExpertBook direct RGB) triggers a wrong animation "
+            "(often blue pulse) and ignores R/G/B bytes.",
+            file=sys.stderr,
+        )
+        print("Use hardware effects instead:", file=sys.stderr)
+        print("  platform-ux581-lightbar effects", file=sys.stderr)
+        print(
+            "  platform-ux581-lightbar effect <1-20> --brightness N --infinite",
+            file=sys.stderr,
+        )
+        return 1
+
+    # B9450-class five-zone path only (untested on UX581 — do not use on 7-zone).
+    try:
+        colors_in = [int(c) & 0xFF for c in args.colors]
+        rgb = _expand_colors(colors_in, 5)
+    except ValueError as exc:
+        print(exc, file=sys.stderr)
+        return 2
+
+    with _Session(dev) as session:
+        session.send_20([0x07])
+        time.sleep(0.08)
+        if not 1 <= args.brightness <= 32:
+            print("brightness must be 1–32", file=sys.stderr)
+            return 2
+        session.send_20([0x04, args.brightness])
+        body = [0x80, 0x00, RGB_GAIN, *rgb]
+        pkt = session.send_20(body)
+    print(f"rgb (5-zone expertbook): {pkt[:20].hex()}…")
+    return 0
+
+
+def cmd_led_count(_: argparse.Namespace) -> int:
+    dev = _find_hidraw()
+    if not dev:
+        print("lightbar HID not found", file=sys.stderr)
+        return 1
+    with _Session(dev) as session:
+        try:
+            session.send_20([0xC1, 0x02])
+            time.sleep(0.15)
+            out = session.get_20()
+        except OSError as exc:
+            print(exc, file=sys.stderr)
+            return 1
+    if out[1] != 0xC1 or out[2] != 0x02:
+        print(f"led-count: unexpected GET: {out.hex()}", file=sys.stderr)
+        return 1
+    print(f"led_zones: {out[3]}")
+    return 0
+
+
+def cmd_get(args: argparse.Namespace) -> int:
+    dev = _find_hidraw()
+    if not dev:
+        print("lightbar HID not found", file=sys.stderr)
+        return 1
+    rid = args.report_id
+    length = REPORT_5A_LEN if rid == REPORT_5A_ID else REPORT_LEN
+    buf = bytearray(length)
+    buf[0] = rid
+    with _Session(dev) as session:
+        try:
+            out = session._ioctl(buf, set_feature=False)
+        except OSError as exc:
+            print(f"GET feature 0x{rid:02x} failed: {exc}", file=sys.stderr)
+            return 1
+    print(f"GET 0x{rid:02x}: {out.hex()}")
+    return 0
+
+
+def cmd_status(_: argparse.Namespace) -> int:
+    dev = _find_hidraw()
+    if not dev:
+        print("lightbar HID 0b05:0124 not found (check hidraw / permissions)", file=sys.stderr)
+        return 1
+    print(f"hidraw: {dev}")
+    with _Session(dev) as session:
+        try:
+            out = session.get_20()
+            print(f"feature 0x{REPORT_ID:02x} (read): {out.hex()}")
+        except OSError as exc:
+            print(f"feature 0x{REPORT_ID:02x} (read): ({exc})")
+        try:
+            z = session.query_zones()
+            print(f"led_zones: {z}")
+        except OSError as exc:
+            print(f"led-count: ({exc})")
+    for led in Path("/sys/class/leds").glob("asus*"):
+        try:
+            bright = (led / "brightness").read_text().strip()
+            max_b = (led / "max_brightness").read_text().strip()
+            print(f"led: {led.name} brightness={bright}/{max_b}")
+        except OSError:
+            print(f"led: {led.name}")
+    return 0
+
+
+def _query_zones_safe(session: _Session) -> int:
+    try:
+        z = session.query_zones()
+    except OSError:
+        return UX582_LED_SEGMENTS
+    if z == UX582_LED_SEGMENTS:
+        return z
+    # C1 query returns 7 on a healthy UX582; 16/255 often after bad 0x80 / 0x5A probes.
+    if z in (16, 255) or z > 12:
+        return UX582_LED_SEGMENTS
+    return z if 1 <= z <= 12 else UX582_LED_SEGMENTS
+
+
+def _prepare_animation(
+    session: _Session,
+    *,
+    active_leds: int,
+    brightness: int | None,
+    infinite: bool,
+    hard_reset: bool = False,
+    leading_off: bool = False,
+) -> list[str]:
+    """Enable all segments, brightness, loop. Off only for hard_reset / explicit off."""
+    sent: list[str] = []
+    if hard_reset:
+        for _ in range(3):
+            p = session.send_20([0x07])
+            sent.append(f"off: {p[:4].hex()}")
+            time.sleep(0.12)
+        p = session.send_20([0x02, 0])
+        sent.append(f"loop_disable: {p[:4].hex()}")
+        time.sleep(0.08)
+        p = session.send_20([0x07])
+        sent.append(f"off: {p[:4].hex()}")
+        time.sleep(0.1)
+    elif leading_off:
+        p = session.send_20([0x07])
+        sent.append(f"off: {p[:4].hex()}")
+        time.sleep(0.1)
+    p = session.send_20([SUBCMD_ACTIVE_LEDS, active_leds & 0xFF])
+    sent.append(f"active_leds={active_leds}: {p[:4].hex()}")
+    if brightness is not None:
+        if not 1 <= brightness <= 32:
+            raise ValueError("brightness must be 1–32")
+        p = session.send_20([0x04, brightness])
+        sent.append(f"brightness: {p[:4].hex()}")
+    if infinite:
+        p = session.send_20([0x02, 0x02])
+        sent.append(f"infinite: {p[:4].hex()}")
+    return sent
+
+
+def cmd_recover(args: argparse.Namespace) -> int:
+    dev = _find_hidraw()
+    if not dev:
+        print("lightbar HID not found", file=sys.stderr)
+        return 1
+    effect = args.effect
+    if not 1 <= effect <= 20:
+        print("effect must be 1–20", file=sys.stderr)
+        return 2
+    with _Session(dev) as session:
+        active = args.active_leds
+        try:
+            sent = _prepare_animation(
+                session,
+                active_leds=active,
+                brightness=args.brightness,
+                infinite=True,
+                hard_reset=True,
+            )
+            p = session.send_20([0x01, effect])
+            sent.append(f"effect: {p[:4].hex()}")
+        except (OSError, ValueError) as exc:
+            print(exc, file=sys.stderr)
+            return 1
+    for line in sent:
+        print(line)
+    print(
+        f"recover: active_leds={active}, effect {effect}. "
+        "If still one LED: full shutdown (not just reboot), or boot Windows once."
+    )
+    return 0
+
+
+def cmd_effect(args: argparse.Namespace) -> int:
+    dev = _find_hidraw()
+    if not dev:
+        print("lightbar HID not found", file=sys.stderr)
+        return 1
+    if not 1 <= args.effect <= 20:
+        print("effect must be 1–20", file=sys.stderr)
+        return 2
+    sent: list[str] = []
+    with _Session(dev) as session:
+        active = args.active_leds
+        if active is None and args.all_segments:
+            active = _query_zones_safe(session)
+        try:
+            if active is not None:
+                sent.extend(
+                    _prepare_animation(
+                        session,
+                        active_leds=active,
+                        brightness=args.brightness,
+                        infinite=args.infinite,
+                        leading_off=args.leading_off,
+                    )
+                )
+            else:
+                if args.brightness is not None:
+                    if not 1 <= args.brightness <= 32:
+                        print("brightness must be 1–32", file=sys.stderr)
+                        return 2
+                    p = session.send_20([0x04, args.brightness])
+                    sent.append(f"brightness: {p[:4].hex()}")
+                if args.infinite:
+                    p = session.send_20([0x02, 0x02])
+                    sent.append(f"infinite: {p[:4].hex()}")
+            p = session.send_20([0x01, args.effect])
+            sent.append(f"effect: {p[:4].hex()}")
+        except (OSError, ValueError) as exc:
+            print(exc, file=sys.stderr)
+            return 1
+    for line in sent:
+        print(line)
+    return 0
+
+
+I2C_ALED_NAME = "i2c-ALED0217:00"
+HID_ALED_MODALIAS_SUFFIX = "0B05:0124"
+
+
+def _hid_sysfs_id() -> str | None:
+    for hid in Path("/sys/bus/hid/devices").glob("*"):
+        try:
+            u = (hid / "uevent").read_text(encoding="utf-8", errors="replace").upper()
+        except OSError:
+            continue
+        if HID_ALED_MODALIAS_SUFFIX.replace(":", "") in u.replace(":", "") or "0124" in u:
+            return hid.name
+    return None
+
+
+def cmd_bus_reset(args: argparse.Namespace) -> int:
+    """Rebind i2c-hid + HID (no feature spam). Best Linux-only fix when latched G-B static."""
+    import subprocess
+
+    hid_id = _hid_sysfs_id()
+    steps: list[str] = []
+    unbind_hid = Path("/sys/bus/hid/drivers/hid-generic/unbind")
+    unbind_i2c = Path("/sys/bus/i2c/drivers/i2c_hid_acpi/unbind")
+    bind_i2c = Path("/sys/bus/i2c/drivers/i2c_hid_acpi/bind")
+
+    def _write(path: Path, value: str) -> None:
+        if not path.is_file() and not path.exists():
+            raise OSError(f"missing {path}")
+        r = subprocess.run(
+            ["sudo", "-n", "tee", str(path)],
+            input=value + "\n",
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if r.returncode != 0:
+            raise PermissionError(f"need root to write {path}: {r.stderr.strip()}")
+
+    try:
+        if hid_id and unbind_hid.is_file():
+            _write(unbind_hid, hid_id)
+            steps.append(f"unbind hid {hid_id}")
+            time.sleep(1)
+        if unbind_i2c.is_file():
+            _write(unbind_i2c, I2C_ALED_NAME)
+            steps.append(f"unbind {I2C_ALED_NAME}")
+            time.sleep(2)
+        if bind_i2c.is_file():
+            _write(bind_i2c, I2C_ALED_NAME)
+            steps.append(f"bind {I2C_ALED_NAME}")
+            time.sleep(2)
+    except (OSError, PermissionError) as exc:
+        print(exc, file=sys.stderr)
+        print(
+            "If sudo -n failed, run as root or add NOPASSWD for tee to sysfs.",
+            file=sys.stderr,
+        )
+        return 1
+
+    for s in steps:
+        print(s)
+    if not _find_hidraw():
+        print("ALED hidraw not back yet — cold power off (see docs) or reboot.", file=sys.stderr)
+        return 1
+    print(f"hidraw: {_find_hidraw()}")
+    if args.play is not None:
+        return cmd_effect(
+            argparse.Namespace(
+                effect=args.play,
+                brightness=args.brightness,
+                infinite=True,
+                all_segments=False,
+                leading_off=False,
+                active_leds=None,
+            )
+        )
+    print(
+        "Bus reset done. Try: platform-ux581-lightbar effect 2 --brightness 32 --infinite"
+    )
+    print(
+        "If still static G-B pattern: full shutdown, power off 1–2 min (Windows not required)."
+    )
+    return 0
+
+
+def cmd_off(_: argparse.Namespace) -> int:
+    dev = _find_hidraw()
+    if not dev:
+        print("lightbar HID not found", file=sys.stderr)
+        return 1
+    with _Session(dev) as session:
+        p = session.send_20([0x07])
+    print(f"off: {p[:4].hex()}")
+    return 0
+
+
+def cmd_on(args: argparse.Namespace) -> int:
+    return cmd_effect(
+        argparse.Namespace(
+            effect=args.anim,
+            brightness=args.brightness if args.brightness else 12,
+            infinite=True,
+        )
+    )
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    sub = parser.add_subparsers(dest="cmd", required=True)
+
+    sub.add_parser("status", help="hidraw, GET 0x20, led-count")
+    sub.add_parser("led-count", help="query zone count (safe handshake)")
+    p_get = sub.add_parser("get", help="read feature report")
+    p_get.add_argument(
+        "--report-id",
+        type=lambda x: int(x, 0),
+        default=REPORT_ID,
+        dest="report_id",
+    )
+
+    p_bus = sub.add_parser(
+        "bus-reset",
+        help="unbind/rebind I2C ALED0217 (Linux-only; no rgb/recover)",
+    )
+    p_bus.add_argument(
+        "--play",
+        type=int,
+        default=None,
+        metavar="N",
+        help="optional: after reset, run effect 1–20 (default: bus only, no effect)",
+    )
+    p_bus.add_argument("--brightness", type=int, default=32, metavar="N")
+
+    p_rec = sub.add_parser(
+        "recover",
+        help="(avoid on UX582) off + subcmd 5 — can worsen latched static colours",
+    )
+    p_rec.add_argument(
+        "--effect",
+        type=int,
+        default=5,
+        metavar="N",
+        help="effect 1–20 after reset (default 5)",
+    )
+    p_rec.add_argument(
+        "--brightness",
+        type=int,
+        default=24,
+        metavar="N",
+        help="1–32 (default 24)",
+    )
+    p_rec.add_argument(
+        "--active-leds",
+        type=int,
+        default=UX582_LED_SEGMENTS,
+        metavar="N",
+        help=f"subcmd 5 count (default {UX582_LED_SEGMENTS} on UX582)",
+    )
+
+    p_eff = sub.add_parser("effect", help="play hardware effect 1–20")
+    p_eff.add_argument("effect", type=int)
+    p_eff.add_argument("--brightness", type=int, default=None, metavar="N")
+    p_eff.add_argument("--infinite", action="store_true")
+    p_eff.add_argument(
+        "--all-segments",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="subcmd 5 LED count before effect (default off — can latch static colours on UX582)",
+    )
+    p_eff.add_argument(
+        "--leading-off",
+        action="store_true",
+        help="send off (0x07) before arming effect (can leave bar black if stuck)",
+    )
+    p_eff.add_argument(
+        "--active-leds",
+        type=int,
+        default=None,
+        metavar="N",
+        help="subcmd 5 (default: queried zone count). Never use 1 unless debugging.",
+    )
+
+    sub.add_parser(
+        "effects",
+        help="list built-in effect IDs (colour animations, not solid RGB on UX582)",
+    )
+    p_rgb = sub.add_parser(
+        "rgb",
+        help="direct RGB (ExpertBook B9450 five-zone only; disabled on UX582)",
+    )
+    p_rgb.add_argument("colors", type=int, nargs="+", metavar="N")
+    p_rgb.add_argument(
+        "--brightness",
+        type=int,
+        default=32,
+        metavar="N",
+        help="PWM 1–32 before RGB (default 32)",
+    )
+
+    p_on = sub.add_parser("on", help="legacy: effect + brightness + infinite")
+    p_on.add_argument("--anim", type=int, default=5, metavar="N")
+    p_on.add_argument("--brightness", type=int, default=12, metavar="N")
+
+    sub.add_parser("off", help="turn off (subcmd 0x07)")
+
+    args = parser.parse_args(argv)
+    handlers = {
+        "status": cmd_status,
+        "led-count": cmd_led_count,
+        "get": cmd_get,
+        "effect": cmd_effect,
+        "bus-reset": cmd_bus_reset,
+        "recover": cmd_recover,
+        "rgb": cmd_rgb,
+        "effects": cmd_effects,
+        "on": cmd_on,
+        "off": cmd_off,
+    }
+    return int(handlers[args.cmd](args))
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
