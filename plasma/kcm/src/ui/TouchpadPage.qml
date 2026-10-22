@@ -8,9 +8,11 @@ import org.kde.kirigami as Kirigami
 
 ColumnLayout {
     id: root
+    width: parent ? parent.width : implicitWidth
     spacing: Kirigami.Units.largeSpacing
 
     property var knobs: ({})
+    readonly property bool softAccelOn: knobs.soft_accel_enabled === true
     readonly property bool liveRunning: (kcm.touchpadStatusText || "").indexOf("live:     running") >= 0
         || (kcm.touchpadStatusText || "").indexOf("live:\trunning") >= 0
 
@@ -27,8 +29,10 @@ ColumnLayout {
     }
 
     function patch(field, value) {
-        knobs[field] = value
-        kcm.touchpadKnobsJson = JSON.stringify(knobs, null, 2)
+        var next = JSON.parse(JSON.stringify(knobs))
+        next[field] = value
+        knobs = next
+        kcm.touchpadKnobsJson = JSON.stringify(next, null, 2)
     }
 
     Component.onCompleted: reload(false)
@@ -114,14 +118,29 @@ ColumnLayout {
         }
         QQC2.CheckBox {
             Kirigami.FormData.label: i18n("Soft accel")
-            checked: knobs.soft_accel_enabled === true
+            checked: root.softAccelOn
             onToggled: root.patch("soft_accel_enabled", checked)
         }
         QQC2.SpinBox {
             Kirigami.FormData.label: i18n("Soft gain (×100)")
+            enabled: root.softAccelOn
             from: 50; to: 300
             value: Math.round((knobs.soft_accel_gain || 1.6) * 100)
             onValueModified: root.patch("soft_accel_gain", value / 100.0)
+        }
+        QQC2.ComboBox {
+            Kirigami.FormData.label: i18n("Soft accel curve")
+            enabled: root.softAccelOn
+            model: [
+                { text: i18n("Linear (constant gain)"), value: "linear" },
+                { text: i18n("Non-linear (slow moves ~1×)"), value: "nonlinear" }
+            ]
+            textRole: "text"
+            currentIndex: {
+                var m = knobs.soft_accel_mode || "linear"
+                return m === "nonlinear" ? 1 : 0
+            }
+            onActivated: root.patch("soft_accel_mode", model[currentIndex].value)
         }
     }
 
@@ -147,6 +166,14 @@ ColumnLayout {
             text: i18n("Reload")
             onClicked: root.reload()
         }
+    }
+
+    QQC2.Label {
+        Layout.fillWidth: true
+        wrapMode: Text.WordWrap
+        visible: (knobs.filter_profile || "default") === "adaptive"
+        text: i18n("Adaptive profile: outlier reject is replaced by the learn matrix (typing-gated). Soft accel still runs on every motion frame after the matrix — enable it and Apply, then restart the live filter.")
+        opacity: 0.85
     }
 
     QQC2.Label {

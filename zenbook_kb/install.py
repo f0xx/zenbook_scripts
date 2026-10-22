@@ -134,6 +134,7 @@ def refresh_install_paths(prefix: str | Path | None = None) -> Path:
     INSTALLED_KO_ROOT = zb_paths.KO_ROOT
     OPENRC_CONF = zb_paths.CONFD_DIR / "zenbook-kb-hotkeys"
     SYSTEMD_UNIT = zb_paths.SYSTEMD_DIR / "zenbook-kb-hotkeys.service"
+    SYSTEMD_HID_ASUS_UNIT = zb_paths.SYSTEMD_DIR / "zenbook-kb-hid-asus.service"
     SYSTEMD_SCREENPAD_UNIT = zb_paths.SYSTEMD_DIR / "zenbook-screenpad.service"
     SYSTEMD_SCREENPAD_SYNC_UNIT = zb_paths.SYSTEMD_DIR / "zenbook-screenpad-sync.service"
     SYSTEMD_PLATFORM_PROFILE_UNIT = zb_paths.SYSTEMD_DIR / "zenbook-platform-profile.service"
@@ -279,6 +280,7 @@ def install_kb_brightness_tree(script_dir: Path) -> None:
         (script_dir / "bin" / "platform-duo-dock", zb_paths.bin_dir() / "platform-duo-dock"),
         (script_dir / "bin" / "platform-bt-fn-row", zb_paths.bin_dir() / "platform-bt-fn-row"),
         (script_dir / "bin" / "platform-metrics", zb_paths.bin_dir() / "platform-metrics"),
+        (script_dir / "bin" / "platform-hid-asus-health", zb_paths.bin_dir() / "platform-hid-asus-health"),
         (script_dir / "bin" / "kb-fan", INSTALL_BIN_FAN_LEGACY),
         (script_dir / "bin" / "kb-fan-control", INSTALL_BIN_FAN_CONTROL_LEGACY),
     ):
@@ -318,6 +320,11 @@ def install_kb_brightness_tree(script_dir: Path) -> None:
     if platform_profiles.is_file():
         dest = zb_paths.bin_dir() / "platform-profiles"
         _sudo(["cp", str(platform_profiles), str(dest)])
+        _sudo(["chmod", "a+x", str(dest)])
+    ux581_lightbar = script_dir / "bin" / "platform-ux581-lightbar"
+    if ux581_lightbar.is_file():
+        dest = zb_paths.bin_dir() / "platform-ux581-lightbar"
+        _sudo(["cp", str(ux581_lightbar), str(dest)])
         _sudo(["chmod", "a+x", str(dest)])
     tp_kcm = script_dir / "bin" / "platform-touchpad-kcm"
     if tp_kcm.is_file():
@@ -498,17 +505,30 @@ def install_openrc_service(script_dir: Path, run_user: str | None = None) -> Non
     print(f"Installed OpenRC service {OPENRC_INIT} (user {user}, conf {OPENRC_CONF})")
 
 
+def install_systemd_hid_asus_service(script_dir: Path) -> None:
+    """Boot sideload oot hid-asus + vendor if4 ensure (systemd)."""
+    src = script_dir / "contrib" / "systemd" / "zenbook-kb-hid-asus.service"
+    if not src.is_file():
+        return
+    install_hid_asus_libexec(script_dir)
+    _sudo(["cp", str(src), str(SYSTEMD_HID_ASUS_UNIT)])
+    _sudo(["systemctl", "daemon-reload"])
+    _sudo(["systemctl", "enable", "zenbook-kb-hid-asus.service"], check=False)
+    print(f"Installed systemd unit {SYSTEMD_HID_ASUS_UNIT}")
+
+
 def install_systemd_service(run_user: str | None = None) -> None:
     user = run_user or resolve_run_user()
     validate_unix_user(user)
     unit = f"""[Unit]
 Description=Zenbook Duo keyboard hotkeys (Fn+)
-After=local-fs.target
+After=local-fs.target zenbook-kb-hid-asus.service
 
 [Service]
 Type=simple
 User={user}
 Group=input
+ExecStartPre=+/usr/libexec/zenbook-hid-asus-switch ensure-if4
 ExecStart={INSTALL_BIN_HOTKEYS}
 Restart=on-failure
 RestartSec=2
@@ -1090,13 +1110,15 @@ def install_hotkey_service(
     if init == "systemd":
         install_systemd_service()
         if with_kernel:
+            build_and_install_hid_asus(script_dir, force=kernel_force)
+            install_systemd_hid_asus_service(script_dir)
+            _sudo(["systemctl", "start", "zenbook-kb-hid-asus.service"], check=False)
+        else:
             print(
-                "NOTE: systemd path installs hotkeys only; oot hid-asus OpenRC "
-                "sideload helpers are OpenRC-oriented. Building module anyway.",
+                "Skipping oot hid-asus (no --with-kernel / declined).\n"
+                f"{SKIP_FEATURES_MSG}",
                 flush=True,
             )
-            build_and_install_hid_asus(script_dir, force=kernel_force)
-            install_hid_asus_libexec(script_dir)
     else:
         install_openrc_service(script_dir)
         install_openrc_lid_service(script_dir)

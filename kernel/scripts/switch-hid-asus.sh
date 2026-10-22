@@ -7,6 +7,7 @@
 #   sudo ./switch-hid-asus.sh keep          # cancel watchdog after manual typing test
 #   sudo ./switch-hid-asus.sh stock
 #   sudo ./switch-hid-asus.sh verify
+#   sudo ./switch-hid-asus.sh ensure-if4   # reprobe vendor if4 after boot / hard reset
 #
 # sideload starts a background watchdog (default 120s). If you do not run `keep`
 # in time, stock is restored automatically — use touchpad + on-screen keyboard,
@@ -302,6 +303,45 @@ _cmd_keep() {
 	echo "module=$(_module_kind)"
 }
 
+_cmd_ensure_if4() {
+	local retries delay settle i
+
+	if ! lsusb -d 0b05:1b2c >/dev/null 2>&1; then
+		echo "ensure-if4: keyboard not docked — skip"
+		return 0
+	fi
+	if [[ "$(_module_kind)" != "sideload" ]]; then
+		echo "ensure-if4: sideload module not active — skip"
+		return 0
+	fi
+
+	retries="${vendor_if4_reprobe_retries:-5}"
+	delay="${vendor_if4_reprobe_delay_secs:-2}"
+	settle="${vendor_if4_settle_secs:-3}"
+
+	if [[ "$settle" -gt 0 ]]; then
+		echo "ensure-if4: settle ${settle}s (USB re-enumeration)"
+		sleep "$settle"
+	fi
+
+	for ((i = 0; i < retries; i++)); do
+		if _verify >/dev/null 2>&1; then
+			echo "ensure-if4: OK"
+			_verify
+			return 0
+		fi
+		echo "ensure-if4: vendor if4 missing — rebind attempt $((i + 1))/${retries}"
+		_recover_usb_if4
+		sleep 0.3
+		"${REBIND_SCRIPT}" || true
+		sleep "$delay"
+	done
+
+	echo "ensure-if4: FAILED after ${retries} attempts" >&2
+	_verify || true
+	return 1
+}
+
 _cmd_quick_reload() {
 	if [[ "${ZENBOOK_HID_QUICK_RELOAD:-1}" == "0" ]]; then
 		return 1
@@ -314,6 +354,10 @@ _cmd_quick_reload() {
 	fi
 	if _verify; then
 		echo "quick reload: sideload active, bindings OK — skipping rmmod/insmod"
+		_set_reload_kind quick
+		return 0
+	fi
+	if _cmd_ensure_if4; then
 		_set_reload_kind quick
 		return 0
 	fi
@@ -392,6 +436,12 @@ _cmd_sideload() {
 		return 1
 	fi
 	if ! _verify; then
+		echo "sideload: verify failed after rebind — recovering vendor if4"
+		_recover_usb_if4
+		sleep 0.3
+		"${REBIND_SCRIPT}" || true
+	fi
+	if ! _verify && ! _cmd_ensure_if4; then
 		echo "sideload: sysfs verify failed — rolling back to stock" >&2
 		_watchdog_cancel
 		_cmd_stock_force
@@ -468,6 +518,7 @@ Commands:
   keep                Confirm sideload works — cancel auto-revert
   stock               Restore in-kernel hid_asus
   verify              Run binding checks only
+  ensure-if4          Re-probe vendor USB if4 (boot / recovery)
 
 Sideload options:
   --watchdog SECS     Auto-revert after SECS (default: ${DEFAULT_WATCHDOG_SECS})
@@ -518,5 +569,6 @@ stock) _cmd_stock ;;
 keep) _cmd_keep ;;
 sideload) _cmd_sideload "$WATCHDOG_SECS" "$USE_WATCHDOG" ;;
 verify) _verify ;;
+ensure-if4) _cmd_ensure_if4 ;;
 *) usage ;;
 esac

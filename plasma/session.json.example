@@ -23,7 +23,7 @@
     },
     "night": {
       "on_lid_close": ["brightness_save", "night_enter"],
-      "on_lid_open": ["night_exit", "brightness_restore"]
+      "on_lid_open": ["night_exit", "brightness_restore", "touchpad_reassert", "touch_map_apply"]
     }
   }
 }

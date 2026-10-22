@@ -7,6 +7,8 @@ import QtQuick.Layouts
 import org.kde.kirigami as Kirigami
 
 ColumnLayout {
+    id: root
+    width: parent ? parent.width : implicitWidth
     spacing: Kirigami.Units.largeSpacing
 
     Kirigami.Heading {
@@ -24,7 +26,7 @@ ColumnLayout {
         Layout.fillWidth: true
         Layout.preferredHeight: Kirigami.Units.gridUnit * 16
         readOnly: true
-        wrapMode: TextArea.Wrap
+        wrapMode: TextEdit.Wrap
         font.family: "monospace"
         text: kcm.probeText.length > 0 ? kcm.probeText : i18n("(no output yet)")
     }

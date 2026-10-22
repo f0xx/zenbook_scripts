@@ -30,13 +30,14 @@ class ZenbookPlatform : public KQuickConfigModule
     Q_PROPERTY(bool autoReplacePlasmashell READ autoReplacePlasmashell WRITE setAutoReplacePlasmashell NOTIFY sessionChanged)
     Q_PROPERTY(int qsgThreadThreshold READ qsgThreadThreshold WRITE setQsgThreadThreshold NOTIFY sessionChanged)
     Q_PROPERTY(bool sessionDirty READ sessionDirty NOTIFY sessionDirtyChanged)
+    Q_PROPERTY(QString sessionHooksSummary READ sessionHooksSummary NOTIFY sessionChanged)
 
     Q_PROPERTY(QString profilesConfigPath READ profilesConfigPath CONSTANT)
     Q_PROPERTY(QString profilesJson READ profilesJson WRITE setProfilesJson NOTIFY profilesChanged)
     Q_PROPERTY(bool profilesDirty READ profilesDirty NOTIFY profilesDirtyChanged)
 
     Q_PROPERTY(QString touchpadStatusText READ touchpadStatusText NOTIFY touchpadStatusTextChanged)
-    Q_PROPERTY(QString touchpadKnobsJson READ touchpadKnobsJson NOTIFY touchpadKnobsChanged)
+    Q_PROPERTY(QString touchpadKnobsJson READ touchpadKnobsJson WRITE setTouchpadKnobsJson NOTIFY touchpadKnobsChanged)
     Q_PROPERTY(bool touchpadDirty READ touchpadDirty NOTIFY touchpadDirtyChanged)
 
     Q_PROPERTY(QString version READ version CONSTANT)
@@ -115,6 +116,10 @@ public:
     bool sessionDirty() const
     {
         return m_sessionDirty;
+    }
+    QString sessionHooksSummary() const
+    {
+        return m_sessionHooksSummary;
     }
 
     QString profilesConfigPath() const;
@@ -218,6 +223,10 @@ private:
     void applySessionObject(const QJsonObject &root);
     QJsonObject buildSessionObject() const;
     QJsonObject defaultProfileObject() const;
+    void refreshSessionHooksSummary();
+    static bool touchpadStatusShowsLiveRunning(const QString &status);
+    QJsonObject m_storedSessionProfile;
+    QString m_sessionHooksSummary;
     void markSessionDirty();
     void markProfilesDirty();
     void updateNeedsSave();

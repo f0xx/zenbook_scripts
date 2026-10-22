@@ -5,13 +5,16 @@ of your installed Gentoo kernel sources. No DKMS — only the kernel `Makefile`
 external-module build (`make -C $KDIR M=$PWD modules`).
 
 Based on [hacker1024/linux `ux8406-hid`](https://github.com/hacker1024/linux/compare/v6.14.4...ux8406-hid),
-ported to 7.0.12-gentoo-r1 and 7.1.3-gentoo.
+ported to 7.0.12-gentoo-r1, 7.1.3-gentoo, 7.1.5-gentoo, and 7.2.0-gentoo
+(7.2.0 uses the same maintained patch as 7.1.5 on current gentoo-sources).
 
 ## Prerequisites
 
 - Kernel headers for the running (or target) kernel, e.g.:
   - `/usr/src/linux-7.0.12-gentoo-r1` (symlinked from `/lib/modules/$(uname -r)/build`)
   - `/usr/src/linux-7.1.3-gentoo`
+  - `/usr/src/linux-7.1.5-gentoo`
+  - `/usr/src/linux-7.2.0-gentoo`
 - `CONFIG_HID_ASUS=m` (module, not built-in) so you can `rmmod` / `insmod`
 - `CONFIG_MODULES=y`
 - `CONFIG_ASUS_WMI` enabled (for `asus::kbd_backlight` listener integration)
@@ -39,6 +42,8 @@ make build
 # Explicit tree
 make build KDIR=/usr/src/linux-7.0.12-gentoo-r1
 make build KDIR=/usr/src/linux-7.1.3-gentoo
+make build KDIR=/usr/src/linux-7.1.5-gentoo
+make build KDIR=/usr/src/linux-7.2.0-gentoo
 ```
 
 The patched module is built at:
@@ -61,6 +66,8 @@ sudo make modules_install
 # Explicit kernel tree
 sudo make install-7.0.12
 sudo make install-7.1.3
+sudo make install-7.1.5
+sudo make install-7.2.0
 ```
 
 | Target | Requires root | Result |
@@ -140,6 +147,17 @@ Your dmesg should include:
 If those lines are **missing**, USB **interface 4** (`…004B`, 90-byte report descriptor,
 ep `0x85`) is not bound to `hid-asus`. The listener on **interface 3** (`event6`, consumer
 keys) only sees keys like `KEY_VOLUMEUP` — not the real Fn+ vendor map.
+
+**Recovery (boot or runtime):**
+
+```bash
+sudo zenbook-hid-asus-switch ensure-if4
+# or: sudo rc-service zenbook-kb-hid-asus restart
+```
+
+OpenRC boot runs `ensure-if4` after sideload; `zenbook-kb-hotkeys` start_pre retries if
+if4 vanished after a hard reset. Tune waits in `/etc/conf.d/zenbook-kb-hid-asus`:
+`vendor_if4_settle_secs`, `vendor_if4_reprobe_retries`.
 
 **Fn-lock feels inverted / Alt+F breaks**
 

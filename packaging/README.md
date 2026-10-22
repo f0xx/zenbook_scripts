@@ -13,6 +13,8 @@ Copy recipes into your own overlay or install from a release tarball / git check
 | [`gentoo/zenbook-scripts-0.0.2.ebuild`](gentoo/zenbook-scripts-0.0.2.ebuild) | **Announced** → tag **`v0.0.2`** (typing-inhibit + prior stack) |
 | [`gentoo/zenbook-scripts-0.0.2_pre1.ebuild`](gentoo/zenbook-scripts-0.0.2_pre1.ebuild) | Pre-release → tag **`v0.0.2_pre1`** |
 | [`gentoo/zenbook-scripts-0.0.1_p1.ebuild`](gentoo/zenbook-scripts-0.0.1_p1.ebuild) | Older → tag **`v0.0.1_hf1`** |
+| [`gentoo/zenbook-scripts-0.0.5_rc1.ebuild`](gentoo/zenbook-scripts-0.0.5_rc1.ebuild) | **RC** → tag **`v0.0.5-rc1`** (UX581 lightbar + 7.2.0 kernel + bugfixes) |
+| [`gentoo/zenbook-scripts-0.0.4.ebuild`](gentoo/zenbook-scripts-0.0.4.ebuild) | Stable → tag **`v0.0.4`** |
 | [`gentoo/zenbook-scripts-9999.ebuild`](gentoo/zenbook-scripts-9999.ebuild) | Live git (`EGIT`) |
 | [`gentoo/files/`](gentoo/files/) | Conditional UX8406 patches + README (no prebuilt `.ko`) |
 | [`gentoo/Manifest`](gentoo/Manifest) | Distfile digests for `0.0.1_hf1` + `0.0.2_pre1` + `0.0.2` |

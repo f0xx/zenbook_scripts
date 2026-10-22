@@ -243,7 +243,42 @@ def _set_network(stay_up: bool) -> None:
     log.debug("network off skipped (nmcli missing)")
 
 
-def _apply_night_extras(cfg: dict[str, Any], *, user: str | None, entering: bool) -> None:
+def _set_keyboard_brightness(level: int, *, user: str | None = None) -> None:
+    """Set keyboard backlight level 0–3 (best effort)."""
+    level = max(0, min(3, int(level)))
+    argv = ["kb-brightness", str(level)]
+    if not shutil_which(argv[0]):
+        return
+    user = user or os.environ.get("ZENBOOK_SESSION_USER") or os.environ.get("USER")
+    if user and user != "root" and os.geteuid() == 0:
+        _run_as_user(user, argv, timeout=5)
+        return
+    try:
+        subprocess.run(argv, capture_output=True, timeout=5, check=False)
+    except OSError:
+        pass
+
+
+def _restore_session_input(*, user: str | None) -> None:
+    """Re-enable KWin pointer touchpads + Duo touch-map after night/DPMS exit."""
+    user = user or os.environ.get("ZENBOOK_SESSION_USER") or os.environ.get("USER")
+    if not user or user == "root":
+        log.warning("restore_session_input: no session user")
+        return
+    if shutil_which("platform-touchpad"):
+        _run_as_user(user, ["platform-touchpad", "restore-kwin"])
+    if shutil_which("platform-touch-map"):
+        if not _run_as_user(user, ["platform-touch-map", "apply"]):
+            _run_as_user(user, ["platform-touch-map", "auto", "--save"])
+
+
+def _apply_night_extras(
+    cfg: dict[str, Any],
+    *,
+    user: str | None,
+    entering: bool,
+    lid_closed: bool = False,
+) -> None:
     """Screen/kbd/network from profiles.json night section when present."""
     try:
         from zenbook_kb.user_profiles import load
@@ -257,28 +292,30 @@ def _apply_night_extras(cfg: dict[str, Any], *, user: str | None, entering: bool
     screen = night.get("screen") or {}
     if screen.get("power_off", True):
         blank_displays(user=user)
-    kbd = night.get("keyboard_backlight") or {}
-    level_pct = kbd.get("level_pct")
-    if level_pct is not None:
-        level = max(0, min(3, round(int(level_pct) / 100 * 3)))
+    if lid_closed:
+        # Closed lid: profile awake keyboard level must not override lid dim.
+        _set_keyboard_brightness(0, user=user)
     else:
-        level = int(kbd.get("level", 0))
-    if not kbd.get("enabled", False) and level <= 0:
-        for argv in (["kb-brightness", "0"],):
-            if shutil_which(argv[0]):
-                try:
-                    subprocess.run(argv, capture_output=True, timeout=5, check=False)
-                except OSError:
-                    pass
-    elif level > 0:
-        for argv in (["kb-brightness", str(level)],):
-            if shutil_which(argv[0]):
-                try:
-                    subprocess.run(argv, capture_output=True, timeout=5, check=False)
-                except OSError:
-                    pass
+        kbd = night.get("keyboard_backlight") or {}
+        level_pct = kbd.get("level_pct")
+        if level_pct is not None:
+            level = max(0, min(3, round(int(level_pct) / 100 * 3)))
+        else:
+            level = int(kbd.get("level", 0))
+        if not kbd.get("enabled", False) or level <= 0:
+            _set_keyboard_brightness(0, user=user)
+        else:
+            _set_keyboard_brightness(level, user=user)
     net_stay = bool((night.get("network") or {}).get("stay_up", True))
     _set_network(net_stay)
+
+
+def _on_lid_closed_while_active(*, user: str | None) -> None:
+    """Night already active (schedule); lid just closed — enforce off-screen/off-kbd."""
+    cfg = effective_night_config()
+    if cfg.get("blank_displays", True):
+        blank_displays(user=user)
+    _set_keyboard_brightness(0, user=user)
 
 
 def enter_night(
@@ -286,6 +323,7 @@ def enter_night(
     *,
     force: bool = False,
     user: str | None = None,
+    lid_closed: bool = False,
 ) -> bool:
     """Apply night profile; snapshot prior fan/thermal state."""
     cfg = effective_night_config(cfg)
@@ -294,6 +332,8 @@ def enter_night(
         return False
     if is_active():
         log.info("night mode already active")
+        if lid_closed:
+            _on_lid_closed_while_active(user=user)
         return True
     if cfg.get("require_ac", True) and not read_on_ac() and not force:
         log.info("night mode skipped (on battery)")
@@ -313,7 +353,7 @@ def enter_night(
 
     if cfg.get("blank_displays", True):
         blank_displays(user=user)
-    _apply_night_extras(cfg, user=user, entering=True)
+    _apply_night_extras(cfg, user=user, entering=True, lid_closed=lid_closed)
 
     STATE_DIR.mkdir(parents=True, exist_ok=True)
     from zenbook_kb.priv import write_sysfs
@@ -347,6 +387,7 @@ def exit_night(*, force: bool = False, user: str | None = None) -> bool:
 
     if user or is_active():
         wake_displays(user=user)
+    _restore_session_input(user=user)
     _apply_night_extras({}, user=user, entering=False)
 
     _remove_state_file(ACTIVE_MARKER)
@@ -356,7 +397,7 @@ def exit_night(*, force: bool = False, user: str | None = None) -> bool:
 
 def handle_lid(*, closed: bool, user: str | None = None) -> bool:
     if closed:
-        return enter_night(user=user)
+        return enter_night(user=user, lid_closed=True)
     return exit_night(user=user)
 
 

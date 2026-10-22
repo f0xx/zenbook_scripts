@@ -259,7 +259,11 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.cmd == "apply":
-        set_control_mode("manual")
+        prof = (cfg.get("profiles") or {}).get(args.profile) or {}
+        pwm = prof.get("pwm")
+        lock_manual = pwm in ("full", "max", "on", 0, "0")
+        if lock_manual:
+            set_control_mode("manual")
         apply_profile(cfg, args.profile)
         state.last_profile = args.profile
         print(format_status(cfg, sample_system(), state))

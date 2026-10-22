@@ -3,7 +3,42 @@
 All notable changes to this project are documented here. The format is loosely
 based on [Keep a Changelog](https://keepachangelog.com/). Version tags follow
 Gentoo-friendly naming where needed (`v0.0.1_hf1` → PV `0.0.1_p1`,
-`v0.0.2_pre1` → PV `0.0.2_pre1`).
+`v0.0.2_pre1` → PV `0.0.2_pre1`, `v0.0.5-rc1` → PV `0.0.5_rc1`).
+
+## [0.0.5] — unreleased (RC: `v0.0.5-rc1`)
+
+Tag (RC): `v0.0.5-rc1`. Gentoo PV: `0.0.5_rc1`. Final tag planned: `v0.0.5`.
+
+### Added
+
+- **UX581 / UX582 front lightbar (initial):** `platform-ux581-lightbar` — ALED0217
+  I2C-HID `0b05:0124`, expertbook-style report `0x20` (effects 1–20, brightness,
+  off, `bus-reset`, safe defaults). Docs: `docs/ux581/lightbar.md`,
+  `docs/ux581/lightbar-windows-re.md`, [`README.ux581.md`](README.ux581.md).
+- **`platform-hid-asus-health`:** vendor if4 / keyboard HID health watcher
+  (`zenbook_kb/hid_asus_health.py`, tests, systemd unit ordering).
+- **Kernel 7.2.0-gentoo:** maintained `ux8406-hid-asus.patch` (same set as 7.1.5;
+  validated on hardware). Preflight + Gentoo `files/patches/` + `make build-7.2.0`.
+- **Gentoo:** `zenbook-scripts-0.0.5_rc1.ebuild`; `9999` installs lightbar + hid-asus
+  health + UX581 docs.
+
+### Changed
+
+- **KCM (Plasma):** profile path resolution (`resolveScript`), Profiles/Sleep/Touchpad
+  polish, version **0.0.5**; `platform-profiles` on PATH.
+- **Night mode:** apply/exit fixes; tests extended.
+- **Fan control:** stale `pwm=0` / manual lock when returning to auto; ACPI `fan`
+  event fight documented; `platform-fan-control` / `lib/fan.sh` guards.
+- **Install (systemd):** `zenbook-kb-hid-asus.service` on `--with-kernel`; hotkeys
+  `After=` + `ensure-if4` pre-start.
+- **Duo dock / touchpad:** udev and OpenRC wait helpers; touch-map calibrate tests.
+- **Kernel 7.1.3 patch:** regenerated port alignment with current oot tree.
+
+### Fixed
+
+- **UX8406:** fan stuck at high RPM when ACPI or stale sysfs fought adaptive daemon.
+- **HID boot:** OpenRC/systemd hid-asus boot scripts and rebind/switch robustness.
+- **Hotkeys / fn_lock / lid:** sleep and dock edge cases.
 
 ## [0.0.4] — 2026-08-07
 
