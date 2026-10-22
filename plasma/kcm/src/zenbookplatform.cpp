@@ -155,19 +155,28 @@ QString ZenbookPlatform::documentationUrl() const
 QString ZenbookPlatform::resolveScript(const QString &name) const
 {
     const QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
-    const QStringList candidates = {
+    const QString fromPath = QStandardPaths::findExecutable(name);
+    if (!fromPath.isEmpty() && QFileInfo(fromPath).isExecutable()) {
+        return fromPath;
+    }
+
+    QStringList candidates = {
         QStringLiteral("/usr/bin/") + name,
         QStringLiteral("/usr/local/bin/") + name,
-        env.value(QStringLiteral("ZENBOOK_SCRIPTS_ROOT")) + QStringLiteral("/bin/") + name,
-        QStringLiteral(ZENBOOK_SCRIPTS_ROOT) + QStringLiteral("/bin/") + name,
     };
+    const QString envRoot = env.value(QStringLiteral("ZENBOOK_SCRIPTS_ROOT")).trimmed();
+    if (!envRoot.isEmpty()) {
+        candidates.append(envRoot + QStringLiteral("/bin/") + name);
+    }
+    candidates.append(QStringLiteral(ZENBOOK_SCRIPTS_ROOT) + QStringLiteral("/bin/") + name);
 
     for (const QString &path : candidates) {
         if (path.isEmpty()) {
             continue;
         }
-        if (QFile::exists(path)) {
-            return path;
+        const QFileInfo info(path);
+        if (info.isFile() && info.isExecutable()) {
+            return info.absoluteFilePath();
         }
     }
     return {};
@@ -395,12 +404,41 @@ QJsonObject ZenbookPlatform::defaultProfileObject() const
         QStringLiteral("brightness_restore"),
         QStringLiteral("fan_sleep_post"),
         QStringLiteral("touchpad_reassert"),
+        QStringLiteral("touch_map_apply"),
     });
     profile.insert(QStringLiteral("on_hibernate"), QJsonArray{QStringLiteral("brightness_save")});
     profile.insert(QStringLiteral("presentation"), presentation);
     profile.insert(QStringLiteral("plasmashell"), plasmashell);
 
     return profile;
+}
+
+void ZenbookPlatform::refreshSessionHooksSummary()
+{
+    const auto join = [](const QJsonValue &val) -> QString {
+        if (!val.isArray()) {
+            return QString();
+        }
+        QStringList parts;
+        for (const QJsonValue &item : val.toArray()) {
+            parts.append(item.toString());
+        }
+        return parts.join(QStringLiteral(", "));
+    };
+
+    const QJsonObject profile =
+        m_storedSessionProfile.isEmpty() ? defaultProfileObject() : m_storedSessionProfile;
+    m_sessionHooksSummary =
+        QStringLiteral("on_sleep: %1\non_resume: %2\non_hibernate: %3")
+            .arg(join(profile.value(QStringLiteral("on_sleep"))),
+                 join(profile.value(QStringLiteral("on_resume"))),
+                 join(profile.value(QStringLiteral("on_hibernate"))));
+}
+
+bool ZenbookPlatform::touchpadStatusShowsLiveRunning(const QString &status)
+{
+    return status.contains(QStringLiteral("live:     running"))
+        || status.contains(QStringLiteral("live:\trunning"));
 }
 
 void ZenbookPlatform::applySessionObject(const QJsonObject &root)
@@ -412,6 +450,7 @@ void ZenbookPlatform::applySessionObject(const QJsonObject &root)
     if (profile.isEmpty()) {
         profile = defaultProfileObject();
     }
+    m_storedSessionProfile = profile;
 
     const QJsonObject presentation = profile.value(QStringLiteral("presentation")).toObject();
     m_restoreAfterPlasmashellReplace =
@@ -423,6 +462,7 @@ void ZenbookPlatform::applySessionObject(const QJsonObject &root)
     m_qsgThreadThreshold = plasmashell.value(QStringLiteral("qsg_thread_threshold")).toInt(32);
 
     m_sessionDirty = false;
+    refreshSessionHooksSummary();
     Q_EMIT sessionChanged();
     Q_EMIT sessionDirtyChanged();
 }
@@ -464,7 +504,7 @@ QJsonObject ZenbookPlatform::buildSessionObject() const
     plasmashell.insert(QStringLiteral("auto_replace"), m_autoReplacePlasmashell);
     plasmashell.insert(QStringLiteral("qsg_thread_threshold"), m_qsgThreadThreshold);
 
-    QJsonObject profile = defaultProfileObject();
+    QJsonObject profile = m_storedSessionProfile.isEmpty() ? defaultProfileObject() : m_storedSessionProfile;
     profile.insert(QStringLiteral("presentation"), presentation);
     profile.insert(QStringLiteral("plasmashell"), plasmashell);
 
@@ -495,6 +535,7 @@ bool ZenbookPlatform::saveSession()
 
     m_sessionDirty = false;
     Q_EMIT sessionDirtyChanged();
+    refreshSessionHooksSummary();
     setLastError({});
     updateNeedsSave();
     return true;
@@ -728,7 +769,7 @@ void ZenbookPlatform::startTouchpadLiveFilter()
         return;
     }
     setLastError({});
-    QTimer::singleShot(700, this, &ZenbookPlatform::verifyLiveFilterStarted);
+    QTimer::singleShot(1500, this, &ZenbookPlatform::verifyLiveFilterStarted);
 }
 
 void ZenbookPlatform::verifyLiveFilterStarted()
@@ -737,14 +778,17 @@ void ZenbookPlatform::verifyLiveFilterStarted()
         runScriptSync(QStringLiteral("platform-touchpad"), {QStringLiteral("status")});
     m_touchpadStatusText = status;
     Q_EMIT touchpadStatusTextChanged();
-    const bool running = status.contains(QStringLiteral("live:     running"))
-        || status.contains(QStringLiteral("live:\trunning"));
-    if (!running) {
-        setLastError(
-            i18n("Live filter did not start — need passwordless sudo "
-                 "(sudo -n platform-touchpad run) or install contrib/udev/99-uinput.rules "
-                 "and add your user to the input group."));
+    if (touchpadStatusShowsLiveRunning(status)) {
+        setLastError({});
+        return;
     }
+    if (status.contains(QStringLiteral("profile disabled"), Qt::CaseInsensitive)) {
+        setLastError(i18n("Live filter not started — enable Profile enabled in the Touchpad tab, Apply, then Start again."));
+        return;
+    }
+    setLastError(
+        i18n("Live filter did not start within 1.5s. Check: platform-touchpad status "
+             "(running filter needs uinput access or platform-touchpad run via sudo)."));
 }
 
 void ZenbookPlatform::stopTouchpadLiveFilter()
@@ -836,9 +880,9 @@ bool ZenbookPlatform::saveTouchpadKnobs()
     }
     m_touchpadDirty = false;
     Q_EMIT touchpadDirtyChanged();
+    const bool wasRunning = touchpadStatusShowsLiveRunning(m_touchpadStatusText);
     refreshTouchpadStatus();
-    // Restart live filter when profile knobs changed and daemon was running.
-    if (m_touchpadStatusText.contains(QStringLiteral("live:     running"))) {
+    if (wasRunning) {
         startTouchpadLiveFilter();
     }
     setLastError({});

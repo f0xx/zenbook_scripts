@@ -361,6 +361,15 @@ def restore_user_sysfs() -> None:
         except Exception as exc:  # noqa: BLE001
             log.warning("restore platform_profile failed: %s", exc)
     want_pwm = _read_text(pwm_state)
+    # Stale persist=0 from old "full" locks should not be re-applied in auto mode.
+    if want_pwm == "0" and get_control_mode() == CONTROL_MODE_AUTO:
+        want_pwm = "2"
+        try:
+            from zenbook_kb.priv import write_sysfs
+
+            write_sysfs(pwm_state, "2\n", allow_ask=False)
+        except OSError:
+            pass
     hw = _fan_hwmon_pwm_path()
     if want_pwm is not None and hw and (hw / "pwm1_enable").is_file():
         try:

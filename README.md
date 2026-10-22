@@ -11,17 +11,16 @@ package. We do **not** act as distro maintainers or QA. Use at your own risk.
 |-------|------|-------|
 | [ASUS Zenbook UX8406 (MA)](README.ux8406.md) | [`README.ux8406.md`](README.ux8406.md) | Docs on **`main`** |
 | [ASUS Zenbook UX5400 (E)](README.ux5400.md) | [`README.ux5400.md`](README.ux5400.md) | Docs on **`main`** |
-| [ASUS ZenBook Pro Duo UX581](README.ux581.md) (sold as UX582) | [`README.ux581.md`](README.ux581.md) | Lightbar: branch [`zenbook_ux581`](https://github.com/f0xx/zenbook_scripts/tree/zenbook_ux581) (no HW tests yet) |
+| [ASUS Zenbook UX581 / UX582 (Pro Duo)](README.ux581.md) | [`README.ux581.md`](README.ux581.md) | **0.0.5:** `platform-ux581-lightbar` (effects; no solid RGB yet) |
 
-Model docs live on `main`. Lightbar feature work continues on `zenbook_ux581`
-([docs/ux581/lightbar.md](docs/ux581/lightbar.md)). Plasma KCM shipped in **0.0.3**
-([README.plasma.md](README.plasma.md)).
+Model docs live on **`main`**. Feature branches **`feature/*`** and **`fix/*`** from
+the 0.0.4 cycle are merged; ongoing UX581 research merges via [`zenbook_ux581`](https://github.com/f0xx/zenbook_scripts/tree/zenbook_ux581) → **`main`**.
 
 ## Install
 
 | Distro | How |
 |--------|-----|
-| **Gentoo** | Local overlay + ebuild — see [packaging/README.md](packaging/README.md) (**`0.0.2`** → tag [`v0.0.2`](https://github.com/f0xx/zenbook_scripts/releases/tag/v0.0.2); older **`0.0.1_p1`** → [`v0.0.1_hf1`](https://github.com/f0xx/zenbook_scripts/releases/tag/v0.0.1_hf1)) |
+| **Gentoo** | Local overlay + ebuild — see [packaging/README.md](packaging/README.md). **Current:** **`0.0.5_rc1`** (RC [`v0.0.5-rc1`](https://github.com/f0xx/zenbook_scripts/releases/tag/v0.0.5-rc1)); stable **`0.0.4`** → [`v0.0.4`](https://github.com/f0xx/zenbook_scripts/releases/tag/v0.0.4) |
 | **Debian / Ubuntu** | No `.deb` yet — from-source steps in [packaging/debian/README.md](packaging/debian/README.md) |
 | **Any (git / tarball)** | `sudo python3 configure.py` — [DEPLOY.md](DEPLOY.md); UX8406 module: [kernel/README.md](kernel/README.md) |
 
@@ -94,7 +93,7 @@ platform-tray                  # USE=qt6 — metrics graph + profile/fan menu
 ## Quick links
 
 - [DEPLOY.md](DEPLOY.md) — when to rebuild / reinstall / reload `hid-asus`
-- [ROADMAP.md](ROADMAP.md) — where we are / next (0.0.4)
+- [ROADMAP.md](ROADMAP.md) — where we are / next (**0.0.5** RC)
 - [docs/README.md](docs/README.md) — contributor research library (Fn-row RE, daemon atlas)
 - [CHANGELOG.md](CHANGELOG.md) — release notes (keep updated with tags)
 - [PLANNED.md](PLANNED.md) — feature cheatsheets (`platform-fan*`, probe, tray)

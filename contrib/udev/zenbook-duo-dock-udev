@@ -79,12 +79,14 @@ apply_undocked_touch() {
 }
 
 touchpad_transport_handoff_root() {
-	if ! command -v platform-touchpad >/dev/null 2>&1; then
-		return 0
-	fi
-	platform-touchpad stop >/dev/null 2>&1 || true
-	platform-touchpad restore-kwin >/dev/null 2>&1 || true
-	sleep 1
+	# Prefer session-user KWin D-Bus; fall back to root discovery.
+	run_user touchpad-handoff || {
+		if ! command -v platform-touchpad >/dev/null 2>&1; then
+			return 0
+		fi
+		platform-touchpad stop >/dev/null 2>&1 || true
+		platform-touchpad restore-kwin --wait >/dev/null 2>&1 || true
+	}
 	if command -v rc-service >/dev/null 2>&1; then
 		if rc-service zenbook-platform-touchpad status 2>/dev/null | grep -q started; then
 			rc-service zenbook-platform-touchpad restart >/dev/null 2>&1 || true

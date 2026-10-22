@@ -1,0 +1,14 @@
+[Unit]
+Description=UX8406 hid-asus sideload and vendor if4 bind
+Documentation=file:/usr/share/doc/zenbook-scripts/docs/daemons/hid-asus-boot.md
+After=local-fs.target systemd-modules-load.service
+Before=zenbook-kb-hotkeys.service
+ConditionPathExists=/usr/libexec/zenbook-hid-asus-boot.sh
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/libexec/zenbook-hid-asus-boot.sh
+
+[Install]
+WantedBy=multi-user.target

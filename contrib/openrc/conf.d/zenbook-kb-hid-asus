@@ -24,3 +24,9 @@ fn_row_policy=7
 #
 # Seconds to wait for docked keyboard 0b05:1b2c after boot (ignored when sideload=auto)
 usb_wait_secs=15
+#
+# Vendor USB if4 (Fn+Esc, Fn+F4–F12) can vanish after hard reset / late re-enumeration.
+# After sideload: settle, then reprobe if4 until verify passes (see ensure-if4).
+vendor_if4_settle_secs=3
+vendor_if4_reprobe_retries=5
+vendor_if4_reprobe_delay_secs=2

@@ -8,6 +8,7 @@ import org.kde.kirigami as Kirigami
 
 ColumnLayout {
     id: root
+    width: parent ? parent.width : implicitWidth
     spacing: Kirigami.Units.largeSpacing
 
     property var doc: ({})
@@ -33,6 +34,26 @@ ColumnLayout {
         if (!doc.modes[name])
             doc.modes[name] = {}
         return doc.modes[name]
+    }
+
+    function isTrue(value) {
+        return value === true
+    }
+
+    function scheduleEnabled(name) {
+        var s = ensureMode(name).schedule
+        return s ? isTrue(s.enabled) : false
+    }
+
+    function triggerEnabled(name, trigger) {
+        var t = (ensureMode(name).triggers || {})[trigger]
+        return t ? isTrue(t.enabled) : false
+    }
+
+    function optInUnlessFalse(obj, key) {
+        if (!obj || obj[key] === undefined)
+            return true
+        return obj[key] !== false
     }
 
     function clampPct(v, fallback) {
@@ -154,6 +175,7 @@ ColumnLayout {
     Kirigami.FormLayout {
         Layout.fillWidth: true
         visible: modeName === "auto"
+        Layout.alignment: Qt.AlignTop
 
         QQC2.Label {
             Kirigami.FormData.label: i18n("Description")
@@ -166,14 +188,12 @@ ColumnLayout {
     Kirigami.FormLayout {
         Layout.fillWidth: true
         visible: modeName === "quiet" || modeName === "balanced" || modeName === "performance"
+        Layout.alignment: Qt.AlignTop
 
         QQC2.CheckBox {
             id: schedEn
             Kirigami.FormData.label: i18n("Schedule")
-            checked: {
-                var m = ensureMode(modeName).schedule
-                return m && m.enabled
-            }
+            checked: scheduleEnabled(modeName)
             onToggled: {
                 var m = ensureMode(modeName)
                 if (!m.schedule)
@@ -184,7 +204,7 @@ ColumnLayout {
         }
         QQC2.TextField {
             Kirigami.FormData.label: i18n("Start (HH:MM)")
-            enabled: schedEn.checked
+            enabled: schedEn.checked === true
             text: (ensureMode(modeName).schedule || {}).start || "22:00"
             onEditingFinished: {
                 ensureMode(modeName).schedule.start = text
@@ -193,7 +213,7 @@ ColumnLayout {
         }
         QQC2.TextField {
             Kirigami.FormData.label: i18n("Stop (HH:MM)")
-            enabled: schedEn.checked
+            enabled: schedEn.checked === true
             text: (ensureMode(modeName).schedule || {}).stop || "07:00"
             onEditingFinished: {
                 ensureMode(modeName).schedule.stop = text
@@ -202,10 +222,7 @@ ColumnLayout {
         }
         QQC2.CheckBox {
             Kirigami.FormData.label: i18n("Low CPU trigger")
-            checked: {
-                var t = (ensureMode(modeName).triggers || {}).low_cpu
-                return t && t.enabled
-            }
+            checked: triggerEnabled(modeName, "low_cpu")
             onToggled: {
                 var m = ensureMode(modeName)
                 if (!m.triggers)
@@ -238,7 +255,7 @@ ColumnLayout {
         }
         QQC2.CheckBox {
             Kirigami.FormData.label: i18n("Only on battery")
-            checked: ((ensureMode(modeName).triggers || {}).low_cpu || {}).require_battery !== false
+            checked: optInUnlessFalse((ensureMode(modeName).triggers || {}).low_cpu, "require_battery")
             onToggled: {
                 ensureMode(modeName).triggers.low_cpu.require_battery = checked
                 commit()
@@ -246,10 +263,7 @@ ColumnLayout {
         }
         QQC2.CheckBox {
             Kirigami.FormData.label: i18n("Battery timeout trigger")
-            checked: {
-                var t = (ensureMode(modeName).triggers || {}).battery_timeout
-                return t && t.enabled
-            }
+            checked: triggerEnabled(modeName, "battery_timeout")
             onToggled: {
                 var m = ensureMode(modeName)
                 if (!m.triggers)
@@ -272,13 +286,20 @@ ColumnLayout {
         }
     }
 
+    Kirigami.Heading {
+        level: 4
+        visible: modeName === "night"
+        text: i18n("Night profile")
+    }
+
     Kirigami.FormLayout {
         Layout.fillWidth: true
+        Layout.alignment: Qt.AlignTop
         visible: modeName === "night"
 
         QQC2.CheckBox {
-            Kirigami.FormData.label: i18n("Night mode enabled")
-            checked: ensureMode("night").enabled === true
+            Kirigami.FormData.label: i18n("Enabled")
+            checked: isTrue(ensureMode("night").enabled)
             onToggled: {
                 ensureMode("night").enabled = checked
                 commit()
@@ -296,9 +317,23 @@ ColumnLayout {
                 commit()
             }
         }
+    }
+
+    Kirigami.Heading {
+        level: 4
+        visible: modeName === "night"
+        text: i18n("Schedule (lid open, awake)")
+    }
+
+    Kirigami.FormLayout {
+        Layout.fillWidth: true
+        Layout.alignment: Qt.AlignTop
+        visible: modeName === "night"
+
         QQC2.CheckBox {
-            Kirigami.FormData.label: i18n("Schedule")
-            checked: (ensureMode("night").schedule || {}).enabled !== false
+            id: nightSchedEn
+            Kirigami.FormData.label: i18n("Use schedule")
+            checked: optInUnlessFalse(ensureMode("night").schedule, "enabled")
             onToggled: {
                 if (!ensureMode("night").schedule)
                     ensureMode("night").schedule = {}
@@ -308,23 +343,44 @@ ColumnLayout {
         }
         QQC2.TextField {
             Kirigami.FormData.label: i18n("Start")
+            enabled: nightSchedEn.checked === true
+            placeholderText: "22:00"
             text: (ensureMode("night").schedule || {}).start || "23:00"
             onEditingFinished: {
+                if (!ensureMode("night").schedule)
+                    ensureMode("night").schedule = {}
                 ensureMode("night").schedule.start = text
                 commit()
             }
         }
         QQC2.TextField {
             Kirigami.FormData.label: i18n("Stop")
+            enabled: nightSchedEn.checked === true
+            placeholderText: "06:00"
             text: (ensureMode("night").schedule || {}).stop || "06:00"
             onEditingFinished: {
+                if (!ensureMode("night").schedule)
+                    ensureMode("night").schedule = {}
                 ensureMode("night").schedule.stop = text
                 commit()
             }
         }
+    }
+
+    Kirigami.Heading {
+        level: 4
+        visible: modeName === "night"
+        text: i18n("Display & keyboard")
+    }
+
+    Kirigami.FormLayout {
+        Layout.fillWidth: true
+        Layout.alignment: Qt.AlignTop
+        visible: modeName === "night"
+
         QQC2.CheckBox {
             Kirigami.FormData.label: i18n("Turn screen off")
-            checked: (ensureMode("night").screen || {}).power_off !== false
+            checked: optInUnlessFalse(ensureMode("night").screen, "power_off")
             onToggled: {
                 if (!ensureMode("night").screen)
                     ensureMode("night").screen = {}
@@ -334,25 +390,20 @@ ColumnLayout {
         }
         QQC2.SpinBox {
             id: screenPct
-            Kirigami.FormData.label: i18n("Panel brightness (%)")
+            Kirigami.FormData.label: i18n("Panel brightness (0–100%)")
             from: 0
             to: 100
             stepSize: 5
+            enabled: !(ensureMode("night").screen || {}).power_off
             value: nightScreenPct()
             onValueModified: setNightScreenPct(value)
-        }
-        QQC2.Label {
-            Kirigami.FormData.label: i18n(" ")
-            wrapMode: Text.WordWrap
-            Layout.fillWidth: true
-            text: i18n("0–100%. Used when the screen stays on; power-off above takes priority.")
         }
         QQC2.CheckBox {
             id: kbdEn
             Kirigami.FormData.label: i18n("Keyboard backlight")
             checked: {
                 var k = ensureMode("night").keyboard_backlight || {}
-                return k.enabled === true || nightKbdPct() > 0
+                return isTrue(k.enabled) || nightKbdPct() > 0
             }
             onToggled: {
                 if (!ensureMode("night").keyboard_backlight)
@@ -370,23 +421,17 @@ ColumnLayout {
             }
         }
         QQC2.SpinBox {
-            Kirigami.FormData.label: i18n("Keyboard brightness (%)")
+            Kirigami.FormData.label: i18n("Keyboard brightness (0–3 steps)")
             from: 0
             to: 100
             stepSize: 5
-            enabled: kbdEn.checked
+            enabled: kbdEn.checked === true
             value: nightKbdPct()
             onValueModified: setNightKbdPct(value)
         }
-        QQC2.Label {
-            Kirigami.FormData.label: i18n(" ")
-            wrapMode: Text.WordWrap
-            Layout.fillWidth: true
-            text: i18n("0–100%. Hardware uses 4 steps (0–3); values snap to the nearest step on apply.")
-        }
         QQC2.CheckBox {
             Kirigami.FormData.label: i18n("Keep networking up")
-            checked: (ensureMode("night").network || {}).stay_up !== false
+            checked: optInUnlessFalse(ensureMode("night").network, "stay_up")
             onToggled: {
                 if (!ensureMode("night").network)
                     ensureMode("night").network = {}
@@ -394,11 +439,13 @@ ColumnLayout {
                 commit()
             }
         }
+
         QQC2.Label {
             Kirigami.FormData.label: i18n("Note")
             wrapMode: Text.WordWrap
             Layout.fillWidth: true
-            text: ensureMode("night").notes || i18n("Scheduled night applies when awake and the lid is open. Closed lid: platform-night-mode + elogind.")
+            opacity: 0.75
+            text: ensureMode("night").notes || i18n("Closed lid uses platform-night-mode + elogind (separate from this schedule).")
         }
     }
 

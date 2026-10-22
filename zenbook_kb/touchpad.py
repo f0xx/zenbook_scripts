@@ -1440,7 +1440,7 @@ def knobs_from_filters(filters: list[dict[str, Any]]) -> dict[str, Any]:
     outlier_on = True
     typing_on = True
     typing_window = DEFAULT_TYPING_WINDOW_MS
-    soft_on = True
+    soft_on = False
     soft_gain = DEFAULT_SOFT_ACCEL_GAIN
     soft_mode = DEFAULT_SOFT_ACCEL_MODE
     soft_pivot = DEFAULT_SOFT_ACCEL_PIVOT
@@ -1461,7 +1461,7 @@ def knobs_from_filters(filters: list[dict[str, Any]]) -> dict[str, Any]:
             soft_gain = float(item.get("gain", soft_gain))
             soft_mode = normalize_soft_accel_mode(item.get("mode", soft_mode))
             soft_pivot = int(item.get("pivot", soft_pivot))
-            soft_on = item.get("enabled", True) is not False
+            soft_on = item.get("enabled", False) is not False
     return {
         "delay_ms": delay_ms,
         "max_delta": max_delta,

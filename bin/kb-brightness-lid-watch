@@ -79,6 +79,13 @@ while true; do
 	fi
 	if _apply "${current}"; then
 		_night_mode "${current}" || true
+		if [[ "${current}" == "true" ]]; then
+			# Night enter must not re-light keyboard after lid-close dim.
+			KB_BIN="${KB_BRIGHTNESS_BIN:-$(_zenbook_find_bin kb-brightness || true)}"
+			if [[ -n "${KB_BIN}" ]]; then
+				"${KB_BIN}" 0 >/dev/null 2>&1 || true
+			fi
+		fi
 		logger -t zenbook-kb-brightness "lid-watch: LidClosed=${current}"
 	else
 		logger -t zenbook-kb-brightness "lid-watch: action failed for LidClosed=${current}"

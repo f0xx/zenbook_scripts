@@ -141,7 +141,13 @@ if [[ "$have_vendor_if4" == false && -n "${USB_PORT:-}" && -d "/sys/bus/usb/devi
 fi
 
 restore_touchpad
-shopt -u nullglob
+
+shopt -s nullglob
+have_vendor_if4=false
+for node in /sys/bus/hid/devices/*0B05*1B2C*; do
+	[[ -e "$node" ]] || continue
+	is_vendor_if4_node "$node" && have_vendor_if4=true && break
+done
 
 echo
 echo "HID nodes:"
@@ -157,6 +163,7 @@ for node in /sys/bus/hid/devices/*0B05*1B2C*; do
 	[[ "$ifnum" =~ ^[0-3]$ ]] && kind="keyboard-if${ifnum}"
 	echo "  $name if=${ifnum} driver=$drv rdesc=${rdesc}B ($kind)"
 done
+shopt -u nullglob
 
 echo
 echo "Expect interface-4 node on asus with dmesg:"
@@ -165,3 +172,8 @@ echo "  Injecting virtual Zenbook Duo keyboard usage page"
 echo
 echo "Do not start zenbook-kb-hotkeys until usb_poll is off or hid-asus owns if4"
 echo "(service pyusb claim on if4 bricks the docked keyboard)."
+
+if [[ "$have_vendor_if4" != true ]]; then
+	echo "ERROR: vendor USB if4 still missing or not on asus" >&2
+	exit 1
+fi

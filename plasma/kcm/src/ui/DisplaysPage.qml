@@ -7,6 +7,7 @@ import QtQuick.Layouts
 import org.kde.kirigami as Kirigami
 
 ColumnLayout {
+    width: parent ? parent.width : implicitWidth
     spacing: Kirigami.Units.largeSpacing
 
     Component.onCompleted: {
@@ -53,7 +54,7 @@ ColumnLayout {
             Layout.fillWidth: true
             Layout.preferredHeight: Kirigami.Units.gridUnit * 8
             readOnly: true
-            wrapMode: TextArea.Wrap
+            wrapMode: TextEdit.Wrap
             font.family: "monospace"
             text: kcm.duoStatusText.length > 0 ? kcm.duoStatusText : i18n("(no status yet)")
         }
@@ -109,7 +110,7 @@ ColumnLayout {
             Layout.fillWidth: true
             Layout.preferredHeight: Kirigami.Units.gridUnit * 6
             readOnly: true
-            wrapMode: TextArea.Wrap
+            wrapMode: TextEdit.Wrap
             font.family: "monospace"
             text: kcm.screenpadStatusText.length > 0 ? kcm.screenpadStatusText : i18n("(no status yet)")
         }
