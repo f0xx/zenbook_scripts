@@ -5,7 +5,10 @@
 set -euo pipefail
 
 CONF="/etc/conf.d/zenbook-kb-hid-asus"
-SWITCH="${ZENBOOK_HID_SWITCH:-/usr/local/libexec/zenbook-hid-asus-switch}"
+SWITCH="${ZENBOOK_HID_SWITCH:-/usr/libexec/zenbook-hid-asus-switch}"
+if [[ ! -x "${SWITCH}" && -x /usr/local/libexec/zenbook-hid-asus-switch ]]; then
+	SWITCH="/usr/local/libexec/zenbook-hid-asus-switch"
+fi
 
 if [[ -f "${CONF}" ]]; then
 	# shellcheck disable=SC1090
@@ -34,22 +37,24 @@ export ZENBOOK_RC_SETTLE_SECS="${ZENBOOK_RC_SETTLE_SECS:-0}"
 
 # Fn-lock is applied by the kernel on insmod (fn_lock_default).  Quick reload
 # skips rmmod and cannot change the driver's fn_lock state.
-if [[ -f /usr/local/share/zenbook-scripts/lib/protocol.sh \
-	&& -f /usr/local/share/zenbook-scripts/lib/fn_lock.sh ]]; then
-	# shellcheck disable=SC1091
-	source /usr/local/share/zenbook-scripts/lib/protocol.sh
-	# shellcheck disable=SC1091
-	source /usr/local/share/zenbook-scripts/lib/detect.sh
-	# shellcheck disable=SC1091
-	source /usr/local/share/zenbook-scripts/lib/snapshot.sh
-	# shellcheck disable=SC1091
-	source /usr/local/share/zenbook-scripts/lib/fn_lock.sh
-	zenbook_kb_load_config
-	if declare -F zenbook_kb_fn_lock_needs_full_reload >/dev/null 2>&1 \
-		&& zenbook_kb_fn_lock_needs_full_reload; then
-		export ZENBOOK_HID_QUICK_RELOAD=0
+for _share in /usr/share/zenbook-scripts /usr/local/share/zenbook-scripts; do
+	if [[ -f "${_share}/lib/protocol.sh" && -f "${_share}/lib/fn_lock.sh" ]]; then
+		# shellcheck disable=SC1091
+		source "${_share}/lib/protocol.sh"
+		# shellcheck disable=SC1091
+		source "${_share}/lib/detect.sh"
+		# shellcheck disable=SC1091
+		source "${_share}/lib/snapshot.sh"
+		# shellcheck disable=SC1091
+		source "${_share}/lib/fn_lock.sh"
+		zenbook_kb_load_config
+		if declare -F zenbook_kb_fn_lock_needs_full_reload >/dev/null 2>&1 \
+			&& zenbook_kb_fn_lock_needs_full_reload; then
+			export ZENBOOK_HID_QUICK_RELOAD=0
+		fi
+		break
 	fi
-fi
+done
 
 if [[ ! -f "${KO}" ]]; then
 	logger -t zenbook-hid-asus "boot: missing ${KO} — build/install oot module first"
@@ -83,19 +88,19 @@ else
 	exit 1
 fi
 
-if [[ -x /usr/local/bin/kb-brightness-sleep ]]; then
-	if /usr/local/bin/kb-brightness-sleep restore; then
-		logger -t zenbook-hid-asus "boot: restored keyboard backlight from snapshot"
-	else
-		logger -t zenbook-hid-asus "boot: brightness restore skipped (no snapshot)"
+# switch sideload calls zenbook_post_sideload_refresh (fn-lock, brightness, hotkeys).
+# Keep explicit log lines when post_sideload.sh is missing.
+if declare -F zenbook_post_sideload_refresh >/dev/null 2>&1; then
+	:
+elif declare -F zenbook_kb_fn_lock_restore >/dev/null 2>&1; then
+	if [[ -x /usr/bin/kb-brightness-sleep ]]; then
+		/usr/bin/kb-brightness-sleep restore 2>/dev/null || true
 	fi
-fi
-
-if declare -F zenbook_kb_fn_lock_restore >/dev/null 2>&1; then
 	if fn_lock="$(zenbook_kb_fn_lock_restore)"; then
 		logger -t zenbook-hid-asus "boot: restored fn-lock mode $(zenbook_kb_fn_lock_mode_name "${fn_lock}" 2>/dev/null || echo "${fn_lock}")"
-	else
-		logger -t zenbook-hid-asus "boot: fn-lock restore failed"
+	fi
+	if command -v rc-service >/dev/null 2>&1; then
+		rc-service zenbook-kb-hotkeys restart 2>/dev/null || true
 	fi
 fi
 rm -f /run/zenbook-hid-asus/reload-kind

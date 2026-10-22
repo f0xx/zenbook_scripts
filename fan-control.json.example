@@ -1,4 +1,5 @@
 {
+  "_comment": "Adaptive rules only apply when /var/lib/zenbook-scripts/fan-control-mode is auto. Explicit tray/CLI Profile or Fans:full sets manual; Profile:auto(adaptive) or Fans:auto clears it.",
   "daemon": {
     "interval_sec": 5,
     "hysteresis_sec": 30,
@@ -33,6 +34,13 @@
       "pwm": "full",
       "epp": "performance",
       "intel_pstate": { "max_perf_pct": 100, "no_turbo": false }
+    },
+    "night": {
+      "platform_profile": "quiet",
+      "pwm": "auto",
+      "epp": "power",
+      "intel_pstate": { "max_perf_pct": 40, "no_turbo": true },
+      "rapl": { "pl1_w": 10, "pl2_w": 15 }
     }
   },
   "rules": {

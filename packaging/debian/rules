@@ -3,9 +3,14 @@
 export DH_VERBOSE = 1
 
 %:
-	dh $@
+	dh $@ --parallel
+
+override_dh_auto_build:
+	chmod +x debian/build-kcm.sh
+	./debian/build-kcm.sh "$(CURDIR)/debian/zenbook-scripts-plasma"
 
 override_dh_auto_install:
 	./debian/install.sh "$(CURDIR)/debian/zenbook-scripts"
 
 override_dh_auto_test:
+	python3 -m unittest discover -s tests -p 'test_*.py' -q

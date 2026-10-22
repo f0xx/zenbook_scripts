@@ -66,12 +66,41 @@ run_user() {
 LOG="${ZENBOOK_DUO_LOG:-/run/zenbook-duo-dock.log}"
 log() { echo "$(date -Iseconds) $*" >>"$LOG" 2>/dev/null || true; }
 
+apply_docked_touch() {
+	if command -v platform-touch-map >/dev/null 2>&1; then
+		platform-touch-map apply-docked
+	fi
+}
+
+apply_undocked_touch() {
+	if command -v platform-touch-map >/dev/null 2>&1; then
+		platform-touch-map apply || platform-touch-map auto --save
+	fi
+}
+
+touchpad_transport_handoff_root() {
+	if ! command -v platform-touchpad >/dev/null 2>&1; then
+		return 0
+	fi
+	platform-touchpad stop >/dev/null 2>&1 || true
+	platform-touchpad restore-kwin >/dev/null 2>&1 || true
+	sleep 1
+	if command -v rc-service >/dev/null 2>&1; then
+		if rc-service zenbook-platform-touchpad status 2>/dev/null | grep -q started; then
+			rc-service zenbook-platform-touchpad restart >/dev/null 2>&1 || true
+		fi
+	fi
+}
+
 # Brightness sysfs needs root; kscreen needs the session user.
 case "$action" in
 	docked)
 		log "docked begin uid=$(id -u) user=$user"
 		[ "$(id -u)" -eq 0 ] && "$BIN" save-brightness || true
 		run_user kscreen-docked
+		sleep 0.5
+		run_user apply-docked-touch || apply_docked_touch || true
+		[ "$(id -u)" -eq 0 ] && touchpad_transport_handoff_root || true
 		log "docked done"
 		;;
 	undocked)
@@ -86,6 +115,8 @@ case "$action" in
 				[ -f "$bl/bl_power" ] && echo 0 >"$bl/bl_power" 2>/dev/null || true
 			done
 		fi
+		run_user apply-undocked-touch || apply_undocked_touch || true
+		[ "$(id -u)" -eq 0 ] && touchpad_transport_handoff_root || true
 		log "undocked done"
 		;;
 	auto)

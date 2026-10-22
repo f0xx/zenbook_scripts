@@ -39,3 +39,4 @@ keyboard-brightness
 .DS_Store
 *~
 plasma/kcm/build/
+plasma/kcm/build-deb/

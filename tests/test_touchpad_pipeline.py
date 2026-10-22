@@ -35,10 +35,15 @@ from zenbook_kb.touchpad import (  # noqa: E402
     KeyboardActivity,
     OutlierRejectFilter,
     SoftAccelFilter,
+    TouchpadInfo,
     WhenTypingGate,
     build_pipeline,
     count_syn_reports,
     make_sim_brush,
+    device_profile_enabled,
+    empty_config_v2,
+    live_filter_recommended,
+    live_filter_refusal_reason,
     run_selftest,
 )
 
@@ -846,6 +851,36 @@ class TestChaosStress(unittest.TestCase):
             )
             if dual_in:
                 self.assertGreater(dual_out, 0, f"seed {seed} dropped all multitouch")
+
+
+class TestLiveFilterSafety(unittest.TestCase):
+    def test_duo_keyboard_touchpad_recommended(self) -> None:
+        info = TouchpadInfo(
+            Path("/dev/input/event10"),
+            "Primax Electronics Ltd. ASUS Zenbook Duo Keyboard Touchpad",
+            phys="usb-0000:00:14.0-6/input5",
+        )
+        self.assertTrue(live_filter_recommended(info))
+        self.assertIsNone(live_filter_refusal_reason(info))
+
+    def test_gdx1515_recommended_on_ux5400(self) -> None:
+        info = TouchpadInfo(
+            Path("/dev/input/event8"),
+            "GDX1515:00 27C6:01F4 Touchpad",
+            phys="i2c-GDX1515:00",
+        )
+        self.assertTrue(live_filter_recommended(info))
+        self.assertIsNone(live_filter_refusal_reason(info))
+
+    def test_unknown_pad_defaults_disabled(self) -> None:
+        info = TouchpadInfo(
+            Path("/dev/input/event5"),
+            "ELAN9009:00 04F3:425A Touchpad",
+            phys="i2c-ELAN9009:00",
+        )
+        cfg = empty_config_v2()
+        self.assertFalse(device_profile_enabled(cfg, info))
+        self.assertIsNotNone(live_filter_refusal_reason(info))
 
 
 class TestSelftest(unittest.TestCase):

@@ -1,0 +1,8 @@
+{
+  "_comment": "Closed-lid night on AC: machine stays up, panel off, quiet fan, min CPU. Install contrib/elogind/99-zenbook-night-mode.conf and set enabled=true.",
+  "enabled": false,
+  "require_ac": true,
+  "blank_displays": true,
+  "fan_profile": "night",
+  "fan_control_config": "/etc/zenbook-scripts/fan-control.json"
+}

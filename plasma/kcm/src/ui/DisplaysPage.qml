@@ -9,6 +9,15 @@ import org.kde.kirigami as Kirigami
 ColumnLayout {
     spacing: Kirigami.Units.largeSpacing
 
+    Component.onCompleted: {
+        if (kcm.hasDuoDock && kcm.duoStatusText.length === 0) {
+            kcm.refreshDuoStatus()
+        }
+        if (kcm.hasScreenpad && kcm.screenpadStatusText.length === 0) {
+            kcm.refreshScreenpadStatus()
+        }
+    }
+
     Kirigami.Heading {
         level: 2
         text: i18n("Displays")

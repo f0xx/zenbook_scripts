@@ -1,3 +1,17 @@
+zenbook-scripts (0.0.4) unstable; urgency=medium
+
+  * Release 0.0.4: adaptive touchpad filter, KWin restore-kwin, KCM plasma package,
+    UX8406 dock touch-map/handoff, fan manual lock sleep/lid, generic fan hwmon.
+
+ -- f0xx <noreply@users.noreply.github.com>  Fri, 07 Aug 2026 18:00:00 +0200
+
+zenbook-scripts (0.0.4~pre1) unstable; urgency=medium
+
+  * 0.0.4 gate: adaptive filter polish, UX5400 AccelSpeed preset, generic fan
+    hwmon backends, zenbook-scripts-plasma KCM binary package.
+
+ -- f0xx <noreply@users.noreply.github.com>  Wed, 05 Aug 2026 10:45:00 +0200
+
 zenbook-scripts (0.0.3) unstable; urgency=medium
 
   * Release 0.0.3: Plasma session/KCM, Duo BT/Fn-row, platform_profile persist.

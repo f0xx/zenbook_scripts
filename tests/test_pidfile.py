@@ -13,8 +13,11 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from zenbook_kb.pidfile import (  # noqa: E402
+    TOUCHPAD_PIDFILE,
     acquire_pidfile,
     clear_pidfile,
+    find_touchpad_live_filter_pids,
+    is_touchpad_live_filter_pid,
     pid_alive,
     read_pidfile,
     release_pidfile,
@@ -63,6 +66,18 @@ class TestPidfile(unittest.TestCase):
         self.assertFalse(self.path.exists())
         # foreign untouched
         self.assertTrue(foreign.exists())
+
+    def test_find_live_filter_quick_skips_proc_walk(self) -> None:
+        from unittest import mock
+
+        pf = self.path
+        pf.write_text("999\n", encoding="utf-8")
+        with mock.patch("zenbook_kb.pidfile.TOUCHPAD_PIDFILE", pf), mock.patch(
+            "zenbook_kb.pidfile.is_touchpad_live_filter_pid", return_value=True
+        ), mock.patch("pathlib.Path.iterdir") as iterdir:
+            pids = find_touchpad_live_filter_pids(quick=True)
+        self.assertEqual(pids, [999])
+        iterdir.assert_not_called()
 
 
 if __name__ == "__main__":

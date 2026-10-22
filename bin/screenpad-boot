@@ -6,15 +6,26 @@ set -euo pipefail
 
 zenbook_kb_find_root() {
 	local here candidate
+
 	here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 	if [[ -f "${here}/../lib/screenpad.sh" ]]; then
 		echo "$(cd "${here}/.." && pwd)"
 		return 0
 	fi
-	if [[ -f /usr/local/share/zenbook-scripts/lib/screenpad.sh ]]; then
-		echo /usr/local/share/zenbook-scripts
-		return 0
-	fi
+
+	for candidate in \
+		/usr/share/zenbook-scripts \
+		/usr/local/share/zenbook-scripts \
+		"${here}/.." \
+		"${here}"; do
+		[[ -d "${candidate}" ]] || continue
+		candidate="$(cd "${candidate}" && pwd)"
+		if [[ -f "${candidate}/lib/screenpad.sh" ]]; then
+			echo "${candidate}"
+			return 0
+		fi
+	done
+
 	echo "lib/screenpad.sh not found" >&2
 	return 1
 }

@@ -14,10 +14,15 @@ Binary package **`zenbook-scripts`** (Architecture: `all`), CLI-first:
 - udev rules, systemd units, and sleep hooks under `/etc` and `/usr/lib/systemd/`
 - OpenRC scripts under `/usr/share/doc/zenbook-scripts/examples/openrc/` (reference)
 
-**Not included:** out-of-tree `hid-asus.ko` (build from `kernel/` manually or via
-future DKMS). **Plasma 6 KCM** (`plasma/kcm/`) is optional and needs Ubuntu **24.04+**
-(or Debian trixie/sid) with Qt6/KF6 dev packages — build with
-`plasma/kcm/build.sh --system` separately.
+**Plasma 6 KCM** (`plasma/kcm/`) ships as **`zenbook-scripts-plasma`** when built
+with Qt6/KF6 dev packages (Ubuntu 24.04+, Debian trixie/sid, Kubuntu).
+
+## Packages
+
+| Binary | Contents |
+|--------|----------|
+| `zenbook-scripts` | CLI + `/usr/share/zenbook-scripts/` (Architecture: all) |
+| `zenbook-scripts-plasma` | `kcm_zenbook_platform.so` + `.desktop` (Architecture: any) |
 
 ## Dependencies
 
@@ -37,9 +42,16 @@ future DKMS). **Plasma 6 KCM** (`plasma/kcm/`) is optional and needs Ubuntu **24
 
 ### Ubuntu 24.04+ / Debian bookworm+
 
-Same CLI package. Optional Plasma KCM: install build deps (`qt6-base-dev`,
-`libkf6kcmutils-dev`, …) and run `plasma/kcm/build.sh --system` — not wired into
-this `.deb` yet.
+CLI package plus optional Plasma KCM binary **`zenbook-scripts-plasma`** (built
+automatically when KF6 Build-Depends are present):
+
+```bash
+sudo apt install -y debhelper-compat devscripts \
+  cmake extra-cmake-modules qt6-base-dev qt6-declarative-dev \
+  libkf6kcmutils-dev libkf6coreaddons-dev libkf6i18n-dev
+dpkg-buildpackage -us -uc -b
+sudo dpkg -i ../zenbook-scripts_*.deb ../zenbook-scripts-plasma_*.deb
+```
 
 ## Build `.deb` from git checkout
 

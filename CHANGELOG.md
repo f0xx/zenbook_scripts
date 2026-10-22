@@ -5,26 +5,52 @@ based on [Keep a Changelog](https://keepachangelog.com/). Version tags follow
 Gentoo-friendly naming where needed (`v0.0.1_hf1` → PV `0.0.1_p1`,
 `v0.0.2_pre1` → PV `0.0.2_pre1`).
 
-## [Unreleased] — toward 0.0.4
+## [0.0.4] — 2026-08-07
 
-### Changed
-
-- **Gentoo `USE=plasma`:** build and install `kcm_zenbook_platform` during
-  emerge (KF6/Qt6 deps). No separate `plasma/kcm/build.sh --system` step.
-- **KCM Displays tab:** shown only when Duo chassis/pogo **or** ScreenPad
-  sysfs is present; Duo vs ScreenPad controls are separate. Single-panel
-  models skip the tab. (0.0.3 always showed “Duo / Displays”.)
-- **`platform-probe`:** `duo_dock` feature line; recommend `plasma` on Duo /
-  UX5400.
+Tag: `v0.0.4`. Gentoo PV: `0.0.4`.
 
 ### Added
 
-- **`platform-touch-cal`:** fullscreen dual-eDP touch calibrator / jump
-  diagnoser (xinput-val principles; PySide6; `USE=qt6`). Proves lower→primary
-  warp; does not claim a compositor fix.
-- `zenbook_kb.dmi.is_duo_chassis()` / `has_duo_pogo_usb()`; unit tests.
-- Contributor `docs/` research library seed (Fn-row, daemons, Duo, session,
-  touchpad, touch-jump).
+- **Adaptive filter profiles** (`filter_profile`: `default` | `adaptive`): `adaptive_matrix`
+  plugin with online baseline learning and persisted state (`zenbook_kb/touchpad_adaptive.py`).
+- **Generic fan hwmon backends** (`zenbook_kb/fan_hwmon.py`): thinkpad, dell_smm, hp,
+  asus, generic pwm — RPM read + PWM apply where sysfs exposes nodes.
+- **Ubuntu KF6 deb + KCM:** binary package `zenbook-scripts-plasma` via
+  `packaging/debian/build-kcm.sh`.
+- **UX5400 AccelSpeed preset:** `touchpad.json.example.ux5400` + `docs/touchpad/ux5400-accel.md`
+  (nonlinear `soft_accel`; **live filter required** for GDX1515 cursor motion).
+- **`platform-touch-map`:** KWin `outputName` for Duo digitizers; `apply-docked` preset;
+  `restore-kwin` / `list_pointer_touchpads` for pointer-class touchpads.
+- **`platform-touchpad restore-kwin`:** re-enable physical pads after crashed filter.
+- **Closed-lid night mode (scaffold):** `platform-night-mode`, `platform-night-setup`.
+- **User profiles GUI (scaffold):** `profiles.json`, KCM Profiles tab, cron evaluate.
+- **KCM:** handbook HTML/docbook, sync status on load, Touchpad knobs, live filter
+  `sudo -n`, Displays tab auto-populate.
+- **`contrib/udev/99-uinput.rules`:** `input` group access to `/dev/uinput`.
+- **Docs:** adaptive filtering, resource-pressure, touchpad KWin recovery.
+
+### Changed
+
+- **Adaptive filter:** learn-only — no position rewrite (fixes sticky cursor on UX8406).
+- **Touchpad config:** nested `transports.usb`/`.bluetooth` beats stale flat keys.
+- **Gentoo `USE=plasma`:** emerge builds/installs KCM (KF6).
+- **KCM Displays tab:** gated on Duo chassis / ScreenPad presence.
+- **`platform-session` `touchpad_reassert`:** calls `restore-kwin` (SIGHUP was unhandled).
+- **`platform-touchpad`:** SIGHUP graceful stop; `restore-kwin` subcommand.
+- **Fan manual lock:** `lid_close` / `sleep_pre` still cool; defer `sleep_post` restore
+  while lid closed; `fn_lock` sleep snapshot fix (`existing=""`).
+- **`kb-brightness-sleep`:** fan hook runs even if brightness save fails; prefers
+  `/usr/bin` in systemd sleep hook template.
+
+### Fixed
+
+- **UX5400 GDX1515 live filter:** whitelist, grab-safety, KWin `(filter)` routing on
+  start/stop; GUI status timer CPU fix.
+- **UX8406 dock handoff:** stop filter, `restore-kwin`, touch-map on dock/undock udev.
+- **Live touchpad EOF/IO:** release EVIOCGRAB on device drop (undock/BT).
+- **Fan tray stickiness:** `fan-control-mode` manual vs auto.
+- **KCM live filter start:** `sudo -n platform-touchpad run` (was: direct call, uinput EPERM).
+- **KWin after filter crash:** compositor touchpad re-enable via `restore-kwin`.
 
 ## [0.0.3] — 2026-07-24
 

@@ -70,6 +70,80 @@ def pid_alive(pid: int) -> bool:
         return False
 
 
+def _read_proc_cmdline(pid: int) -> list[str]:
+    try:
+        raw = Path(f"/proc/{pid}/cmdline").read_bytes()
+    except OSError:
+        return []
+    return [p.decode("utf-8", "replace") for p in raw.split(b"\0") if p]
+
+
+def is_touchpad_live_filter_pid(pid: int) -> bool:
+    """True when *pid* is a ``platform-touchpad run`` process (not the GUI)."""
+    parts = _read_proc_cmdline(pid)
+    if not parts:
+        return False
+    if any("platform-touchpad-gui" in p for p in parts):
+        return False
+    if not any("platform-touchpad" in p for p in parts):
+        return False
+    return "run" in parts
+
+
+def find_touchpad_live_filter_pids(*, quick: bool = False) -> list[int]:
+    """Live ``platform-touchpad run`` PIDs.
+
+    ``quick=True`` (GUI polling): pidfile + cmdline verify only — no /proc scan.
+    ``quick=False`` (stop/orphan hunt): also walk ``/proc`` for stray runners.
+    """
+    found: set[int] = set()
+    pf_pid: int | None = None
+    try:
+        raw = TOUCHPAD_PIDFILE.read_text(encoding="utf-8").strip()
+        pf_pid = int(raw.split()[0]) if raw else None
+    except (OSError, ValueError, IndexError):
+        pf_pid = None
+    if pf_pid is not None and is_touchpad_live_filter_pid(pf_pid):
+        found.add(pf_pid)
+    if quick:
+        return sorted(found)
+    try:
+        for entry in Path("/proc").iterdir():
+            if not entry.name.isdigit():
+                continue
+            try:
+                pid = int(entry.name)
+            except ValueError:
+                continue
+            if pid in found:
+                continue
+            if is_touchpad_live_filter_pid(pid):
+                found.add(pid)
+    except OSError:
+        pass
+    return sorted(found)
+
+
+def force_clear_touchpad_pidfile() -> None:
+    """Remove touchpad pidfile even when root-owned (live filter runs via sudo)."""
+    if os.geteuid() == 0:
+        try:
+            TOUCHPAD_PIDFILE.unlink(missing_ok=True)
+        except OSError:
+            pass
+    else:
+        clear_pidfile(TOUCHPAD_PIDFILE)
+        if TOUCHPAD_PIDFILE.is_file():
+            try:
+                from zenbook_kb.priv import run_root
+
+                run_root(["rm", "-f", str(TOUCHPAD_PIDFILE)], check=False, timeout=2)
+            except Exception:
+                pass
+    alt = RUN_GROUP_DIR / TOUCHPAD_PIDFILE.name
+    clear_pidfile(alt)
+
+
 def read_pidfile(path: Path, *, clear_stale: bool = True) -> int | None:
     """Return live PID from ``path``, or None. Removes stale files when asked."""
     try:
@@ -87,10 +161,16 @@ def read_pidfile(path: Path, *, clear_stale: bool = True) -> int | None:
             clear_pidfile(path)
         return None
     if pid_alive(pid):
+        if path == TOUCHPAD_PIDFILE and not is_touchpad_live_filter_pid(pid):
+            if clear_stale:
+                force_clear_touchpad_pidfile()
+            return None
         return pid
     if clear_stale:
-        clear_pidfile(path)
-        log.debug("removed stale pidfile %s (was pid %s)", path, pid)
+        if path == TOUCHPAD_PIDFILE:
+            force_clear_touchpad_pidfile()
+        else:
+            clear_pidfile(path)
     return None
 
 
@@ -99,8 +179,29 @@ def write_pidfile(path: Path, pid: int | None = None) -> None:
     pid = os.getpid() if pid is None else int(pid)
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(f"{pid}\n", encoding="utf-8")
-    tmp.replace(path)
+    try:
+        tmp.write_text(f"{pid}\n", encoding="utf-8")
+        tmp.replace(path)
+        return
+    except OSError:
+        # Non-root OpenRC services (command_user=…) cannot create files in /run.
+        # Fall back to truncating a pre-created pidfile, then to /run/zenbook-scripts/.
+        pass
+    try:
+        path.write_text(f"{pid}\n", encoding="utf-8")
+        return
+    except OSError:
+        pass
+    RUN_GROUP_DIR.mkdir(parents=True, exist_ok=True)
+    alt = RUN_GROUP_DIR / path.name
+    alt_tmp = alt.with_suffix(alt.suffix + ".tmp")
+    alt_tmp.write_text(f"{pid}\n", encoding="utf-8")
+    alt_tmp.replace(alt)
+    try:
+        if path.resolve() != alt.resolve():
+            path.write_text(f"{pid}\n", encoding="utf-8")
+    except OSError:
+        log.warning("pidfile written to %s (could not update %s)", alt, path)
 
 
 def clear_pidfile(path: Path, *, only_if_pid: int | None = None) -> None:
@@ -137,10 +238,10 @@ def acquire_pidfile(path: Path, *, replace: bool = False) -> int | None:
         # Brief wait loop without importing time at module level cost — ok
         import time
 
-        for _ in range(20):
+        for _ in range(10):
             if not pid_alive(existing):
                 break
-            time.sleep(0.05)
+            time.sleep(0.02)
         if pid_alive(existing):
             try:
                 os.kill(existing, signal.SIGKILL)

@@ -2,14 +2,38 @@
   "version": 2,
   "default_device": "auto",
   "devices": {
-    "Primax Electronics Ltd. ASUS Zenbook Duo Keyboard Touchpad|usb-0000:00:14.0-6/input5": {
+    "Primax Electronics Ltd. ASUS Zenbook Duo Keyboard Touchpad": {
+      "logical": "Primax Electronics Ltd. ASUS Zenbook Duo Keyboard Touchpad",
+      "enabled": true,
+      "transports": {
+        "usb": {
+          "filters": [
+            { "plugin": "event_sim", "enabled": false },
+            { "plugin": "typing_inhibit", "window_ms": 350, "enabled": true },
+            { "plugin": "exec_delay", "ms": 25, "enabled": true },
+            { "plugin": "outlier_reject", "max_delta": 1200, "enabled": true },
+            { "plugin": "soft_accel", "gain": 1.6, "mode": "linear", "pivot": 40, "enabled": false }
+          ]
+        },
+        "bluetooth": {
+          "filters": [
+            { "plugin": "event_sim", "enabled": false },
+            { "plugin": "typing_inhibit", "window_ms": 400, "enabled": true },
+            { "plugin": "exec_delay", "ms": 30, "enabled": true },
+            { "plugin": "outlier_reject", "max_delta": 900, "enabled": true },
+            { "plugin": "soft_accel", "gain": 1.6, "mode": "linear", "pivot": 40, "enabled": false }
+          ]
+        }
+      }
+    },
+    "GDX1515:00 27C6:01F4 Touchpad|i2c-GDX1515:00": {
       "enabled": true,
       "filters": [
         { "plugin": "event_sim", "enabled": false },
         { "plugin": "typing_inhibit", "window_ms": 350, "enabled": true },
         { "plugin": "exec_delay", "ms": 25, "enabled": true },
         { "plugin": "outlier_reject", "max_delta": 1200, "enabled": true },
-        { "plugin": "soft_accel", "gain": 1.6, "mode": "linear", "pivot": 40, "enabled": true }
+        { "plugin": "soft_accel", "gain": 1.6, "mode": "linear", "pivot": 40, "enabled": false }
       ]
     },
     "ELAN9009:00 04F3:425A Touchpad|i2c-ELAN9009:00": {
@@ -19,7 +43,7 @@
         { "plugin": "typing_inhibit", "window_ms": 350, "enabled": true },
         { "plugin": "exec_delay", "ms": 25, "enabled": true },
         { "plugin": "outlier_reject", "max_delta": 1200, "enabled": true },
-        { "plugin": "soft_accel", "gain": 1.6, "mode": "linear", "pivot": 40, "enabled": true }
+        { "plugin": "soft_accel", "gain": 1.6, "mode": "linear", "pivot": 40, "enabled": false }
       ]
     },
     "ELAN9008:00 04F3:425B Touchpad|i2c-ELAN9008:00": {
@@ -29,7 +53,7 @@
         { "plugin": "typing_inhibit", "window_ms": 350, "enabled": true },
         { "plugin": "exec_delay", "ms": 25, "enabled": true },
         { "plugin": "outlier_reject", "max_delta": 1200, "enabled": true },
-        { "plugin": "soft_accel", "gain": 1.6, "mode": "linear", "pivot": 40, "enabled": true }
+        { "plugin": "soft_accel", "gain": 1.6, "mode": "linear", "pivot": 40, "enabled": false }
       ]
     }
   }

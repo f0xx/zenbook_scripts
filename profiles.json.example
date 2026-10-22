@@ -1,0 +1,77 @@
+{
+  "version": 1,
+  "notifications": {
+    "enabled": true,
+    "on_mode_switch": true
+  },
+  "active_mode": "auto",
+  "modes": {
+    "auto": {
+      "builtin": true,
+      "editable": false,
+      "label": "Auto (adaptive)",
+      "description": "platform-fan-control rules from /etc/zenbook-scripts/fan-control.json",
+      "fan_profile": null
+    },
+    "quiet": {
+      "builtin": true,
+      "editable": true,
+      "label": "Quiet (powersave)",
+      "fan_profile": "powersave",
+      "schedule": { "enabled": false, "start": "22:00", "stop": "07:00" },
+      "triggers": {
+        "low_cpu": {
+          "enabled": true,
+          "load_pct_max": 20,
+          "duration_min": 3,
+          "require_battery": true
+        },
+        "battery_timeout": { "enabled": false, "minutes": 30 }
+      }
+    },
+    "balanced": {
+      "builtin": true,
+      "editable": true,
+      "label": "Balanced",
+      "fan_profile": "balanced",
+      "schedule": { "enabled": false, "start": "08:00", "stop": "23:00" },
+      "triggers": {
+        "low_cpu": {
+          "enabled": false,
+          "load_pct_max": 35,
+          "duration_min": 5,
+          "require_battery": false
+        },
+        "battery_timeout": { "enabled": false, "minutes": 45 }
+      }
+    },
+    "performance": {
+      "builtin": true,
+      "editable": true,
+      "label": "Performance",
+      "fan_profile": "performance",
+      "schedule": { "enabled": false, "start": "09:00", "stop": "18:00" },
+      "triggers": {
+        "low_cpu": {
+          "enabled": false,
+          "load_pct_max": 60,
+          "duration_min": 2,
+          "require_battery": false
+        },
+        "battery_timeout": { "enabled": false, "minutes": 15 }
+      }
+    },
+    "night": {
+      "builtin": true,
+      "editable": true,
+      "label": "Night mode",
+      "enabled": false,
+      "base_mode": "quiet",
+      "schedule": { "enabled": true, "start": "23:00", "stop": "06:00" },
+      "screen": { "power_off": true, "brightness": 0 },
+      "keyboard_backlight": { "enabled": false, "level": 0, "level_pct": 0 },
+      "network": { "stay_up": true },
+      "notes": "Scheduled night runs only when awake and lid open. Closed lid / hibernate: use platform-night-mode + elogind drop-in."
+    }
+  }
+}

@@ -8,14 +8,17 @@ Examples:
   platform-touchpad selftest
   platform-touchpad monitor --seconds 10
   sudo platform-touchpad run --device event10
+  sudo platform-touchpad stop
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import os
 import signal
 import sys
+import time
 from pathlib import Path
 
 _ROOT = Path(__file__).resolve().parent.parent
@@ -37,6 +40,7 @@ from zenbook_kb.touchpad import (  # noqa: E402
     DEFAULT_EXEC_DELAY_MS,
     DEFAULT_MAX_DELTA,
     Ev,
+    effective_config_path,
     UInputProxy,
     apply_pipeline_knobs,
     bind_soft_accel_bounds,
@@ -44,12 +48,22 @@ from zenbook_kb.touchpad import (  # noqa: E402
     device_profile_enabled,
     discover_touchpads,
     filters_for_device,
+    filter_profile_for_device,
+    live_filter_refusal_reason,
     iter_touchpad_with_typing,
     load_config,
     make_sim_brush,
     resolve_touchpad,
     run_selftest,
+    save_config,
+    transport_for_info,
+    upsert_device_profile,
 )
+from zenbook_kb.touchpad_profiles import (  # noqa: E402
+    FILTER_PROFILE_ADAPTIVE,
+    FILTER_PROFILE_DEFAULT,
+)
+from zenbook_kb.touchpad_calibrate import detect_transport  # noqa: E402
 from zenbook_kb.pidfile import (  # noqa: E402
     TOUCHPAD_PIDFILE,
     TOUCHPAD_SVCNAME,
@@ -57,6 +71,23 @@ from zenbook_kb.pidfile import (  # noqa: E402
     read_pidfile,
     release_pidfile,
 )
+
+
+def _restore_compositor_touchpad(info) -> None:
+    try:
+        from zenbook_kb.touch_map import (
+            release_kwin_after_live_filter,
+            restore_all_compositor_touchpads,
+        )
+
+        release_kwin_after_live_filter(
+            touchpad_path=info.path,
+            name_hint=info.name,
+            phase="full",
+        )
+        restore_all_compositor_touchpads()
+    except Exception:
+        pass
 
 
 def _cfg_path(args: argparse.Namespace) -> Path | None:
@@ -73,7 +104,7 @@ def _load(args: argparse.Namespace) -> dict:
 def _pipe_for(args: argparse.Namespace, info) -> object:
     cfg = _load(args)
     filters = filters_for_device(cfg, info, path=info.path)
-    pipe = build_pipeline({"filters": filters})
+    pipe = build_pipeline({"filters": filters, "device_key": info.key})
     bind_soft_accel_bounds(pipe, info.path)
     if getattr(args, "delay_ms", None) is not None or getattr(args, "max_delta", None) is not None:
         apply_pipeline_knobs(
@@ -138,6 +169,7 @@ def _pump(
 
     signal.signal(signal.SIGINT, _stop)
     signal.signal(signal.SIGTERM, _stop)
+    signal.signal(signal.SIGHUP, _stop)
 
     frame: list[Ev] = []
     frames_in = frames_out = 0
@@ -199,6 +231,7 @@ def cmd_capture(args: argparse.Namespace) -> int:
 
     signal.signal(signal.SIGINT, _stop)
     signal.signal(signal.SIGTERM, _stop)
+    signal.signal(signal.SIGHUP, _stop)
 
     meta = {
         "t": __import__("time").time(),
@@ -206,6 +239,19 @@ def cmd_capture(args: argparse.Namespace) -> int:
         "device": str(info.path),
         "key": info.key,
         "name": info.name,
+        "phys": getattr(info, "phys", "") or "",
+        "uniq": getattr(info, "uniq", "") or "",
+        "sequence": getattr(args, "sequence", None) or "mixed",
+        "transport": (
+            None
+            if getattr(args, "transport", "auto") in (None, "auto")
+            else args.transport
+        )
+        or detect_transport(
+            name=info.name,
+            phys=getattr(info, "phys", "") or "",
+            uniq=getattr(info, "uniq", "") or "",
+        ),
         "pipeline": pipe.summary(),
     }
     n_in = n_pass = n_drop = 0
@@ -250,6 +296,11 @@ def cmd_capture(args: argparse.Namespace) -> int:
 def cmd_run(args: argparse.Namespace) -> int:
     cfg = _load(args)
     info = resolve_touchpad(args.device, cfg)
+    refusal = live_filter_refusal_reason(info)
+    if refusal and not args.force:
+        print(refusal, file=sys.stderr)
+        print("Refusing EVIOCGRAB — pass --force to override.", file=sys.stderr)
+        return 3
     if not device_profile_enabled(cfg, info, path=info.path):
         print(f"profile disabled for {info.key}; pass-through not started", file=sys.stderr)
         return 2
@@ -279,10 +330,81 @@ def cmd_run(args: argparse.Namespace) -> int:
             )
     finally:
         release_pidfile(TOUCHPAD_PIDFILE)
+        _restore_compositor_touchpad(info)
+
+
+def cmd_stop(args: argparse.Namespace) -> int:
+    """Stop live filter PIDs and clear pidfile (releases EVIOCGRAB)."""
+    from zenbook_kb.pidfile import (
+        find_touchpad_live_filter_pids,
+        force_clear_touchpad_pidfile,
+        is_touchpad_live_filter_pid,
+        pid_alive,
+    )
+
+    force = bool(getattr(args, "force", False))
+    sig = signal.SIGKILL if force else signal.SIGINT
+    pids = find_touchpad_live_filter_pids()
+    if not pids:
+        force_clear_touchpad_pidfile()
+        print("live filter not running")
+        return 0
+
+    for pid in pids:
+        try:
+            os.kill(pid, sig)
+        except ProcessLookupError:
+            pass
+        except PermissionError:
+            print(f"need root to signal pid {pid}", file=sys.stderr)
+            return 1
+
+    for _ in range(25):
+        if not any(pid_alive(p) and is_touchpad_live_filter_pid(p) for p in pids):
+            break
+        time.sleep(0.02)
+
+    if any(pid_alive(p) and is_touchpad_live_filter_pid(p) for p in pids):
+        for pid in pids:
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except OSError:
+                pass
+        time.sleep(0.02)
+
+    force_clear_touchpad_pidfile()
+    try:
+        info = resolve_touchpad(getattr(args, "device", None) or "auto", _load(args))
+        _restore_compositor_touchpad(info)
+    except Exception:
+        pass
+    print(f"stopped live filter pids={','.join(str(p) for p in pids)}")
+    return 0
+
+
+def cmd_restore_kwin(_args: argparse.Namespace) -> int:
+    """Re-enable physical touchpads in KWin after a crashed/stale live filter."""
+    from zenbook_kb.touch_map import restore_all_compositor_touchpads
+
+    n = restore_all_compositor_touchpads()
+    pads = []
+    try:
+        from zenbook_kb.touch_map import list_pointer_touchpads
+
+        pads = [
+            f"{d.sysname} ({d.name})"
+            for d in list_pointer_touchpads()
+        ]
+    except Exception:
+        pass
+    print(f"restored {n} KWin input device(s)")
+    if pads:
+        print("pointer touchpads:", ", ".join(pads))
+    return 0
 
 
 def cmd_status(args: argparse.Namespace) -> int:
-    cfg_path = Path(args.config) if args.config else DEFAULT_CONFIG
+    cfg_path = Path(args.config) if args.config else effective_config_path(None)
     cfg = load_config(cfg_path if cfg_path.is_file() else None)
     pads = discover_touchpads()
     live_pid = read_pidfile(TOUCHPAD_PIDFILE, clear_stale=True)
@@ -297,9 +419,14 @@ def cmd_status(args: argparse.Namespace) -> int:
     for info in pads:
         filters = filters_for_device(cfg, info)
         en = device_profile_enabled(cfg, info)
-        pipe = build_pipeline({"filters": filters})
-        print(f"  {info.path}  [{('on' if en else 'off')}]  {info.name}")
-        print(f"    key: {info.key}")
+        rec = live_filter_refusal_reason(info) is None
+        profile = filter_profile_for_device(cfg, info)
+        pipe = build_pipeline({"filters": filters, "device_key": info.key})
+        tag = "on" if en else "off"
+        if not rec:
+            tag += ", opt-in"
+        print(f"  {info.path}  [{tag}]  {info.name}")
+        print(f"    key: {info.key}  filter_profile={profile}")
         print(f"    {pipe.summary()}")
     stored = cfg.get("devices") or {}
     orphan = [k for k in stored if not any(i.key == k or i.name == k for i in pads)]
@@ -308,6 +435,50 @@ def cmd_status(args: argparse.Namespace) -> int:
         for k in orphan:
             print(f"  {k}")
     return 0
+
+
+def cmd_profile(args: argparse.Namespace) -> int:
+    cfg = _load(args)
+    cfg_path = _cfg_path(args)
+    info = resolve_touchpad(args.device, cfg)
+    if args.profile_cmd == "show":
+        prof = filter_profile_for_device(cfg, info, path=info.path)
+        print(f"device:  {info.key}")
+        print(f"profile: {prof}")
+        if prof == FILTER_PROFILE_ADAPTIVE:
+            from zenbook_kb.touchpad_adaptive import load_adaptive_state
+
+            st = load_adaptive_state(info.key)
+            print(
+                f"learned: baseline_x={st.baseline_x:.1f} baseline_y={st.baseline_y:.1f} "
+                f"samples={st.samples}"
+            )
+        return 0
+    if args.profile_cmd == "set":
+        name = str(args.name).strip().lower()
+        if name not in (FILTER_PROFILE_DEFAULT, FILTER_PROFILE_ADAPTIVE):
+            print(f"unknown profile {name!r}; use default or adaptive", file=sys.stderr)
+            return 2
+        if name == FILTER_PROFILE_ADAPTIVE:
+            cfg = upsert_device_profile(
+                cfg,
+                info.key,
+                filter_profile=FILTER_PROFILE_ADAPTIVE,
+                enabled=device_profile_enabled(cfg, info, path=info.path),
+                transport=transport_for_info(info),
+            )
+        else:
+            cfg = upsert_device_profile(
+                cfg,
+                info.key,
+                filters=filters_for_device(cfg, info, path=info.path),
+                enabled=device_profile_enabled(cfg, info, path=info.path),
+                transport=transport_for_info(info),
+            )
+        save_config(cfg, cfg_path if cfg_path else DEFAULT_CONFIG)
+        print(f"set {info.key} filter_profile={name} → {cfg_path or DEFAULT_CONFIG}")
+        return 0
+    return 2
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -369,6 +540,18 @@ def main(argv: list[str] | None = None) -> int:
     p_cap.add_argument("--delay-ms", type=float, default=None)
     p_cap.add_argument("--max-delta", type=int, default=None)
     p_cap.add_argument(
+        "--sequence",
+        choices=("type", "palm", "mixed"),
+        default="mixed",
+        help="label capture intent in JSONL meta (calibrate wizard)",
+    )
+    p_cap.add_argument(
+        "--transport",
+        choices=("auto", "usb", "bluetooth", "i2c", "unknown"),
+        default="auto",
+        help="override transport tag in meta (default: detect from phys)",
+    )
+    p_cap.add_argument(
         "--flush-every",
         type=int,
         default=50,
@@ -395,12 +578,43 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="stop an existing live filter (same pidfile) before starting",
     )
+    p_run.add_argument(
+        "--force",
+        action="store_true",
+        help="allow live filter on non-Duo detachable pads (unsafe on integrated pads)",
+    )
 
     p_status = sub.add_parser("status", help="show devices + per-device filter config")
     p_status.add_argument(
         "--config",
         default=None,
         help=f"JSON config (default {DEFAULT_CONFIG})",
+    )
+    p_stop = sub.add_parser("stop", help="stop live filter (release EVIOCGRAB)")
+    p_stop.add_argument(
+        "--force",
+        action="store_true",
+        help="SIGKILL if the filter does not exit promptly",
+    )
+    sub.add_parser(
+        "restore-kwin",
+        help="re-enable physical touchpads in KWin (after crashed live filter)",
+    )
+
+    p_prof = sub.add_parser("profile", help="show or set filter_profile (default|adaptive)")
+    prof_sub = p_prof.add_subparsers(dest="profile_cmd", required=True)
+    p_prof_show = prof_sub.add_parser("show", help="show filter_profile for device")
+    p_prof_show.add_argument(
+        "--device",
+        default=None,
+        help="auto | /dev/input/eventN | stable key | name substring",
+    )
+    p_prof_set = prof_sub.add_parser("set", help="set filter_profile")
+    p_prof_set.add_argument("name", choices=("default", "adaptive"))
+    p_prof_set.add_argument(
+        "--device",
+        default=None,
+        help="auto | /dev/input/eventN | stable key | name substring",
     )
 
     args = parser.parse_args(argv)
@@ -409,6 +623,10 @@ def main(argv: list[str] | None = None) -> int:
             return cmd_list(args)
         if args.cmd == "status":
             return cmd_status(args)
+        if args.cmd == "stop":
+            return cmd_stop(args)
+        if args.cmd == "restore-kwin":
+            return cmd_restore_kwin(args)
         if args.cmd == "selftest":
             return cmd_selftest(args)
         if args.cmd == "sim":
@@ -419,6 +637,8 @@ def main(argv: list[str] | None = None) -> int:
             return cmd_capture(args)
         if args.cmd == "run":
             return cmd_run(args)
+        if args.cmd == "profile":
+            return cmd_profile(args)
     except (OSError, PermissionError, ValueError, FileNotFoundError) as exc:
         print(exc, file=sys.stderr)
         return 1

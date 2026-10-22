@@ -25,15 +25,18 @@ if not _inserted and (_ROOT / "zenbook_kb").is_dir():
     sys.path.insert(0, str(_ROOT))
 
 from zenbook_kb.fan_control import (  # noqa: E402
+    CONTROL_MODE_AUTO,
     ControllerState,
     apply_profile,
     daemon_loop,
     format_status,
+    get_control_mode,
     load_config,
     maybe_apply_continuous,
     pick_rule_profile,
     run_event,
     sample_system,
+    set_control_mode,
 )
 from zenbook_kb.pidfile import (  # noqa: E402
     FAN_PIDFILE,
@@ -137,6 +140,18 @@ def main(argv: list[str] | None = None) -> int:
     p_apply = sub.add_parser("apply", parents=[cfg_parent], help="force-apply a named profile")
     p_apply.add_argument("profile")
 
+    p_mode = sub.add_parser(
+        "mode",
+        parents=[cfg_parent],
+        help="get/set adaptive lock: auto (rules) | manual (user tray/CLI sticks)",
+    )
+    p_mode.add_argument(
+        "value",
+        nargs="?",
+        choices=("auto", "manual", "adaptive"),
+        help="omit to print current mode",
+    )
+
     args = parser.parse_args(argv)
     logging.basicConfig(
         level=logging.DEBUG if args.verbose else logging.INFO,
@@ -226,11 +241,25 @@ def main(argv: list[str] | None = None) -> int:
         return 0 if ok else 1
 
     if args.cmd == "once":
+        if get_control_mode() != CONTROL_MODE_AUTO:
+            set_control_mode(CONTROL_MODE_AUTO)
+            print("mode: auto (once clears manual lock)")
         maybe_apply_continuous(cfg, sample, state, force=True)
         print(format_status(cfg, sample_system(), state))
         return 0
 
+    if args.cmd == "mode":
+        if args.value:
+            print(set_control_mode(args.value))
+            if get_control_mode() == CONTROL_MODE_AUTO:
+                maybe_apply_continuous(cfg, sample_system(), state, force=True)
+                print(format_status(cfg, sample_system(), state))
+        else:
+            print(get_control_mode())
+        return 0
+
     if args.cmd == "apply":
+        set_control_mode("manual")
         apply_profile(cfg, args.profile)
         state.last_profile = args.profile
         print(format_status(cfg, sample_system(), state))
@@ -239,7 +268,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd == "event":
         run_event(cfg, args.name, state)
         if args.name in ("sleep_post", "lid_open", "ac_change", "ac_online"):
-            maybe_apply_continuous(cfg, sample_system(), state, force=True)
+            if get_control_mode() == CONTROL_MODE_AUTO:
+                maybe_apply_continuous(cfg, sample_system(), state, force=True)
         print(format_status(cfg, sample_system(), state))
         return 0
 

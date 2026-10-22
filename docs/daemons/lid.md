@@ -1,7 +1,9 @@
 # Lid watch — `zenbook-kb-lid`
 
 Poll elogind `LidClosed`; dim/restore keyboard backlight via
-`kb-brightness-sleep lid-close|lid-open`.
+`kb-brightness-sleep lid-close|lid-open`. When `platform-night-mode` is
+installed, also runs `lid-close|lid-open` for the closed-lid **night** profile
+(see [night-mode.md](night-mode.md)).
 
 ## Start
 

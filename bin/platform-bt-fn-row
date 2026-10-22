@@ -72,7 +72,10 @@ KEY_RIGHTMETA = 126
 KEY_P = 25
 
 VENDOR_PLAIN_TO_FKEY: dict[int, int] = {
-    0xC7: KEY_F4,
+    # Kernel ZENBOOK_HID_F4 — Mode B plain F4 vendor (invert → KEY_F4).
+    0x3D: KEY_F4,
+    # USB/BT kbd backlight toggle (emit illum so _side_effect runs kb-brightness).
+    0xC7: KEY_KBDILLUMTOGGLE,
     0x10: KEY_F5,
     0x20: KEY_F6,
     0x35: KEY_F7,
@@ -857,6 +860,7 @@ def _session_loop(
         seen: set[int] = set()
         for usage in usages:
             if usage not in VENDOR_PLAIN_TO_FKEY:
+                _debug(f"vendor skip {usage:#x} (unmapped)")
                 continue
             fkey = VENDOR_PLAIN_TO_FKEY[usage]
             if fkey in seen:

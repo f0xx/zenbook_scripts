@@ -1,0 +1,227 @@
+<?xml version="1.0" ?>
+<!DOCTYPE article PUBLIC "-//OASIS//DTD DocBook XML V4.5//EN"
+ "/usr/share/sgml/docbook/xml-dtd-4.5/docbookx.dtd">
+<article id="kcm_zenbook_platform">
+<title>ZenBook Platform — System Settings</title>
+<articleinfo>
+ <authorgroup>
+  <author><firstname>zenbook_scripts</firstname></author>
+ </authorgroup>
+</articleinfo>
+
+<sect1 id="overview">
+<title>Overview</title>
+<para>
+The <application>ZenBook Platform</application> module configures ASUS ZenBook Duo
+platform tools shipped with <application>zenbook-scripts</application>: keyboard
+backlight and hotkeys, dual-eDP dock, ScreenPad backlight, sleep/resume session
+policy, scheduled profiles, and touchpad live-filter knobs.
+</para>
+<para>
+Most settings are stored under
+<filename>~/.config/zenbook-scripts/</filename> and
+<filename>/etc/zenbook-scripts/</filename>. OpenRC services are installed by
+<command>configure.py</command> on Gentoo.
+</para>
+</sect1>
+
+<sect1 id="overview-tab">
+<title>Overview tab</title>
+<para>
+Shows output of <command>platform-probe</command> (machine detection, fan backends,
+platform_profile, touchpad nodes). Loaded automatically when the module opens.
+Use <guilabel>Refresh</guilabel> after plugging the keyboard dock or resuming from sleep.
+</para>
+</sect1>
+
+<sect1 id="displays-tab">
+<title>Displays tab</title>
+<para>
+Duo dock and ScreenPad status are populated when the module opens. Use
+<guilabel>Refresh</guilabel> only if hardware changed while System Settings stayed open.
+</para>
+<sect2 id="duo-dock">
+<title>Duo dock (UX8406 / UX581)</title>
+<para>
+Lower eDP panel management via <command>platform-duo-dock</command>. Status is loaded
+when the module opens.
+</para>
+<itemizedlist>
+ <listitem><para><guilabel>Docked</guilabel> — enable lower panel in stacked layout.</para></listitem>
+ <listitem><para><guilabel>Undocked</guilabel> — disable lower panel.</para></listitem>
+ <listitem><para><guilabel>Screen swap</guilabel> — toggle primary between upper/lower via <command>platform-screen-swap</command>.</para></listitem>
+</itemizedlist>
+</sect2>
+<sect2 id="screenpad">
+<title>ScreenPad (UX5400 and similar)</title>
+<para>
+Secondary panel backlight through <command>screenpad</command> (asus_screenpad sysfs).
+Not the same as Duo eDP-2.
+</para>
+<itemizedlist>
+ <listitem><para><guilabel>On</guilabel> / <guilabel>Off</guilabel> — power and brightness.</para></listitem>
+ <listitem><para><guilabel>Sync to main</guilabel> — mirror main panel brightness percentage once.</para></listitem>
+</itemizedlist>
+</sect2>
+</sect1>
+
+<sect1 id="sleep-resume">
+<title>Sleep / Resume tab</title>
+<para>
+Per-user session policy in <filename>~/.config/zenbook-scripts/session.json</filename>
+(managed by <command>platform-session</command>).
+</para>
+<variablelist>
+ <varlistentry>
+  <term>Restore presentation after plasmashell replace</term>
+  <listitem><para>Re-applies PowerDevil presentation mode after <command>plasmashell --replace</command> (that inhibit is owned by plasmashell and is lost on replace).</para></listitem>
+ </varlistentry>
+ <varlistentry>
+  <term>Watch QSG render threads</term>
+  <listitem><para>After resume, count plasmashell threads named QSGRenderThread / Mesa (gdrv, traceq). Useful on Plasma 6.6 Wayland when resume leaks render threads (common on dual-eDP Duo). Off by default.</para></listitem>
+ </varlistentry>
+ <varlistentry>
+  <term>Auto plasmashell --replace</term>
+  <listitem><para>When watch is on and thread count exceeds the threshold, run <command>plasmashell --replace</command> (does not kill apps; kwin_wayland keeps windows).</para></listitem>
+ </varlistentry>
+ <varlistentry>
+  <term>QSG thread threshold</term>
+  <listitem><para>Total QSG/Mesa-related threads across plasmashell PIDs before auto-replace. Healthy: under ~16; leaked resume on Duo often exceeds 32. Range 1–256; default 32. Check manually: <command>platform-session plasmashell check</command>.</para></listitem>
+ </varlistentry>
+</variablelist>
+</sect1>
+
+<sect1 id="profiles-tab">
+<title>Profiles tab</title>
+<para>
+Edits <filename>~/.config/zenbook-scripts/profiles.json</filename> (day/night schedules,
+fan curves, keyboard backlight levels). <guilabel>Apply</guilabel> writes JSON;
+<command>platform-profiles</command> evaluates schedules via cron.
+</para>
+</sect1>
+
+<sect1 id="touchpad-tab">
+<title>Touchpad tab</title>
+<para>
+Knobs for the <emphasis>live filter</emphasis> (<command>platform-touchpad run</command>).
+Settings are saved to
+<filename>~/.config/zenbook-scripts/touchpad.json</filename> when present, else
+<filename>/etc/zenbook-scripts/touchpad.json</filename>.
+</para>
+<important>
+<para>
+<emphasis>Soft accel</emphasis> and palm filters only apply when the live filter is
+running (<guilabel>Start live filter</guilabel> or OpenRC
+<literal>zenbook-platform-touchpad</literal>). Raw libinput in Plasma is unchanged.
+After changing knobs, click <guilabel>Apply</guilabel> — the module restarts the live
+filter if it was already running.
+</para>
+</important>
+<variablelist>
+ <varlistentry>
+  <term>Filter profile</term>
+  <listitem>
+   <para><literal>default</literal> — static outlier_reject + exec_delay chain.</para>
+   <para><literal>adaptive</literal> — adaptive_matrix learns per-axis noise; small isolated glitches are attenuated (clamped), not dropped. Fast swipes pass through. State under <filename>~/.config/zenbook-scripts/adaptive-touchpad/</filename>.</para>
+  </listitem>
+ </varlistentry>
+ <varlistentry>
+  <term>Soft accel</term>
+  <listitem><para>Scales ABS motion on the uinput device (DE AccelSpeed bypass). Try 160–200% (gain 1.6–2.0). Nonlinear mode available in the full tuner.</para></listitem>
+ </varlistentry>
+ <varlistentry>
+  <term>Live status</term>
+  <listitem><para>Output of <command>platform-touchpad status</command> — loaded when the module opens. Shows config path, daemon PID, per-pad filter chain.</para></listitem>
+ </varlistentry>
+</variablelist>
+<para>
+USB and Bluetooth transport settings are stored under nested
+<literal>transports.usb</literal> / <literal>transports.bluetooth</literal> on the logical
+device name. Stale flat composite keys are removed on save.
+</para>
+<para>
+<guilabel>Open full tuner…</guilabel> launches <application>platform-touchpad-gui</application>
+(calibrate wizard, monitor, adaptive stats).
+</para>
+</sect1>
+
+<sect1 id="cli">
+<title>Command-line reference</title>
+<simplelist type="vert">
+ <member><command>platform-probe</command></member>
+ <member><command>platform-duo-dock status|docked|undocked</command></member>
+ <member><command>platform-screen-swap toggle</command></member>
+ <member><command>screenpad status|on|off|sync</command></member>
+ <member><command>platform-touchpad status|run|stop</command></member>
+ <member><command>platform-touchpad-kcm export|import</command></member>
+ <member><command>platform-touchpad-gui</command></member>
+ <member><command>platform-session plasmashell check</command></member>
+ <member><command>platform-profiles status|set</command></member>
+ <member><command>kb-brightness</command> / <command>kb-brightness-hotkeys</command></member>
+</simplelist>
+</sect1>
+
+<sect1 id="config-files">
+<title>Configuration files</title>
+<itemizedlist>
+ <listitem><para><filename>~/.config/zenbook-scripts/session.json</filename></para></listitem>
+ <listitem><para><filename>~/.config/zenbook-scripts/profiles.json</filename></para></listitem>
+ <listitem><para><filename>~/.config/zenbook-scripts/touchpad.json</filename></para></listitem>
+ <listitem><para><filename>~/.config/zenbook-scripts/adaptive-touchpad/*.json</filename></para></listitem>
+ <listitem><para><filename>/etc/zenbook-scripts/</filename> (system defaults)</para></listitem>
+</itemizedlist>
+</sect1>
+
+<sect1 id="services">
+<title>OpenRC services</title>
+<simplelist type="vert">
+ <member><literal>zenbook-kb-hotkeys</literal></member>
+ <member><literal>zenbook-kb-lid</literal></member>
+ <member><literal>zenbook-platform-touchpad</literal></member>
+ <member><literal>zenbook-screenpad</literal></member>
+</simplelist>
+</sect1>
+
+<sect1 id="troubleshooting">
+<title>Troubleshooting</title>
+<sect2 id="ts-live-status">
+<title>Live status empty</title>
+<para>
+Rebuild and install the KCM plugin, restart System Settings. Run
+<command>platform-touchpad status</command> in a terminal to verify CLI output.
+</para>
+</sect2>
+<sect2 id="ts-soft-accel">
+<title>Soft accel does nothing</title>
+<para>
+Start the live filter, enable Soft accel, Apply, and confirm status counters increase.
+Ensure the filtered uinput pad is the one in use.
+</para>
+</sect2>
+<sect2 id="ts-adaptive">
+<title>Adaptive sticky or jumpy</title>
+<para>
+Reset learned state: remove files under
+<filename>~/.config/zenbook-scripts/adaptive-touchpad/</filename> and restart the live filter.
+Current builds attenuate glitches instead of dropping frames.
+</para>
+</sect2>
+<sect2 id="ts-help">
+<title>Help: Documentation not Found</title>
+<para>
+Install handbook: <command>cd plasma/kcm &amp;&amp; sudo env PREFIX=/usr ./build.sh --system</command>.
+Expected path: <filename>/usr/share/doc/HTML/en/kcm_zenbook_platform/index.html</filename>.
+</para>
+</sect2>
+</sect1>
+
+<sect1 id="more-info">
+<title>More information</title>
+<para>
+Upstream documentation:
+<ulink url="https://github.com/f0xx/zenbook_scripts/blob/main/README.plasma.md">README.plasma.md</ulink>,
+<ulink url="https://github.com/f0xx/zenbook_scripts/tree/main/docs/touchpad">docs/touchpad/</ulink>.
+</para>
+</sect1>
+
+</article>

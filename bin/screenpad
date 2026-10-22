@@ -27,6 +27,11 @@ zenbook_kb_find_root() {
 		return 0
 	fi
 
+	if [[ -f /usr/share/zenbook-scripts/lib/screenpad.sh ]]; then
+		echo /usr/share/zenbook-scripts
+		return 0
+	fi
+
 	if [[ -f /usr/local/share/zenbook-scripts/lib/screenpad.sh ]]; then
 		echo /usr/local/share/zenbook-scripts
 		return 0

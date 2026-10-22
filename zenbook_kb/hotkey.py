@@ -200,17 +200,27 @@ def _usb_product_id(event_dir: Path) -> str | None:
 
 def _event_metadata(event_dir: Path) -> dict[str, str]:
     """Sysfs metadata for an input event node."""
-    name = (event_dir / "device" / "name").read_text().strip()
+    name_path = event_dir / "device" / "name"
+    try:
+        name = name_path.read_text().strip()
+    except OSError:
+        return {"name": "", "event": event_dir.name}
     meta: dict[str, str] = {"name": name, "event": event_dir.name}
-    device = (event_dir / "device").resolve()
+    try:
+        device = (event_dir / "device").resolve()
+    except OSError:
+        return meta
     for parent in [device, *device.parents]:
         for key, fname in (
             ("iface", "bInterfaceNumber"),
             ("product", "idProduct"),
             ("vendor", "idVendor"),
         ):
-            if key not in meta and (parent / fname).is_file():
-                meta[key] = (parent / fname).read_text().strip().lower()
+            try:
+                if key not in meta and (parent / fname).is_file():
+                    meta[key] = (parent / fname).read_text().strip().lower()
+            except OSError:
+                continue
     return meta
 
 
@@ -281,8 +291,14 @@ def find_hotkey_devices(name_substring: str = "Zenbook Duo Keyboard") -> list[Pa
         caps_path = event_dir / "device" / "capabilities" / "key"
         if not caps_path.is_file():
             continue
-        name = (event_dir / "device" / "name").read_text().strip()
-        if not _is_hotkey_candidate(event_dir, name):
+        try:
+            name = (event_dir / "device" / "name").read_text().strip()
+        except OSError:
+            continue
+        try:
+            if not _is_hotkey_candidate(event_dir, name):
+                continue
+        except OSError:
             continue
         dev = Path("/dev/input") / event_dir.name
         if dev.exists():
@@ -557,7 +573,12 @@ def listen(
             return
         _close_evdev_fds(fds, grab=grab)
         fds = {}
-        watched_devices = find_hotkey_devices(device_name)
+        try:
+            watched_devices = find_hotkey_devices(device_name)
+        except OSError as exc:
+            print(f"Hotplug: {reason}; rediscover failed: {exc}", flush=True)
+            watched_devices = []
+            return
         if not watched_devices:
             print(f"Hotplug: {reason}; waiting for input devices...", flush=True)
             return
@@ -610,12 +631,22 @@ def listen(
         print(f"Watchdog: {watchdog_s:.1f}s", flush=True)
 
     start = time.monotonic()
+    last_device_scan = start
 
     try:
         while True:
             if watchdog_s is not None and (time.monotonic() - start) >= watchdog_s:
                 print("Watchdog expired — exiting listener.", flush=True)
                 return 0
+            now = time.monotonic()
+            if allow_rediscover and (now - last_device_scan) >= 2.0:
+                last_device_scan = now
+                try:
+                    fresh = find_hotkey_devices(device_name)
+                except OSError:
+                    fresh = []
+                if set(fresh) != set(watched_devices):
+                    _rediscover_evdev("device set changed")
             poll_fds = list(fds)
             if fn_hidraw_fd is not None:
                 poll_fds.append(fn_hidraw_fd)

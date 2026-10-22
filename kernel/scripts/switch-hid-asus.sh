@@ -326,6 +326,7 @@ _cmd_quick_reload() {
 	fi
 	echo "quick reload: rebind OK"
 	_set_reload_kind quick
+	_post_sideload_refresh
 	return 0
 }
 
@@ -412,6 +413,28 @@ _cmd_sideload() {
 	echo "Before starting hotkeys: kb-brightness-hotkeys --show-profile  (usb_poll should be False)"
 	if [[ -n "${ZENBOOK_RC_SETTLE_SECS:-}" && "${ZENBOOK_RC_SETTLE_SECS}" -gt 0 ]]; then
 		sleep "${ZENBOOK_RC_SETTLE_SECS}"
+	fi
+	_post_sideload_refresh
+}
+
+_post_sideload_refresh() {
+	local here settle="${ZENBOOK_RC_SETTLE_SECS:-2}"
+	here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+	for _lib in \
+		"${here}/../lib/post_sideload.sh" \
+		/usr/share/zenbook-scripts/lib/post_sideload.sh \
+		/usr/local/share/zenbook-scripts/lib/post_sideload.sh; do
+		if [[ -f "${_lib}" ]]; then
+			# shellcheck disable=SC1090
+			source "${_lib}"
+			zenbook_post_sideload_refresh "${settle}"
+			return 0
+		fi
+	done
+	# Minimal fallback when lib not installed yet.
+	sleep "${settle}"
+	if command -v rc-service >/dev/null 2>&1 && [[ -x /etc/init.d/zenbook-kb-hotkeys ]]; then
+		rc-service zenbook-kb-hotkeys restart >/dev/null 2>&1 || true
 	fi
 }
 

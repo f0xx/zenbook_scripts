@@ -5,13 +5,14 @@
 #   platform-fan status              # RPM, pwm mode, platform profile
 #   platform-fan modes               # what this machine actually supports
 #   platform-fan rpm
-#   platform-fan auto                # firmware automatic PWM (pwm1_enable=2)
-#   platform-fan full|max            # force full-on fans (pwm1_enable=0)
+#   platform-fan auto                # firmware PWM auto + resume adaptive rules
+#   platform-fan full|max            # force full-on fans + manual lock
+#   platform-fan adaptive            # resume adaptive rules (alias: mode auto)
 #   platform-fan profile …           # alias → kb-platform-profile / platform_profile
 #   platform-fan restore             # restore saved platform_profile + pwm
 #
-# Desired profile/pwm live under /var/lib/zenbook-scripts/ (survive reboot).
-# Custom temp→PWM curves are not exposed on these models.
+# Explicit profile / full fans set manual lock so platform-fan-control will not
+# overwrite them. Fans: auto or adaptive clears the lock.
 
 set -euo pipefail
 
@@ -82,9 +83,22 @@ case "${CMD}" in
 		zenbook_fan_pwm_enable_set auto
 		zenbook_fan_status
 		;;
+	adaptive | mode-auto)
+		# Resume load/temp rules without forcing a PWM change first.
+		zenbook_fan_control_mode_set auto
+		echo "fan-control mode: $(zenbook_fan_control_mode_get)"
+		;;
 	full | max | boost)
 		zenbook_fan_pwm_enable_set full
 		zenbook_fan_status
+		;;
+	mode)
+		if [[ $# -lt 1 ]]; then
+			zenbook_fan_control_mode_get
+			exit 0
+		fi
+		zenbook_fan_control_mode_set "$1"
+		zenbook_fan_control_mode_get
 		;;
 	profile)
 		if [[ $# -lt 1 ]]; then

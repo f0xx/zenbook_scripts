@@ -58,6 +58,12 @@ start_pre() {
 	if [ -n "${output_log:-}" ]; then
 		checkpath -f -m 0664 -o "$command_user" "$output_log"
 	fi
+	# command_user cannot create files in /run (0755). Pre-create pidfile + group dir.
+	checkpath -d -m 0775 -o "$command_user" /run/zenbook-scripts
+	if [ -n "${pidfile:-}" ]; then
+		checkpath -f -m 0664 -o "$command_user" "${pidfile}"
+		checkpath -f -m 0664 -o "$command_user" "${pidfile}.tmp"
+	fi
 }
 
 start_post() {

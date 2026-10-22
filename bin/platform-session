@@ -10,6 +10,8 @@ Examples:
   platform-session show
   platform-session run sleep
   platform-session run resume
+  platform-session run lid-close
+  platform-session run lid-open
   platform-session action brightness_save
   platform-session presentation on
   platform-session plasmashell check --apply
@@ -42,6 +44,9 @@ ACTIONS = frozenset(
         "fan_sleep_pre",
         "fan_sleep_post",
         "touchpad_reassert",
+        "touch_map_apply",
+        "night_enter",
+        "night_exit",
     }
 )
 
@@ -280,7 +285,12 @@ def default_config() -> dict[str, Any]:
 def default_profile() -> dict[str, Any]:
     return {
         "on_sleep": ["brightness_save", "fan_sleep_pre"],
-        "on_resume": ["brightness_restore", "fan_sleep_post", "touchpad_reassert"],
+        "on_resume": [
+            "brightness_restore",
+            "fan_sleep_post",
+            "touchpad_reassert",
+            "touch_map_apply",
+        ],
         "on_hibernate": ["brightness_save"],
         "presentation": {
             "restore_after_plasmashell_replace": True,
@@ -370,17 +380,21 @@ def run_action(name: str) -> bool:
         return _run_bin("platform-fan-control", ["event", "sleep_post"])
 
     if name == "touchpad_reassert":
-        pid = _read_pidfile(TOUCHPAD_PIDFILE)
-        if pid is None:
-            _log("touchpad_reassert: no live platform-touchpad pidfile; no-op")
+        # Re-enable physical pads in KWin after sleep/resume. SIGHUP was never
+        # handled by the live filter and left eventN disabled (cursor blackout).
+        return _run_bin("platform-touchpad", ["restore-kwin"])
+
+    if name == "touch_map_apply":
+        # Re-bind Duo digitizers → eDP after sleep (KWin may clear outputName).
+        if _run_bin("platform-touch-map", ["apply"]):
             return True
-        try:
-            os.kill(pid, signal.SIGHUP)
-            _log(f"touchpad_reassert: sent SIGHUP to pid {pid}")
-        except OSError as exc:
-            _log(f"touchpad_reassert: SIGHUP to pid {pid} failed: {exc}", level="warning")
-            return False
-        return True
+        return _run_bin("platform-touch-map", ["auto", "--save"])
+
+    if name == "night_enter":
+        return _run_bin("platform-night-mode", ["enter"])
+
+    if name == "night_exit":
+        return _run_bin("platform-night-mode", ["exit"])
 
     return False
 
@@ -446,6 +460,10 @@ def cmd_run(phase: str) -> int:
         actions = profile.get("on_hibernate") or profile.get("on_sleep") or []
     elif phase == "hibernate-resume":
         actions = profile.get("on_hibernate_resume") or profile.get("on_resume") or []
+    elif phase == "lid-close":
+        actions = profile.get("on_lid_close") or []
+    elif phase == "lid-open":
+        actions = profile.get("on_lid_open") or []
     else:
         _log(f"unknown run phase: {phase}", level="err")
         return 2

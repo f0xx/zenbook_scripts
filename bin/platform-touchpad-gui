@@ -19,6 +19,7 @@ import signal
 import subprocess
 import sys
 import threading
+import time
 from pathlib import Path
 
 _ROOT = Path(__file__).resolve().parent.parent
@@ -76,22 +77,37 @@ from zenbook_kb.touchpad import (  # noqa: E402
     build_pipeline,
     device_profile_enabled,
     discover_touchpads,
+    filter_profile_for_device,
     filters_for_device,
     filters_from_knobs,
     iter_touchpad_with_typing,
     knobs_from_filters,
+    live_filter_refusal_reason,
     load_config,
     normalize_config,
     normalize_soft_accel_mode,
     pick_default_device,
     save_config,
+    transport_for_info,
     upsert_device_profile,
 )
+from zenbook_kb.touchpad_profiles import (  # noqa: E402
+    FILTER_PROFILE_ADAPTIVE,
+    FILTER_PROFILE_DEFAULT,
+    merge_gui_knobs,
+)
+from zenbook_kb.touchpad_adaptive import load_adaptive_state  # noqa: E402
 from zenbook_kb.pidfile import (  # noqa: E402
     TOUCHPAD_PIDFILE,
-    clear_pidfile,
+    find_touchpad_live_filter_pids,
     pid_alive,
     read_pidfile,
+)
+from zenbook_kb.touchpad_calibrate import (  # noqa: E402
+    analyze_capture_jsonl,
+    detect_transport,
+    format_stats_line,
+    suggest_knobs,
 )
 
 
@@ -109,36 +125,45 @@ def _which_touchpad_cli() -> str | None:
     return None
 
 
-def _live_filter_pids() -> list[int]:
-    """PIDs of ``platform-touchpad run`` — prefer pidfile, else /proc scan."""
-    pid = read_pidfile(TOUCHPAD_PIDFILE, clear_stale=True)
-    if pid is not None:
-        return [pid]
-    found: list[int] = []
+def _live_filter_pids(*, quick: bool = True) -> list[int]:
+    """PIDs of verified ``platform-touchpad run`` processes (cached ~3s)."""
+    global _LIVE_PID_CACHE
+    now = time.monotonic()
+    cache_key = 1 if quick else 0
+    cached_at, cached_quick, cached_pids = _LIVE_PID_CACHE
+    if cached_quick == cache_key and now - cached_at < 3.0:
+        return cached_pids
+    pids = find_touchpad_live_filter_pids(quick=quick)
+    _LIVE_PID_CACHE = (now, cache_key, pids)
+    return pids
+
+
+def _invalidate_live_pid_cache() -> None:
+    global _LIVE_PID_CACHE
+    _LIVE_PID_CACHE = (0.0, -1, [])
+
+
+_LIVE_PID_CACHE: tuple[float, int, list[int]] = (0.0, -1, [])
+
+
+def _stop_live_via_cli(*, force: bool = False) -> bool:
+    cli = _which_touchpad_cli()
+    if not cli:
+        return False
+    cmd = ["sudo", "-n", cli, "stop"]
+    if force:
+        cmd.append("--force")
     try:
-        for entry in Path("/proc").iterdir():
-            if not entry.name.isdigit():
-                continue
-            try:
-                raw = (entry / "cmdline").read_bytes()
-            except OSError:
-                continue
-            parts = [p.decode("utf-8", "replace") for p in raw.split(b"\0") if p]
-            if not parts:
-                continue
-            if any("platform-touchpad-gui" in p for p in parts):
-                continue
-            if not any("platform-touchpad" in p for p in parts):
-                continue
-            if "run" not in parts:
-                continue
-            try:
-                found.append(int(entry.name))
-            except ValueError:
-                continue
-    except OSError:
-        pass
-    return found
+        r = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=12,
+        )
+        return r.returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
 
 
 def _signal_live_pid(pid: int, sig: int) -> None:
@@ -226,6 +251,11 @@ class TouchpadTuner(QMainWindow):
         self._live_proc: subprocess.Popen | None = None
         self._live_orphan_pids: list[int] = []
         self._live_log: Path | None = None
+        self._live_restart_timer = QTimer(self)
+        self._live_restart_timer.setSingleShot(True)
+        self._live_restart_timer.setInterval(450)
+        self._live_restart_timer.timeout.connect(self._restart_live_if_running)
+        self._adaptive_stats_cache: tuple[float, str, str] = (0.0, "", "")
         self._shared = {
             "lock": threading.Lock(),
             "frames_in": 0,
@@ -258,8 +288,13 @@ class TouchpadTuner(QMainWindow):
         form = QFormLayout(knobs)
 
         self.profile_enable = QCheckBox("profile enabled (live filter)")
-        self.profile_enable.setChecked(True)
+        self.profile_enable.setChecked(False)
         form.addRow(self.profile_enable)
+
+        self.profile_mode = QComboBox()
+        self.profile_mode.addItem("Default (static outlier)", FILTER_PROFILE_DEFAULT)
+        self.profile_mode.addItem("Adaptive (learning matrix)", FILTER_PROFILE_ADAPTIVE)
+        form.addRow("filter_profile", self.profile_mode)
 
         self.typing_enable = QCheckBox("enabled")
         self.typing_enable.setChecked(True)
@@ -333,10 +368,11 @@ class TouchpadTuner(QMainWindow):
 
         hint = QLabel(
             "Palm filters (delay/outlier) arm only after keyboard activity when "
-            "typing_inhibit is on. soft_accel: Linear = constant gain; "
-            "Non-linear = slow moves near 1×, flicks ramp toward gain. "
-            "Live filter keeps running after this window closes; reopen the "
-            "tuner to stop it or change settings (Save, then restart live)."
+            "typing_inhibit is on. Adaptive profile replaces static outlier with "
+            "online learning (see docs/touchpad/adaptive-filtering.md). "
+            "soft_accel: Linear = constant gain; Non-linear = slow moves near 1×. "
+            "Live filter keeps running after this window closes; knob changes "
+            "restart a running live filter automatically (~0.5s debounce on sliders)."
         )
         hint.setWordWrap(True)
         layout.addWidget(hint)
@@ -369,7 +405,8 @@ class TouchpadTuner(QMainWindow):
         self.outlier_enable.toggled.connect(self._on_knob_changed)
         self.typing_enable.toggled.connect(self._on_knob_changed)
         self.soft_enable.toggled.connect(self._on_knob_changed)
-        self.profile_enable.toggled.connect(self._on_knob_changed)
+        self.profile_enable.toggled.connect(self._on_profile_enable_toggled)
+        self.profile_mode.currentIndexChanged.connect(self._on_profile_mode_changed)
         self.device_box.currentIndexChanged.connect(self._on_device_changed)
         self.btn_monitor.clicked.connect(self.start_monitor)
         self.btn_live.clicked.connect(self.toggle_live)
@@ -379,7 +416,7 @@ class TouchpadTuner(QMainWindow):
         self.btn_reset.clicked.connect(self.reset_stats)
 
         self._timer = QTimer(self)
-        self._timer.setInterval(250)
+        self._timer.setInterval(2500)
         self._timer.timeout.connect(self._refresh_stats)
         self._timer.start()
 
@@ -408,7 +445,11 @@ class TouchpadTuner(QMainWindow):
         pref = (self._cfg or {}).get("default_device") or "auto"
         if pref and pref not in ("auto", ""):
             for pad in self._pads:
-                if pad.key == pref:
+                if (
+                    pad.key == pref
+                    or pad.name == pref
+                    or pad.key.startswith(pref + "|")
+                ):
                     return pad
         path = pick_default_device(self._pads)
         if path is None:
@@ -423,7 +464,7 @@ class TouchpadTuner(QMainWindow):
         return data if isinstance(data, TouchpadInfo) else None
 
     def _collect_filters(self) -> list:
-        return filters_from_knobs(
+        knob_filters = filters_from_knobs(
             delay_enabled=self.delay_enable.isChecked(),
             delay_ms=float(self.delay_spin.value()),
             outlier_enabled=self.outlier_enable.isChecked(),
@@ -436,6 +477,61 @@ class TouchpadTuner(QMainWindow):
                 self.soft_mode.currentData() or DEFAULT_SOFT_ACCEL_MODE
             ),
         )
+        profile = (
+            FILTER_PROFILE_ADAPTIVE
+            if self._is_adaptive_profile()
+            else FILTER_PROFILE_DEFAULT
+        )
+        return merge_gui_knobs(profile, knob_filters)
+
+    def _is_adaptive_profile(self) -> bool:
+        return self.profile_mode.currentData() == FILTER_PROFILE_ADAPTIVE
+
+    def _apply_profile_ui_state(self) -> None:
+        adaptive = self._is_adaptive_profile()
+        for w in (self.outlier_enable, self.delta_spin, self.delta_slider):
+            w.setEnabled(not adaptive)
+        if adaptive:
+            self.outlier_enable.setChecked(False)
+
+    def _on_profile_mode_changed(self, _idx: int = 0) -> None:
+        if self._loading_knobs:
+            return
+        self._apply_profile_ui_state()
+        self._rebuild_pipe()
+        self._on_knob_changed(restart_now=True)
+
+    def _on_profile_enable_toggled(self, *_a: object) -> None:
+        if self._loading_knobs:
+            return
+        if not self.profile_enable.isChecked() and self._is_live_running():
+            self.save_config(silent=True)
+            self.stop_live()
+            if self._is_live_running():
+                self.stop_live(force=True)
+            return
+        self._on_knob_changed(restart_now=True)
+
+    def _restart_live_if_running(self) -> None:
+        if not self._is_live_running():
+            return
+        if not self.profile_enable.isChecked():
+            self.save_config(silent=True)
+            self.stop_live()
+            if self._is_live_running():
+                self.stop_live(force=True)
+            return
+        self.save_config(silent=True)
+        self.start_live()
+
+    def _schedule_live_restart(self, *, immediate: bool = False) -> None:
+        if not self._is_live_running():
+            return
+        if immediate:
+            self._live_restart_timer.stop()
+            self._restart_live_if_running()
+        else:
+            self._live_restart_timer.start()
 
     def _persist_current_to_cfg(self) -> None:
         info = None
@@ -448,11 +544,20 @@ class TouchpadTuner(QMainWindow):
             info = self._current_info()
         if info is None:
             return
+        enabled = self.profile_enable.isChecked()
+        prof = (
+            FILTER_PROFILE_ADAPTIVE
+            if self._is_adaptive_profile()
+            else FILTER_PROFILE_DEFAULT
+        )
+        transport = transport_for_info(info)
         self._cfg = upsert_device_profile(
             self._cfg,
             info.key,
             filters=self._collect_filters(),
-            enabled=self.profile_enable.isChecked(),
+            filter_profile=prof,
+            enabled=enabled,
+            transport=transport,
         )
 
     def _set_knob_widgets(self, knobs: dict) -> None:
@@ -489,10 +594,21 @@ class TouchpadTuner(QMainWindow):
             self._persist_current_to_cfg()
         filters = filters_for_device(self._cfg, info)
         enabled = device_profile_enabled(self._cfg, info, path=info.path)
+        prof = filter_profile_for_device(self._cfg, info, path=info.path)
         self.profile_enable.setChecked(enabled)
+        self._loading_knobs = True
+        try:
+            idx = self.profile_mode.findData(prof)
+            if idx < 0:
+                idx = 0
+            self.profile_mode.setCurrentIndex(idx)
+        finally:
+            self._loading_knobs = False
         self._set_knob_widgets(knobs_from_filters(filters))
+        self._apply_profile_ui_state()
         self._current_key = info.key
-        self.key_label.setText(f"key: {info.key}")
+        transport = transport_for_info(info) or "—"
+        self.key_label.setText(f"key: {info.key}  transport={transport}  profile={prof}")
         self._rebuild_pipe()
 
     def _on_device_changed(self, _idx: int = 0) -> None:
@@ -586,18 +702,46 @@ class TouchpadTuner(QMainWindow):
         apply_pipeline_knobs(self._pipe, soft_accel_mode=mode)
         self._on_knob_changed()
 
-    def _on_knob_changed(self, *_a: object) -> None:
+    def _on_knob_changed(self, *_a: object, restart_now: bool = False) -> None:
         if self._loading_knobs:
             return
         self._rebuild_pipe()
+        self._schedule_live_restart(immediate=restart_now)
 
     def _rebuild_pipe(self) -> None:
-        self._pipe = build_pipeline({"filters": self._collect_filters()})
         info = self._current_info()
         if info is not None:
+            filters = filters_for_device(self._cfg, info)
+            self._pipe = build_pipeline(
+                {"filters": filters, "device_key": info.key}
+            )
             bind_soft_accel_bounds(self._pipe, info.path)
+        else:
+            self._pipe = build_pipeline({"filters": self._collect_filters()})
         if self._worker is not None:
             self._worker.pipe = self._pipe
+
+    def _update_stats_timer(self) -> None:
+        """Faster refresh only while the local monitor worker is running."""
+        want = 1000 if self._worker and self._worker.is_alive() else 2500
+        if self._timer.interval() != want:
+            self._timer.setInterval(want)
+
+    def _adaptive_stats_line(self, info: TouchpadInfo, prof: str) -> str:
+        if prof != FILTER_PROFILE_ADAPTIVE:
+            return ""
+        now = time.monotonic()
+        key = info.key
+        cached_at, cached_key, line = self._adaptive_stats_cache
+        if cached_key == key and now - cached_at < 5.0:
+            return line
+        st = load_adaptive_state(key)
+        line = (
+            f"\nadaptive: baseline_x={st.baseline_x:.1f} "
+            f"baseline_y={st.baseline_y:.1f} samples={st.samples}"
+        )
+        self._adaptive_stats_cache = (now, key, line)
+        return line
 
     def reset_stats(self) -> None:
         with self._shared["lock"]:
@@ -612,6 +756,7 @@ class TouchpadTuner(QMainWindow):
             filt.stats.dropped_frames = 0
 
     def _refresh_stats(self) -> None:
+        self._update_stats_timer()
         with self._shared["lock"]:
             fin = self._shared["frames_in"]
             fout = self._shared["frames_out"]
@@ -619,22 +764,30 @@ class TouchpadTuner(QMainWindow):
             err = self._shared["error"]
         drop = max(0, fin - fout)
         pct = (100.0 * drop / fin) if fin else 0.0
-        live = "live" if self._is_live_running() else "idle"
-        live_pid = read_pidfile(TOUCHPAD_PIDFILE, clear_stale=True)
+        live_running = self._is_live_running()
+        live = "live" if live_running else "idle"
+        live_pid = self._live_orphan_pids[0] if self._live_orphan_pids else None
         live_extra = f" pid={live_pid}" if live_pid else ""
         mon = "monitor" if self._worker and self._worker.is_alive() else "off"
         key = self._current_key or "—"
+        prof = "—"
+        adapt_line = ""
+        info = self._current_info()
+        if info is not None:
+            prof = filter_profile_for_device(self._cfg, info, path=info.path)
+            adapt_line = self._adaptive_stats_line(info, prof)
         text = (
-            f"device key: {key}\n"
+            f"device key: {key}  profile={prof}\n"
             f"mode: monitor={mon}  live={live}{live_extra}\n"
             f"pidfile: {TOUCHPAD_PIDFILE}\n"
             f"frames in={fin} out={fout} drop={drop} ({pct:.0f}%)\n"
             f"{summary}"
         )
+        text += adapt_line
         if err:
             text += f"\nerror: {err}"
         self.stats.setText(text)
-        self._sync_live_button()
+        self._sync_live_button(live_running)
 
     def _adopt_existing_live(self) -> None:
         """If a live filter is already running, track it so the button shows Stop."""
@@ -646,12 +799,15 @@ class TouchpadTuner(QMainWindow):
     def _is_live_running(self) -> bool:
         if self._live_proc is not None and self._live_proc.poll() is None:
             return True
-        # Prefer pidfile (clears stale); fall back to /proc.
-        self._live_orphan_pids = [p for p in _live_filter_pids() if pid_alive(p)]
+        self._live_orphan_pids = [
+            p for p in _live_filter_pids(quick=True) if pid_alive(p)
+        ]
         return bool(self._live_orphan_pids)
 
-    def _sync_live_button(self) -> None:
-        if self._is_live_running():
+    def _sync_live_button(self, running: bool | None = None) -> None:
+        if running is None:
+            running = self._is_live_running()
+        if running:
             self.btn_live.setText("Stop live filter")
         else:
             self.btn_live.setText("Start live filter")
@@ -668,7 +824,7 @@ class TouchpadTuner(QMainWindow):
         self._worker.start()
 
     def run_calibrate(self) -> None:
-        """Capture ~20s of real motion while typing; suggest knobs from drop rates."""
+        """Guided capture (type / palm / mixed) → knobs → optional before/after + live restart."""
         import tempfile
         import time as _time
 
@@ -681,120 +837,187 @@ class TouchpadTuner(QMainWindow):
             QMessageBox.warning(self, "No device", "No touchpad selected.")
             return
 
-        seconds = 20
+        transport = detect_transport(name=info.name, phys=info.phys, uniq=info.uniq)
         reply = QMessageBox.question(
             self,
             "Calibrate palm filters",
-            f"For the next {seconds}s, type normally and rest palms lightly on the "
-            f"pad as you would when working.\n\n"
-            f"Device: {info.name}\n\n"
-            f"Start capture?",
+            "Guided calibrate runs three short captures:\n"
+            "  1) type-only (~8s)\n"
+            "  2) palm-only (~8s)\n"
+            "  3) mixed (~12s)\n\n"
+            f"Device: {info.name}\nTransport: {transport}\n\n"
+            "Start?",
         )
         if reply != QMessageBox.StandardButton.Yes:
             return
 
         self.stop_monitor()
-        out = Path(tempfile.gettempdir()) / f"zenbook-tp-calibrate-{int(_time.time())}.jsonl"
-        cmd = [
-            cli,
-            "capture",
-            "--config",
-            str(self._cfg_path),
-            "--device",
-            info.key,
-            "--seconds",
-            str(seconds),
-            "-o",
-            str(out),
-            "-q",
+        was_live = self._is_live_running()
+        if was_live:
+            self.stop_live()
+
+        sequences: list[tuple[str, int, str]] = [
+            ("type", 8, "Type normally — keep palms off the pad."),
+            ("palm", 8, "Rest palms lightly on the pad — do not type."),
+            ("mixed", 12, "Type and rest palms as when working."),
         ]
-        QMessageBox.information(
-            self,
-            "Capturing…",
-            f"Capture running ({seconds}s).\nType and rest palms on the pad.\n\n"
-            f"Log: {out}",
-        )
-        try:
-            proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
-        except OSError as exc:
-            QMessageBox.warning(self, "Calibrate failed", str(exc))
-            return
-        if proc.returncode != 0:
-            QMessageBox.warning(
+        stats_by_seq: dict[str, object] = {}
+        last_out: Path | None = None
+        for seq, seconds, prompt in sequences:
+            go = QMessageBox.question(
                 self,
-                "Calibrate failed",
-                (proc.stderr or proc.stdout or f"exit {proc.returncode}")[:800],
+                f"Capture: {seq}",
+                f"{prompt}\n\nReady for {seconds}s capture?",
             )
-            return
+            if go != QMessageBox.StandardButton.Yes:
+                QMessageBox.information(self, "Calibrate", "Cancelled.")
+                if was_live:
+                    self.start_live()
+                return
+            out = (
+                Path(tempfile.gettempdir())
+                / f"zenbook-tp-calibrate-{seq}-{int(_time.time())}.jsonl"
+            )
+            last_out = out
+            cmd = [
+                cli,
+                "capture",
+                "--config",
+                str(self._cfg_path),
+                "--device",
+                info.key,
+                "--seconds",
+                str(seconds),
+                "--sequence",
+                seq,
+                "--transport",
+                transport if transport != "unknown" else "auto",
+                "-o",
+                str(out),
+                "-q",
+            ]
+            QMessageBox.information(
+                self,
+                "Capturing…",
+                f"Capture running ({seq}, {seconds}s).\nLog: {out}",
+            )
+            try:
+                proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
+            except OSError as exc:
+                QMessageBox.warning(self, "Calibrate failed", str(exc))
+                return
+            if proc.returncode != 0:
+                QMessageBox.warning(
+                    self,
+                    "Calibrate failed",
+                    (proc.stderr or proc.stdout or f"exit {proc.returncode}")[:800],
+                )
+                return
+            try:
+                stats_by_seq[seq] = analyze_capture_jsonl(out)
+            except (OSError, json.JSONDecodeError) as exc:
+                QMessageBox.warning(self, "Calibrate parse", str(exc))
+                return
 
-        frames = drops = outlier = delay = typing_armed = 0
-        by: dict[str, int] = {}
-        try:
-            for line in out.read_text(encoding="utf-8").splitlines():
-                if not line.strip():
-                    continue
-                rec = json.loads(line)
-                if rec.get("kind") == "meta":
-                    continue
-                frames += 1
-                if rec.get("typing_armed"):
-                    typing_armed += 1
-                if not rec.get("passed"):
-                    drops += 1
-                    reason = str(rec.get("dropped_by") or "unknown")
-                    by[reason] = by.get(reason, 0) + 1
-                    if "outlier" in reason:
-                        outlier += 1
-                    if "exec_delay" in reason or "delay" in reason:
-                        delay += 1
-        except (OSError, json.JSONDecodeError) as exc:
-            QMessageBox.warning(self, "Calibrate parse", str(exc))
-            return
-
-        if frames == 0:
+        # Prefer mixed for knob suggestions; fall back to any with frames.
+        primary = stats_by_seq.get("mixed") or next(
+            (s for s in stats_by_seq.values() if getattr(s, "frames", 0) > 0),
+            None,
+        )
+        if primary is None or getattr(primary, "frames", 0) == 0:
             QMessageBox.warning(self, "Calibrate", "No frames captured.")
             return
 
-        drop_pct = 100.0 * drops / frames
-        # Heuristics: too many outlier drops → raise max_delta; too many delay drops → shorten delay
-        sug_delta = int(self.delta_spin.value())
-        sug_delay = int(self.delay_spin.value())
-        sug_win = int(self.typing_spin.value())
-        notes: list[str] = []
-        if outlier >= max(5, frames * 0.05):
-            sug_delta = min(5000, max(sug_delta + 400, int(sug_delta * 1.4)))
-            notes.append(f"Many outlier drops ({outlier}) → raise max_delta to {sug_delta}")
-        if delay >= max(5, frames * 0.08):
-            sug_delay = max(5, sug_delay - 10)
-            notes.append(f"Many exec_delay drops ({delay}) → lower delay to {sug_delay} ms")
-        if typing_armed > frames * 0.7 and drop_pct > 40:
-            sug_win = max(100, sug_win - 100)
-            notes.append(
-                f"Armed most of the time with high drop rate → shorten typing window to {sug_win} ms"
-            )
-        if not notes:
-            notes.append("Drop rate looks moderate — keep current knobs or retune manually.")
-
-        summary = (
-            f"frames={frames} dropped={drops} ({drop_pct:.1f}%) "
-            f"typing_armed={typing_armed}\n"
-            f"by filter: {by or '{}'}\n\n"
-            + "\n".join(f"• {n}" for n in notes)
-            + f"\n\nApply suggestions?\n  max_delta={sug_delta}  delay={sug_delay} ms  "
-            f"typing_window={sug_win} ms"
+        sug = suggest_knobs(
+            primary,  # type: ignore[arg-type]
+            max_delta=int(self.delta_spin.value()),
+            delay_ms=int(self.delay_spin.value()),
+            typing_window_ms=int(self.typing_spin.value()),
         )
-        apply = QMessageBox.question(self, "Calibrate results", summary)
+        lines = [
+            f"transport={transport}",
+            *(f"{k}: {format_stats_line(v)}" for k, v in stats_by_seq.items()),  # type: ignore[arg-type]
+            "",
+            *(f"• {n}" for n in sug.notes),
+            "",
+            f"Apply suggestions?\n  max_delta={sug.max_delta}  delay={sug.delay_ms} ms  "
+            f"typing_window={sug.typing_window_ms} ms",
+            "",
+            "After apply, a short mixed re-capture measures before/after drop rate.",
+        ]
+        apply = QMessageBox.question(self, "Calibrate results", "\n".join(lines))
         if apply != QMessageBox.StandardButton.Yes:
+            if was_live:
+                self.start_live()
             return
-        self.delta_spin.setValue(sug_delta)
-        self.delay_spin.setValue(sug_delay)
-        self.typing_spin.setValue(sug_win)
+
+        before_drop = float(getattr(primary, "drop_pct", 0.0))
+        self.delta_spin.setValue(sug.max_delta)
+        self.delay_spin.setValue(sug.delay_ms)
+        self.typing_spin.setValue(sug.typing_window_ms)
         self._rebuild_pipe()
         self.save_config(silent=True)
+
+        # Restart live filter with new knobs when possible.
+        restart_note = ""
+        if was_live or self.profile_enable.isChecked():
+            self.start_live()
+            restart_note = "Live filter restarted with new knobs.\n"
+        else:
+            restart_note = "Profile not live — start Live filter when ready.\n"
+
+        # Before/after: quick mixed re-capture (optional skip)
+        after = QMessageBox.question(
+            self,
+            "Before / after",
+            "Run a 10s mixed re-capture to compare drop rate?",
+        )
+        after_txt = "(skipped)"
+        if after == QMessageBox.StandardButton.Yes:
+            if self._is_live_running():
+                self.stop_live()
+            out2 = (
+                Path(tempfile.gettempdir())
+                / f"zenbook-tp-calibrate-after-{int(_time.time())}.jsonl"
+            )
+            cmd2 = [
+                cli,
+                "capture",
+                "--config",
+                str(self._cfg_path),
+                "--device",
+                info.key,
+                "--seconds",
+                "10",
+                "--sequence",
+                "mixed",
+                "-o",
+                str(out2),
+                "-q",
+            ]
+            QMessageBox.information(self, "Capturing…", "Type + palms for 10s.")
+            proc2 = subprocess.run(cmd2, capture_output=True, text=True, check=False)
+            if proc2.returncode == 0:
+                try:
+                    st2 = analyze_capture_jsonl(out2)
+                    after_txt = (
+                        f"before drop={before_drop:.1f}% → after drop={st2.drop_pct:.1f}%\n"
+                        f"{format_stats_line(st2)}\nLog: {out2}"
+                    )
+                except (OSError, json.JSONDecodeError) as exc:
+                    after_txt = f"parse failed: {exc}"
+            else:
+                after_txt = (proc2.stderr or proc2.stdout or "re-capture failed")[:400]
+            if was_live or self.profile_enable.isChecked():
+                self.start_live()
+
         QMessageBox.information(
             self,
             "Calibrate",
-            f"Knobs applied and saved for this device.\nJSONL kept at:\n{out}",
+            f"{restart_note}Knobs saved for this device.\n"
+            f"{after_txt}\n"
+            f"JSONL kept under {tempfile.gettempdir()}/zenbook-tp-calibrate-*\n"
+            + (f"Last: {last_out}" if last_out else ""),
         )
 
     def stop_monitor(self) -> None:
@@ -806,7 +1029,9 @@ class TouchpadTuner(QMainWindow):
     def toggle_live(self) -> None:
         if self._is_live_running():
             self.stop_live()
-            QTimer.singleShot(350, self._verify_live_stopped)
+            if self._is_live_running():
+                self.stop_live(force=True)
+            self._sync_live_button()
         else:
             self.start_live()
 
@@ -826,8 +1051,24 @@ class TouchpadTuner(QMainWindow):
                 "Enable “profile enabled” for this device, or pick another pad.",
             )
             return
+        refusal = live_filter_refusal_reason(info)
+        if refusal:
+            confirm = QMessageBox.warning(
+                self,
+                "Unlisted touchpad",
+                f"{refusal}\n\n"
+                "The live filter grabs the physical pad (EVIOCGRAB) and forwards "
+                "events through a virtual device. Stopping the filter releases the "
+                "grab and re-binds the physical pad in KWin automatically.\n\n"
+                "Continue anyway?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if confirm != QMessageBox.StandardButton.Yes:
+                return
         self.save_config(silent=True)
-        self.stop_live()
+        if self._is_live_running():
+            self.stop_live()
         self.stop_monitor()
         cmd = [
             "sudo",
@@ -842,8 +1083,10 @@ class TouchpadTuner(QMainWindow):
             str(self.delay_spin.value()),
             "--max-delta",
             str(self.delta_spin.value()),
-            "--replace",
         ]
+        if live_filter_refusal_reason(info):
+            cmd.append("--force")
+        cmd.append("--replace")
         log_path = _live_log_path()
         try:
             log_f = open(log_path, "w", encoding="utf-8")
@@ -874,7 +1117,7 @@ class TouchpadTuner(QMainWindow):
                 pass
         self._live_log = log_path
         self._sync_live_button()
-        QTimer.singleShot(500, self._check_live_started)
+        QTimer.singleShot(150, self._check_live_started)
 
     def _check_live_started(self) -> None:
         proc = self._live_proc
@@ -886,7 +1129,7 @@ class TouchpadTuner(QMainWindow):
             return
         if proc is not None and proc.poll() is None:
             # Still starting
-            QTimer.singleShot(400, self._check_live_started)
+            QTimer.singleShot(150, self._check_live_started)
             return
         out = ""
         log_path = getattr(self, "_live_log", None) or _live_log_path()
@@ -904,32 +1147,18 @@ class TouchpadTuner(QMainWindow):
         QMessageBox.warning(self, "Live filter failed", detail)
         self._sync_live_button()
 
-    def _verify_live_stopped(self) -> None:
-        if self._is_live_running():
-            # Force-kill leftovers (sudo child may ignore first SIGINT).
-            self.stop_live(force=True)
-        self._sync_live_button()
-        if self._is_live_running():
-            QMessageBox.warning(
-                self,
-                "Live filter",
-                "Filter process is still running — try again or:\n"
-                "  sudo pkill -f 'platform-touchpad run'",
-            )
-
     def stop_live(self, *, force: bool = False) -> None:
         proc = self._live_proc
         if proc is not None:
             if proc.poll() is None:
                 try:
-                    # Session leader from start_new_session — stop the group.
                     os.killpg(proc.pid, signal.SIGKILL if force else signal.SIGINT)
                 except (OSError, ProcessLookupError):
                     try:
                         proc.send_signal(
                             signal.SIGKILL if force else signal.SIGINT
                         )
-                        proc.wait(timeout=2.0)
+                        proc.wait(timeout=1.0)
                     except (OSError, subprocess.TimeoutExpired):
                         try:
                             proc.kill()
@@ -937,16 +1166,12 @@ class TouchpadTuner(QMainWindow):
                             pass
             self._live_proc = None
 
-        sig = signal.SIGKILL if force else signal.SIGINT
-        for pid in list(_live_filter_pids()):
-            _signal_live_pid(pid, sig)
-        # Ensure stale pidfile cannot confuse OpenRC / next launch.
-        leftover = read_pidfile(TOUCHPAD_PIDFILE, clear_stale=True)
-        if leftover is None:
-            clear_pidfile(TOUCHPAD_PIDFILE)
-        else:
-            # Still alive after signals — leave file; verify step may force-kill.
-            pass
+        _stop_live_via_cli(force=force)
+        _invalidate_live_pid_cache()
+        for pid in _live_filter_pids(quick=False):
+            if pid_alive(pid):
+                _signal_live_pid(pid, signal.SIGKILL if force else signal.SIGINT)
+        read_pidfile(TOUCHPAD_PIDFILE, clear_stale=True)
         self._live_orphan_pids = []
         self._sync_live_button()
 
@@ -963,12 +1188,19 @@ class TouchpadTuner(QMainWindow):
         self._persist_current_to_cfg()
         info = self._current_info()
         if info is not None:
+            prof = (
+                FILTER_PROFILE_ADAPTIVE
+                if self._is_adaptive_profile()
+                else FILTER_PROFILE_DEFAULT
+            )
             self._cfg = upsert_device_profile(
                 self._cfg,
                 info.key,
                 filters=self._collect_filters(),
+                filter_profile=prof,
                 enabled=self.profile_enable.isChecked(),
                 make_default=True,
+                transport=transport_for_info(info),
             )
         path = self._cfg_path
         try:

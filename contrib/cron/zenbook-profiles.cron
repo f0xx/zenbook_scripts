@@ -1,0 +1,5 @@
+# Zenbook profile schedules/triggers — once per minute as the session user.
+# Installed to /etc/cron.d/zenbook-profiles by configure.py.
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+* * * * * @CRON_USER@ /usr/bin/platform-profiles evaluate -q 2>/dev/null

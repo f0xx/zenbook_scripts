@@ -5,6 +5,7 @@
 #include <KQuickConfigModule>
 
 #include <QProcess>
+#include <QQueue>
 
 class ZenbookPlatform : public KQuickConfigModule
 {
@@ -30,11 +31,23 @@ class ZenbookPlatform : public KQuickConfigModule
     Q_PROPERTY(int qsgThreadThreshold READ qsgThreadThreshold WRITE setQsgThreadThreshold NOTIFY sessionChanged)
     Q_PROPERTY(bool sessionDirty READ sessionDirty NOTIFY sessionDirtyChanged)
 
+    Q_PROPERTY(QString profilesConfigPath READ profilesConfigPath CONSTANT)
+    Q_PROPERTY(QString profilesJson READ profilesJson WRITE setProfilesJson NOTIFY profilesChanged)
+    Q_PROPERTY(bool profilesDirty READ profilesDirty NOTIFY profilesDirtyChanged)
+
+    Q_PROPERTY(QString touchpadStatusText READ touchpadStatusText NOTIFY touchpadStatusTextChanged)
+    Q_PROPERTY(QString touchpadKnobsJson READ touchpadKnobsJson NOTIFY touchpadKnobsChanged)
+    Q_PROPERTY(bool touchpadDirty READ touchpadDirty NOTIFY touchpadDirtyChanged)
+
     Q_PROPERTY(QString version READ version CONSTANT)
     Q_PROPERTY(QString documentationUrl READ documentationUrl CONSTANT)
 
 public:
     explicit ZenbookPlatform(QObject *parent, const KPluginMetaData &data);
+
+    void load() override;
+    void save() override;
+    void defaults() override;
 
     QString probeText() const
     {
@@ -104,6 +117,29 @@ public:
         return m_sessionDirty;
     }
 
+    QString profilesConfigPath() const;
+    QString profilesJson() const;
+    bool profilesDirty() const
+    {
+        return m_profilesDirty;
+    }
+    QString touchpadStatusText() const
+    {
+        return m_touchpadStatusText;
+    }
+    QString touchpadKnobsJson() const
+    {
+        return m_touchpadKnobsJson;
+    }
+    bool touchpadDirty() const
+    {
+        return m_touchpadDirty;
+    }
+
+    void setTouchpadKnobsJson(const QString &json);
+
+    void setProfilesJson(const QString &json);
+
     QString version() const;
     QString documentationUrl() const;
 
@@ -124,6 +160,16 @@ public:
     Q_INVOKABLE void loadSession();
     Q_INVOKABLE bool saveSession();
     Q_INVOKABLE void resetSessionDefaults();
+    Q_INVOKABLE void loadProfiles();
+    Q_INVOKABLE bool saveProfiles();
+    Q_INVOKABLE void resetProfilesDefaults();
+    Q_INVOKABLE void refreshTouchpadStatus();
+    Q_INVOKABLE void openTouchpadTuner();
+    Q_INVOKABLE void startTouchpadLiveFilter();
+    Q_INVOKABLE void stopTouchpadLiveFilter();
+    Q_INVOKABLE void loadTouchpadKnobs();
+    Q_INVOKABLE bool saveTouchpadKnobs();
+    Q_INVOKABLE void applyActiveProfile();
 
 Q_SIGNALS:
     void probeTextChanged();
@@ -134,20 +180,48 @@ Q_SIGNALS:
     void busyChanged();
     void sessionChanged();
     void sessionDirtyChanged();
+    void profilesChanged();
+    void profilesDirtyChanged();
+    void touchpadStatusTextChanged();
+    void touchpadKnobsChanged();
+    void touchpadDirtyChanged();
 
 private Q_SLOTS:
     void onProcessFinished(int exitCode, QProcess::ExitStatus status);
+    void verifyLiveFilterStarted();
 
 private:
+    enum class OutputTarget {
+        Probe,
+        DuoStatus,
+        ScreenpadStatus,
+        TouchpadStatus,
+        Command,
+    };
+
+    struct PendingScript {
+        QString name;
+        QStringList args;
+        OutputTarget target;
+    };
+
     void detectHardware();
     QString resolveScript(const QString &name) const;
+    QString touchpadConfigPath() const;
+    QString runScriptSync(const QString &name, const QStringList &args) const;
+    OutputTarget outputTargetFor(const QString &name, const QStringList &args) const;
+    void startScript(const QString &name, const QStringList &args, OutputTarget target);
     void runScript(const QString &name, const QStringList &args, const QString &outputProperty);
+    void drainPendingScripts();
     void setBusy(bool busy);
     void setLastError(const QString &error);
     void applySessionObject(const QJsonObject &root);
     QJsonObject buildSessionObject() const;
     QJsonObject defaultProfileObject() const;
     void markSessionDirty();
+    void markProfilesDirty();
+    void updateNeedsSave();
+    QJsonObject defaultProfilesObject() const;
 
     QString m_probeText;
     QString m_duoStatusText;
@@ -167,12 +241,13 @@ private:
     int m_qsgThreadThreshold = 32;
     bool m_sessionDirty = false;
 
+    QJsonObject m_profilesRoot;
+    bool m_profilesDirty = false;
+    QString m_touchpadStatusText;
+    QString m_touchpadKnobsJson;
+    bool m_touchpadDirty = false;
+
     QProcess *m_process = nullptr;
-    enum class OutputTarget {
-        Probe,
-        DuoStatus,
-        ScreenpadStatus,
-        Command,
-    };
+    QQueue<PendingScript> m_pendingScripts;
     OutputTarget m_outputTarget = OutputTarget::Command;
 };

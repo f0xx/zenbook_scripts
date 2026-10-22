@@ -2,13 +2,26 @@
 # systemd sleep hook — install to /usr/lib/systemd/system-sleep/zenbook-kb-brightness
 # (configure.py / ebuild install step)
 
+set -eu
+
+KB_SLEEP=""
+for c in /usr/bin/kb-brightness-sleep /usr/local/bin/kb-brightness-sleep; do
+	if [ -x "${c}" ]; then
+		KB_SLEEP="${c}"
+		break
+	fi
+done
+if [ -z "${KB_SLEEP}" ]; then
+	exit 0
+fi
+
 case "$1/$2" in
-    pre/*)
-        /usr/local/bin/kb-brightness-sleep pre
-        ;;
-    post/*)
-        /usr/local/bin/kb-brightness-sleep post
-        ;;
+	pre/*)
+		"${KB_SLEEP}" pre
+		;;
+	post/*)
+		"${KB_SLEEP}" post
+		;;
 esac
 
 exit 0

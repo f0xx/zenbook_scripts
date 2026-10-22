@@ -1,0 +1,48 @@
+#!/usr/bin/env python3
+"""KCM helper — export/import touchpad knob JSON (mirrors platform-touchpad-gui)."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from pathlib import Path
+
+_SCRIPT_DIR = Path(__file__).resolve().parent
+_ROOT = _SCRIPT_DIR.parent
+_SHARE_CANDIDATES = (
+    _ROOT,
+    Path("/usr/share/zenbook-scripts"),
+    Path("/usr/local/share/zenbook-scripts"),
+)
+_inserted = False
+for _share in _SHARE_CANDIDATES:
+    if (_share / "zenbook_kb" / "touchpad_kcm.py").is_file():
+        if str(_share) not in sys.path:
+            sys.path.insert(0, str(_share))
+        _inserted = True
+        break
+if not _inserted and (_ROOT / "zenbook_kb").is_dir() and str(_ROOT) not in sys.path:
+    sys.path.insert(0, str(_ROOT))
+
+from zenbook_kb.touchpad_kcm import export_knobs, import_knobs  # noqa: E402
+
+
+def main() -> int:
+    p = argparse.ArgumentParser()
+    sub = p.add_subparsers(dest="cmd", required=True)
+    sub.add_parser("export")
+    sp = sub.add_parser("import")
+    sp.add_argument("path", nargs="?", default="-")
+    args = p.parse_args()
+    if args.cmd == "export":
+        print(json.dumps(export_knobs(), indent=2))
+        return 0
+    raw = sys.stdin.read() if args.path == "-" else Path(args.path).read_text(encoding="utf-8")
+    path = import_knobs(json.loads(raw))
+    print(path)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

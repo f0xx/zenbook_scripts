@@ -22,6 +22,7 @@ INSTALL_BIN_SCREENPAD: Path
 INSTALL_BIN_SCREENPAD_SYNC: Path
 INSTALL_BIN_SCREENPAD_BOOT: Path
 INSTALL_BIN_PLATFORM_PROFILE: Path
+INSTALL_BIN_PLATFORM_PROFILE_BOOT: Path
 INSTALL_BIN_FAN: Path
 INSTALL_BIN_FAN_LEGACY: Path
 INSTALL_BIN_FAN_CONTROL: Path
@@ -45,6 +46,8 @@ OPENRC_HID_ASUS_CONF: Path
 OPENRC_SCREENPAD_INIT: Path
 OPENRC_SCREENPAD_SYNC_INIT: Path
 OPENRC_SCREENPAD_CONF: Path
+OPENRC_PLATFORM_PROFILE_INIT: Path
+OPENRC_PLATFORM_PROFILE_CONF: Path
 OPENRC_TOUCHPAD_INIT: Path
 OPENRC_TOUCHPAD_CONF: Path
 INSTALL_LIBEXEC: Path
@@ -53,6 +56,7 @@ OPENRC_CONF: Path
 SYSTEMD_UNIT: Path
 SYSTEMD_SCREENPAD_UNIT: Path
 SYSTEMD_SCREENPAD_SYNC_UNIT: Path
+SYSTEMD_PLATFORM_PROFILE_UNIT: Path
 SYSTEMD_TOUCHPAD_UNIT: Path
 SYSTEMD_SLEEP_HOOK: Path
 ACPI_EVENTS_DIR: Path
@@ -66,7 +70,8 @@ def refresh_install_paths(prefix: str | Path | None = None) -> Path:
     global INSTALL_SHARE, INSTALL_BIN_BRIGHTNESS, INSTALL_BIN_HOTKEYS
     global INSTALL_BIN_CALIBRATE, INSTALL_BIN_SLEEP, INSTALL_BIN_LID_WATCH
     global INSTALL_BIN_SCREENPAD, INSTALL_BIN_SCREENPAD_SYNC, INSTALL_BIN_SCREENPAD_BOOT
-    global INSTALL_BIN_PLATFORM_PROFILE, INSTALL_BIN_FAN, INSTALL_BIN_FAN_LEGACY
+    global INSTALL_BIN_PLATFORM_PROFILE, INSTALL_BIN_PLATFORM_PROFILE_BOOT
+    global INSTALL_BIN_FAN, INSTALL_BIN_FAN_LEGACY
     global INSTALL_BIN_FAN_CONTROL, INSTALL_BIN_FAN_CONTROL_LEGACY
     global INSTALL_BIN_PLATFORM_PROBE, INSTALL_BIN_PLATFORM_POWER
     global INSTALL_BIN_PLATFORM_TOUCHPAD, INSTALL_BIN_PLATFORM_TRAY, INSTALL_BIN_FAN_HOOK
@@ -77,7 +82,8 @@ def refresh_install_paths(prefix: str | Path | None = None) -> Path:
     global OPENRC_TOUCHPAD_INIT, OPENRC_TOUCHPAD_CONF
     global INSTALL_LIBEXEC, INSTALLED_KO_ROOT, OPENRC_CONF
     global SYSTEMD_UNIT, SYSTEMD_SCREENPAD_UNIT, SYSTEMD_SCREENPAD_SYNC_UNIT
-    global SYSTEMD_TOUCHPAD_UNIT
+    global SYSTEMD_PLATFORM_PROFILE_UNIT, SYSTEMD_TOUCHPAD_UNIT
+    global OPENRC_PLATFORM_PROFILE_INIT, OPENRC_PLATFORM_PROFILE_CONF
     global SYSTEMD_SLEEP_HOOK, ACPI_EVENTS_DIR, ACPI_SLEEP_EVENT, ACPI_SLEEP_HELPER
     global MODPROBE_CONF
 
@@ -229,6 +235,8 @@ def install_kb_brightness_tree(script_dir: Path) -> None:
         "screenpad.sh",
         "platform_profile.sh",
         "fan.sh",
+        "zenbook_root.sh",
+        "post_sideload.sh",
     ):
         src = script_dir / "lib" / name
         if src.is_file():
@@ -291,6 +299,37 @@ def install_kb_brightness_tree(script_dir: Path) -> None:
         dest = zb_paths.bin_dir() / "platform-touch-cal"
         _sudo(["cp", str(touch_cal), str(dest)])
         _sudo(["chmod", "a+x", str(dest)])
+    touch_map = script_dir / "bin" / "platform-touch-map"
+    if touch_map.is_file():
+        dest = zb_paths.bin_dir() / "platform-touch-map"
+        _sudo(["cp", str(touch_map), str(dest)])
+        _sudo(["chmod", "a+x", str(dest)])
+    night_mode = script_dir / "bin" / "platform-night-mode"
+    if night_mode.is_file():
+        dest = zb_paths.bin_dir() / "platform-night-mode"
+        _sudo(["cp", str(night_mode), str(dest)])
+        _sudo(["chmod", "a+x", str(dest)])
+    night_setup = script_dir / "bin" / "platform-night-setup"
+    if night_setup.is_file():
+        dest = zb_paths.bin_dir() / "platform-night-setup"
+        _sudo(["cp", str(night_setup), str(dest)])
+        _sudo(["chmod", "a+x", str(dest)])
+    platform_profiles = script_dir / "bin" / "platform-profiles"
+    if platform_profiles.is_file():
+        dest = zb_paths.bin_dir() / "platform-profiles"
+        _sudo(["cp", str(platform_profiles), str(dest)])
+        _sudo(["chmod", "a+x", str(dest)])
+    tp_kcm = script_dir / "bin" / "platform-touchpad-kcm"
+    if tp_kcm.is_file():
+        dest = zb_paths.bin_dir() / "platform-touchpad-kcm"
+        _sudo(["cp", str(tp_kcm), str(dest)])
+        _sudo(["chmod", "a+x", str(dest)])
+    example_night = script_dir / "night-mode.json.example"
+    if example_night.is_file():
+        _sudo(["cp", str(example_night), str(INSTALL_SHARE / "night-mode.json.example")])
+    example_profiles = script_dir / "profiles.json.example"
+    if example_profiles.is_file():
+        _sudo(["cp", str(example_profiles), str(INSTALL_SHARE / "profiles.json.example")])
     fan_hook = script_dir / "contrib" / "openrc" / "zenbook-fan-control-hook.sh"
     if fan_hook.is_file():
         _sudo(["cp", str(fan_hook), str(INSTALL_BIN_FAN_HOOK)])
@@ -372,7 +411,7 @@ def install_sudoers_kb_brightness() -> None:
 
 
 def install_sudoers_ux5400() -> None:
-    """Passwordless screenpad + platform-profile + fan for the install user."""
+    """Passwordless screenpad + platform-profile + fan CLIs for the install user."""
     user = resolve_run_user()
     if not user:
         return
@@ -380,6 +419,8 @@ def install_sudoers_ux5400() -> None:
         INSTALL_BIN_SCREENPAD,
         INSTALL_BIN_PLATFORM_PROFILE,
         INSTALL_BIN_FAN,
+        INSTALL_BIN_FAN_CONTROL,
+        INSTALL_BIN_PLATFORM_TOUCHPAD,
         INSTALL_BIN_SCREENPAD_BOOT,
     ):
         line = f"{user} ALL=NOPASSWD:{path} *"
@@ -389,7 +430,11 @@ def install_sudoers_ux5400() -> None:
 
 def install_udev_rules(script_dir: Path) -> None:
     _sudo(["mkdir", "-p", str(INSTALL_LIBEXEC)])
-    _sudo(["cp", str(script_dir / "contrib" / "udev" / "99-zenbook-kb-hotkeys.rules"), str(UDEV_RULES)])
+    hotkeys_rules = script_dir / "contrib" / "udev" / "99-zenbook-kb-hotkeys.rules"
+    text = hotkeys_rules.read_text(encoding="utf-8")
+    text = text.replace("/usr/libexec/zenbook-kb-hotkeys-udev", str(UDEV_HELPER))
+    text = text.replace("/usr/local/libexec/zenbook-kb-hotkeys-udev", str(UDEV_HELPER))
+    _root_run(["tee", str(UDEV_RULES)], check=True, input_bytes=text.encode())
     _sudo(["cp", str(script_dir / "contrib" / "udev" / "zenbook-kb-hotkeys-udev"), str(UDEV_HELPER)])
     _sudo(["chmod", "a+x", str(UDEV_HELPER)])
     dock_rules = script_dir / "contrib" / "udev" / "99-zenbook-duo-dock.rules"
@@ -507,6 +552,23 @@ def install_sleep_hooks(script_dir: Path) -> None:
         print(f"Installed {MODPROBE_CONF} (oot hid-asus fn-lock defaults)")
 
 
+def install_profiles_cron(script_dir: Path, *, run_user: str | None = None) -> None:
+    """Install /etc/cron.d/zenbook-profiles — platform-profiles evaluate each minute."""
+    user = run_user or resolve_run_user()
+    if not user:
+        print("profiles cron: no run user — skip")
+        return
+    src = script_dir / "contrib" / "cron" / "zenbook-profiles.cron"
+    if not src.is_file():
+        print("profiles cron: template missing — skip")
+        return
+    text = src.read_text(encoding="utf-8").replace("@CRON_USER@", user)
+    dest = Path("/etc/cron.d/zenbook-profiles")
+    _root_run(["tee", str(dest)], check=True, input_bytes=text.encode())
+    _sudo(["chmod", "644", str(dest)])
+    print(f"Installed {dest} (user {user}, platform-profiles evaluate each minute)")
+
+
 def install_openrc_lid_service(script_dir: Path) -> None:
     """elogind/logind LidClosed watcher (OpenRC + elogind systems)."""
     src = script_dir / "contrib" / "openrc" / "zenbook-kb-lid"
@@ -514,6 +576,7 @@ def install_openrc_lid_service(script_dir: Path) -> None:
         return
     _sudo(["cp", str(src), str(OPENRC_LID_INIT)])
     _sudo(["chmod", "a+x", str(OPENRC_LID_INIT)])
+    rewrite_file_prefix(OPENRC_LID_INIT)
     _sudo(["touch", "/var/log/zenbook-kb-lid.log"])
     if shutil.which("rc-update"):
         _root_run(["rc-update", "add", "zenbook-kb-lid", "default"], check=False, timeout=30)
@@ -596,8 +659,17 @@ def install_touchpad_daemon_support(
         _sudo(["cp", str(example_tp), str(etc_dir / "touchpad.json.example")])
         live = etc_dir / "touchpad.json"
         if not live.is_file():
-            _sudo(["cp", str(example_tp), str(live)])
-            print(f"Seeded {live} from example")
+            from zenbook_kb.dmi import is_ux5400
+
+            seed = script_dir / "touchpad.json.example.ux5400"
+            if is_ux5400() and seed.is_file():
+                _sudo(["cp", str(seed), str(live)])
+                print(
+                    f"Seeded {live} (UX5400 — GDX1515 touchpad filter enabled by default)"
+                )
+            else:
+                _sudo(["cp", str(example_tp), str(live)])
+                print(f"Seeded {live} from example")
 
     init = detect_init_system()
     if init == "systemd":
@@ -1087,6 +1159,7 @@ def install_all(
             enable_service=fan_control_enable,
             seed_config=True,
         )
+        install_profiles_cron(script_dir, run_user=resolve_run_user())
 
     if not with_hotkey_service:
         return None

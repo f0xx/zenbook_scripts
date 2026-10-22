@@ -11,11 +11,13 @@ KCMUtils.ScrollViewKCM {
     id: root
 
     implicitWidth: Kirigami.Units.gridUnit * 44
-    implicitHeight: Kirigami.Units.gridUnit * 30
+    implicitHeight: Kirigami.Units.gridUnit * 36
 
     readonly property var tabPages: {
         var pages = [
-            { title: i18n("Overview"), source: "OverviewPage.qml" }
+            { title: i18n("Overview"), source: "OverviewPage.qml" },
+            { title: i18n("Profiles"), source: "ProfilesPage.qml" },
+            { title: i18n("Touchpad"), source: "TouchpadPage.qml" }
         ]
         if (kcm.showDisplaysTab) {
             pages.push({ title: i18n("Displays"), source: "DisplaysPage.qml" })
@@ -44,7 +46,7 @@ KCMUtils.ScrollViewKCM {
         Loader {
             id: pageLoader
             Layout.fillWidth: true
-            Layout.preferredHeight: Kirigami.Units.gridUnit * 22
+            Layout.preferredHeight: item ? item.implicitHeight : Kirigami.Units.gridUnit * 12
             source: root.tabPages[Math.min(tabBar.currentIndex, root.tabPages.length - 1)].source
         }
 

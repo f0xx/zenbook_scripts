@@ -27,6 +27,10 @@ log = logging.getLogger("zenbook.fan_control")
 ASUS_WMI = Path("/sys/devices/platform/asus-nb-wmi")
 PLATFORM_PROFILE = Path("/sys/firmware/acpi/platform_profile")
 THROTTLE_TTP = ASUS_WMI / "throttle_thermal_policy"
+# auto = daemon may apply load/temp rules; manual = tray/CLI choice sticks.
+CONTROL_MODE_STATE = Path("/var/lib/zenbook-scripts/fan-control-mode")
+CONTROL_MODE_AUTO = "auto"
+CONTROL_MODE_MANUAL = "manual"
 
 
 @dataclass
@@ -57,6 +61,42 @@ def _write_sysfs(path: Path, value: str) -> None:
     from zenbook_kb.priv import write_sysfs
 
     write_sysfs(path, value, allow_ask=False)
+
+
+def get_control_mode() -> str:
+    """Return ``auto`` (adaptive rules) or ``manual`` (user lock)."""
+    raw = _read_text(CONTROL_MODE_STATE)
+    if not raw:
+        return CONTROL_MODE_AUTO
+    mode = raw.strip().lower()
+    if mode in (CONTROL_MODE_AUTO, CONTROL_MODE_MANUAL):
+        return mode
+    return CONTROL_MODE_AUTO
+
+
+def set_control_mode(mode: str) -> str:
+    """Persist control mode. ``manual`` freezes adaptive rule application."""
+    want = str(mode).strip().lower()
+    if want in ("adaptive", "rules"):
+        want = CONTROL_MODE_AUTO
+    if want not in (CONTROL_MODE_AUTO, CONTROL_MODE_MANUAL):
+        raise ValueError(f"control mode must be auto|manual, got {mode!r}")
+    CONTROL_MODE_STATE.parent.mkdir(parents=True, exist_ok=True)
+    from zenbook_kb.priv import write_sysfs
+
+    # Same helper as sysfs: root or sudo -n tee into /var/lib.
+    try:
+        write_sysfs(CONTROL_MODE_STATE, want + "\n", allow_ask=False)
+    except Exception:
+        # Fallback: direct write when the process can create the file.
+        try:
+            CONTROL_MODE_STATE.write_text(want + "\n", encoding="utf-8")
+        except OSError as exc:
+            raise PermissionError(
+                f"cannot write {CONTROL_MODE_STATE} (need root or NOPASSWD)"
+            ) from exc
+    log.info("fan-control mode=%s", want)
+    return want
 
 
 def cpu_count() -> int:
@@ -149,6 +189,11 @@ def read_lid_open() -> bool | None:
 
 
 def find_asus_hwmon() -> Path | None:
+    from zenbook_kb.fan_hwmon import find_fan_hwmon
+
+    row = find_fan_hwmon("asus")
+    if row:
+        return row.path
     root = ASUS_WMI / "hwmon"
     if root.is_dir():
         for d in root.iterdir():
@@ -162,11 +207,29 @@ def find_asus_hwmon() -> Path | None:
     return None
 
 
-def read_rpm() -> int | None:
-    hw = find_asus_hwmon()
-    if not hw:
+def fan_backend_name() -> str | None:
+    from zenbook_kb.fan_hwmon import find_fan_hwmon
+
+    row = find_fan_hwmon()
+    return row.backend if row else None
+
+
+def _fan_hwmon_pwm_path() -> Path | None:
+    from zenbook_kb.fan_hwmon import find_fan_hwmon
+
+    row = find_fan_hwmon()
+    if not row or not row.has_pwm:
         return None
-    raw = _read_text(hw / "fan1_input")
+    return row.path
+
+
+def read_rpm() -> int | None:
+    from zenbook_kb.fan_hwmon import find_fan_hwmon
+
+    row = find_fan_hwmon()
+    if not row or not row.has_rpm:
+        return None
+    raw = _read_text(row.path / "fan1_input")
     if raw is None:
         return None
     try:
@@ -256,17 +319,54 @@ def _bin_candidates(*names: str) -> list[Path]:
     return out
 
 
-def _run_cli(argv: list[str]) -> None:
+def _run_cli(argv: list[str], *, env: dict[str, str] | None = None) -> None:
     """Run helper CLI; use sudo -n when not root (never hang on password)."""
     from zenbook_kb.priv import run_root
 
+    run_env = None
+    if env:
+        run_env = {**os.environ, **env}
     if os.geteuid() == 0:
-        subprocess.run(argv, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+        subprocess.run(
+            argv,
+            check=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            env=run_env,
+        )
         return
-    r = run_root(argv, check=False, allow_ask=False, capture=True, timeout=30)
+    r = run_root(
+        argv, check=False, allow_ask=False, capture=True, timeout=30, env=run_env
+    )
     if r.returncode != 0:
         err = (r.stderr or b"").decode(errors="replace").strip()
         raise PermissionError(f"need root or NOPASSWD for {argv[0]}: {err}")
+
+
+def restore_user_sysfs() -> None:
+    """Re-apply persisted platform_profile + pwm (manual lock / sleep_post)."""
+    bins = _bin_candidates("platform-fan", "kb-fan")
+    if bins:
+        try:
+            _run_cli([str(bins[0]), "restore"])
+            return
+        except (PermissionError, subprocess.CalledProcessError) as exc:
+            log.warning("restore via %s failed: %s", bins[0], exc)
+    pp_state = Path("/var/lib/zenbook-scripts/platform-profile")
+    pwm_state = Path("/var/lib/zenbook-scripts/fan-pwm-enable")
+    want_pp = _read_text(pp_state)
+    if want_pp and PLATFORM_PROFILE.is_file():
+        try:
+            _write_sysfs(PLATFORM_PROFILE, want_pp + "\n")
+        except Exception as exc:  # noqa: BLE001
+            log.warning("restore platform_profile failed: %s", exc)
+    want_pwm = _read_text(pwm_state)
+    hw = _fan_hwmon_pwm_path()
+    if want_pwm is not None and hw and (hw / "pwm1_enable").is_file():
+        try:
+            _write_sysfs(hw / "pwm1_enable", want_pwm + "\n")
+        except Exception as exc:  # noqa: BLE001
+            log.warning("restore pwm failed: %s", exc)
 
 
 def apply_profile(cfg: dict[str, Any], name: str) -> None:
@@ -284,29 +384,34 @@ def apply_profile(cfg: dict[str, Any], name: str) -> None:
         else:
             bins = _bin_candidates("kb-platform-profile")
             if bins:
-                _run_cli([str(bins[0]), "set", str(pp)])
+                _run_cli(
+                    [str(bins[0]), "set", str(pp)],
+                    env={"ZENBOOK_PP_PERSIST": "0"},
+                )
             else:
                 raise FileNotFoundError(str(PLATFORM_PROFILE))
 
     pwm = prof.get("pwm")
     if pwm is not None:
         bins = _bin_candidates("platform-fan", "kb-fan")
+        # Adaptive must not flip fan-control-mode via CLI persist side-effects.
+        no_pwm_persist = {"ZENBOOK_FAN_PWM_PERSIST": "0"}
         if pwm in ("full", "max", "on", 0, "0"):
-            hw = find_asus_hwmon()
+            hw = _fan_hwmon_pwm_path()
             if hw:
                 _write_sysfs(hw / "pwm1_enable", "0")
             elif bins:
-                _run_cli([str(bins[0]), "full"])
+                _run_cli([str(bins[0]), "full"], env=no_pwm_persist)
             else:
-                log.warning("asus hwmon missing; skip pwm=full")
+                log.warning("fan hwmon missing; skip pwm=full")
         elif pwm in ("auto", 2, "2"):
-            hw = find_asus_hwmon()
+            hw = _fan_hwmon_pwm_path()
             if hw:
                 _write_sysfs(hw / "pwm1_enable", "2")
             elif bins:
-                _run_cli([str(bins[0]), "auto"])
+                _run_cli([str(bins[0]), "auto"], env=no_pwm_persist)
             else:
-                log.warning("asus hwmon missing; skip pwm=auto")
+                log.warning("fan hwmon missing; skip pwm=auto")
         elif pwm in ("manual", 1, "1"):
             raise RuntimeError("pwm=manual/curves not supported on this model")
         else:
@@ -330,6 +435,15 @@ def apply_profile(cfg: dict[str, Any], name: str) -> None:
 
 
 def run_event(cfg: dict[str, Any], event: str, state: ControllerState) -> None:
+    if event == "lid_close":
+        try:
+            from zenbook_kb.night_mode import is_active
+
+            if is_active():
+                log.info("skip fan lid_close — night mode owns lid")
+                return
+        except ImportError:
+            pass
     events = cfg.get("events") or {}
     ev = events.get(event)
     if not ev:
@@ -337,6 +451,40 @@ def run_event(cfg: dict[str, Any], event: str, state: ControllerState) -> None:
         return
     if not isinstance(ev, dict):
         raise ValueError(f"events.{event} must be an object")
+
+    mode = get_control_mode()
+    if mode == CONTROL_MODE_MANUAL:
+        # Honour explicit user lock: skip adaptive AC/lid chasing. Still cool on
+        # lid close / suspend; restore saved CLI choice only when lid is open.
+        if event in ("sleep_pre", "lid_close"):
+            profile = ev.get("profile")
+            if profile:
+                apply_profile(cfg, profile)
+            run = ev.get("run")
+            if run:
+                subprocess.run(run, shell=True, check=False)
+            log.info("manual lock: %s applied (temporary)", event)
+            return
+        if event == "sleep_post":
+            lid = read_lid_open()
+            if lid is False:
+                log.info("manual lock: sleep_post deferred — lid still closed")
+                return
+            restore_user_sysfs()
+            run = ev.get("run")
+            if run:
+                subprocess.run(run, shell=True, check=False)
+            log.info("manual lock: sleep_post restored user choice")
+            return
+        if event == "lid_open":
+            restore_user_sysfs()
+            run = ev.get("run")
+            if run:
+                subprocess.run(run, shell=True, check=False)
+            log.info("manual lock: lid_open restored user choice")
+            return
+        log.info("manual lock: skip event %s", event)
+        return
 
     profile = ev.get("profile")
     if profile:
@@ -360,6 +508,10 @@ def maybe_apply_continuous(
     *,
     force: bool = False,
 ) -> str | None:
+    if get_control_mode() == CONTROL_MODE_MANUAL:
+        log.debug("manual lock: skip adaptive rules (force=%s)", force)
+        return None
+
     daemon = cfg.get("daemon") or {}
     hysteresis = float(daemon.get("hysteresis_sec", 30))
     wanted = pick_rule_profile(cfg, sample)
@@ -393,12 +545,15 @@ def maybe_apply_continuous(
 
 
 def format_status(cfg: dict[str, Any], sample: Sample, state: ControllerState) -> str:
+    mode = get_control_mode()
     lines = [
+        f"mode:     {mode}  ({'adaptive rules' if mode == CONTROL_MODE_AUTO else 'user lock — rules paused'})",
         f"power:    {'ac' if sample.on_ac else 'battery'}",
         f"load:     {sample.load_pct:.1f}%",
         f"temp_c:   {sample.temp_c if sample.temp_c is not None else 'n/a'}",
         f"lid:      {('open' if sample.lid_open else 'closed') if sample.lid_open is not None else 'n/a'}",
         f"rpm:      {sample.rpm if sample.rpm is not None else 'n/a'}",
+        f"fan:      {fan_backend_name() or 'n/a'}",
         f"profile:  {state.last_profile or 'n/a'}",
     ]
     if PLATFORM_PROFILE.is_file():
@@ -407,6 +562,8 @@ def format_status(cfg: dict[str, Any], sample: Sample, state: ControllerState) -
         lines.append(f"ttp:      {_read_text(THROTTLE_TTP)}")
     wanted = pick_rule_profile(cfg, sample)
     lines.append(f"rule_want:{wanted or 'none'}")
+    if mode == CONTROL_MODE_MANUAL:
+        lines.append("note:     manual lock active — Profile/Fans auto to resume adaptive")
     try:
         from zenbook_kb.power import format_power_status
 

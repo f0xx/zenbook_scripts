@@ -1,0 +1,93 @@
+#!/usr/bin/env python3
+"""Closed-lid night profile — AC awake, quiet fan, min CPU, network stays up.
+
+Requires elogind drop-in (see contrib/elogind/99-zenbook-night-mode.conf) so
+lid-close on AC does not suspend. Snapshots fan/thermal state and restores on
+exit.
+
+Examples:
+  platform-night-mode status
+  platform-night-mode enter
+  platform-night-mode exit
+  platform-night-mode lid-close
+  platform-night-mode lid-open
+"""
+
+from __future__ import annotations
+
+import argparse
+import logging
+import sys
+from pathlib import Path
+
+_SCRIPT_DIR = Path(__file__).resolve().parent
+_ROOT = _SCRIPT_DIR.parent
+_SHARE_CANDIDATES = (
+    _ROOT,
+    Path("/usr/share/zenbook-scripts"),
+    Path("/usr/local/share/zenbook-scripts"),
+)
+_inserted = False
+for _share in _SHARE_CANDIDATES:
+    if (_share / "zenbook_kb" / "night_mode.py").is_file():
+        if str(_share) not in sys.path:
+            sys.path.insert(0, str(_share))
+        _inserted = True
+        break
+if not _inserted and (_ROOT / "zenbook_kb").is_dir() and str(_ROOT) not in sys.path:
+    sys.path.insert(0, str(_ROOT))
+
+from zenbook_kb.night_mode import (  # noqa: E402
+    enter_night,
+    exit_night,
+    handle_lid,
+    load_night_config,
+    status_lines,
+)
+
+logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "command",
+        choices=("status", "enter", "exit", "lid-close", "lid-open", "toggle"),
+        nargs="?",
+        default="status",
+    )
+    parser.add_argument("--config", type=Path, help="night-mode.json path")
+    parser.add_argument("--force", action="store_true", help="ignore enabled/AC guards")
+    args = parser.parse_args()
+
+    cfg = load_night_config(args.config) if args.config else load_night_config()
+
+    if args.command == "status":
+        for line in status_lines(cfg):
+            print(line)
+        return 0
+
+    if args.command == "enter":
+        return 0 if enter_night(cfg, force=args.force) else 1
+
+    if args.command == "exit":
+        return 0 if exit_night(force=args.force) else 1
+
+    if args.command == "lid-close":
+        return 0 if handle_lid(closed=True) else 1
+
+    if args.command == "lid-open":
+        return 0 if handle_lid(closed=False) else 1
+
+    if args.command == "toggle":
+        from zenbook_kb.night_mode import exit_night as _exit, is_active
+
+        if is_active():
+            return 0 if _exit(force=args.force) else 1
+        return 0 if enter_night(cfg, force=args.force) else 1
+
+    return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
