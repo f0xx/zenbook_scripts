@@ -22,6 +22,27 @@ Copy recipes into your own overlay or install from a release tarball / git check
 | [`debian/`](debian/) | **debhelper scaffold** — CLI-first `.deb` (not published) |
 | [`alpine/APKBUILD`](alpine/APKBUILD) | Alpine abuild recipe (not published) |
 
+### Release candidate `v0.0.5-rc1`
+
+Tag: [`v0.0.5-rc1`](https://github.com/f0xx/zenbook_scripts/releases/tag/v0.0.5-rc1).
+Gentoo PV: **`0.0.5_rc1`**. Headline: UX581 **`platform-ux581-lightbar`** (effects),
+kernel **7.2.0-gentoo** patch (same as 7.1.5), UX8406 fan/hid-asus/KCM bugfixes.
+
+https://github.com/f0xx/zenbook_scripts/archive/refs/tags/v0.0.5-rc1.tar.gz
+
+| Algo | Digest |
+|------|--------|
+| Size | `476251` bytes |
+| SHA256 | `a69e517d1dcfc13b0ca97f730e3bdf4a92d09de3a740b632bd99e7488aa0af8d` |
+| SHA512 | `2ec7e97db4f92ab40fa6b0e0e1b4a8f2dbcba4f9ee33030b5d539afc1487e45eab245c2876aade5fbcaf7c162096954cec4026a09cf9971eb595b2de035d8603` |
+| BLAKE2B | `38dab1b5fa4d2def261e5fa3aec0eea7517fc3a53f15768a962f9e3372cd1d7d3cddbd58b0b4896cc988120b5c40203efde187c3b3a07f69b551950f9ccd2c8b` |
+
+Portage DIST name: `zenbook_scripts-0.0.5-rc1.tar.gz`.
+
+```bash
+emerge -av =app-laptop/zenbook-scripts-0.0.5_rc1
+```
+
 ### Release `v0.0.2`
 
 Tag + draft GitHub release first; **Manifest digests from that tarball** (`ebuild … manifest`).
