@@ -24,11 +24,15 @@ from pathlib import Path
 SUPPORTED_RELEASES = (
     "7.0.12-gentoo-r1",
     "7.1.3-gentoo",
+    "7.1.5-gentoo",
+    "7.2.0-gentoo",
 )
 
 SUPPORTED_PATCH_DIRS = (
     "linux-7.0.12-gentoo-r1",
     "linux-7.1.3-gentoo",
+    "linux-7.1.5-gentoo",
+    "linux-7.2.0-gentoo",
 )
 
 SKIP_FEATURES_MSG = (

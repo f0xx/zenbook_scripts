@@ -76,3 +76,23 @@ zenbook_rc_wait_not_starting() {
 	done
 	return 1
 }
+
+# Wait for zenbook-kb-hid-asus boot sideload + ensure-if4 (/run/zenbook-hid-asus/ready).
+zenbook_rc_wait_hid_asus_ready() {
+	local max="${1:-60}" i=0 ready="/run/zenbook-hid-asus/ready"
+	[[ -f "${ready}" ]] && return 0
+	while (( i < max )); do
+		[[ -f "${ready}" ]] && return 0
+		if command -v rc-service >/dev/null 2>&1; then
+			local st
+			st="$(rc-service -q zenbook-kb-hid-asus status 2>&1 || true)"
+			if [[ "${st}" == *"stopped"* && "${st}" != *"starting"* ]]; then
+				[[ -f "${ready}" ]] && return 0
+				return 0
+			fi
+		fi
+		sleep 1
+		i=$((i + 1))
+	done
+	[[ -f "${ready}" ]]
+}

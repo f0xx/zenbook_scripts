@@ -119,7 +119,7 @@ feature/adaptive-touchpad-filter ─► merge main ─► tag v0.0.4
 ```
 
 Field validation: UX5400 GDX1515 live filter (motion); UX8406 dock handoff (tree).
-KCM full pass still open (Help, Displays, Start/Stop live filter).
+KCM Help / Displays / Start–Stop live filter validated pre-0.0.4 tag.
 
 ## Gentoo USE mapping
 
@@ -197,14 +197,90 @@ screenpad* (UX5400)          zenbook-kb-lid / zenbook-kb-hotkeys (OpenRC)
 contrib/udev/99-uinput.rules   optional: /dev/uinput group for user-started filter
 ```
 
-## After **0.0.4** — **next**
+## After **0.0.4** — **0.0.5** RC
+
+| # | Track | Status | Intent |
+|---|--------|--------|--------|
+| 5.0 | **Kernel 7.1.5-gentoo port** | **done (tree)** | Patch regenerated; **7.1.3 patch applies cleanly** to 7.1.5 stock `hid-asus.c` (port script newer) |
+| 5.1 | **KCM installed validation** | **done** | Help / Displays / Start–Stop live filter OK pre-0.0.4; revisit only on bugs |
+| 5.2 | **Live filter + dock automation** | **next** | Safe auto-restart on USB↔BT transport when filter was running |
+| 5.3 | **UX5400 OpenRC live filter** | **next** | Optional `zenbook-platform-touchpad` default-on for GDX1515 motion path |
+| 5.4 | **Fan / sleep hook hardening** | **done (tree)** | Lid-close PWM lock, `fn_lock` sleep hooks, `kb-brightness-sleep` path |
+| 5.5 | **UX8406 dock/filter soak** | **next** | Long session with adaptive profile + dock handoff |
+| 5.6 | **KCM live sparkline** | **later** | Touchpad tab ΔX/ΔY monitor (noted in KCM UI) |
+| 5.7 | **Closed-lid night field soak** | **later** | `platform-night-mode` on AC server lid-closed |
+| 5.8 | **Packaging maintainers** | **later** | Debian/Alpine VM build notes in `packaging/MAINTAINERS.md` |
+| 5.9 | **Plasma resume watcher** | **later** | QSG thread threshold → `plasmashell --replace` (`session.json`) |
+| 5.10 | **UX581 lightbar** | **blocked** | HID `0b05:0124` when hardware available |
+
+### Release gate (0.0.5 RC)
+
+```text
+main ─► 5.0 kernel 7.1.5 validated ─► tag v0.0.5-rc1
+       └─► soak 5.5 + optional 5.2/5.3 ─► tag v0.0.5
+```
+
+Field validation: UX5400 GDX1515 motion via live filter; UX8406 dock handoff
+with filter on; fan PWM quiet on lid-close with `platform-fan-control` running.
+
+## 0.0.5 dependency graph
+
+```mermaid
+flowchart TB
+  subgraph shipped ["Shipped (0.0.4)"]
+    GDX["GDX1515 live filter + restore-kwin"]
+    DOCK["Duo dock touch-map + pointer restore"]
+    ADAPT["Adaptive learn-only filter"]
+    KCMHELP["KCM handbook + sync load (validated)"]
+  end
+
+  subgraph rc_core ["0.0.5 RC core"]
+    KV715["5.0 Kernel 7.1.5 port + validate"]
+    REL["Release hygiene + tag v0.0.5-rc1"]
+  end
+
+  subgraph rc_field ["0.0.5 field / polish"]
+    FAN["5.4 Fan/sleep hooks"]
+    DOCKAUTO["5.2 Live filter + dock automation"]
+    OPENRC["5.3 UX5400 OpenRC live filter"]
+    SOAK["5.5 UX8406 dock/filter soak"]
+  end
+
+  subgraph defer ["Deferred / blocked"]
+    SPARK["5.6 KCM sparkline"]
+    NIGHT["5.7 Closed-lid night soak"]
+    PKG["5.8 Packaging maintainers"]
+    PLASMA["5.9 Plasma resume watcher"]
+    UX581["5.10 UX581 lightbar"]
+  end
+
+  shipped --> KV715
+  KV715 --> REL
+
+  GDX --> OPENRC
+  DOCK --> DOCKAUTO
+  ADAPT --> SOAK
+  DOCK --> SOAK
+  FAN -.-> REL
+  DOCKAUTO -.-> SOAK
+  OPENRC -.-> REL
+  SOAK -.-> REL
+
+  KCMHELP -.-> SPARK
+  SPARK -.-> defer
+  NIGHT -.-> defer
+  PKG -.-> defer
+  PLASMA -.-> defer
+  UX581 -.-> defer
+```
+
+## After **0.0.5** — **later**
 
 | Track | Intent |
 |-------|--------|
-| Live filter + dock automation | SIGHUP transport switch or safe auto-restart only when filter was running |
-| KCM live sparkline | Touchpad tab ΔX/ΔY monitor (noted in KCM UI) |
-| Packaging maintainers | Debian/Alpine VM build notes in `packaging/MAINTAINERS.md` |
+| KCM live sparkline | Touchpad tab ΔX/ΔY monitor |
+| Packaging maintainers | Debian/Alpine VM build notes |
 | UX581 lightbar | HID feature reports when hardware available |
-| Plasma resume watcher | QSG thread threshold auto-`plasmashell --replace` (session.json) |
+| Plasma resume watcher | QSG thread threshold auto-`plasmashell --replace` |
 
 Contributor research: [`docs/`](docs/README.md). See also [PLANNED.md](PLANNED.md) and [CHANGELOG.md](CHANGELOG.md).

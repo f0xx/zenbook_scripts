@@ -50,6 +50,13 @@ fi
 
 cmake --install "$BUILD"
 
+if [[ -f "$HOME/.local/lib64/qt6/plugins/plasma/kcms/systemsettings/kcm_zenbook_platform.so" ]]; then
+	echo
+	echo "WARNING: $HOME/.local/lib64/qt6/plugins/.../kcm_zenbook_platform.so also exists."
+	echo "Qt may load the ~/.local copy instead of PREFIX=$PREFIX and hide newer UI."
+	echo "Remove it if System Settings shows stale tabs: rm $HOME/.local/lib64/qt6/plugins/plasma/kcms/systemsettings/kcm_zenbook_platform.so"
+fi
+
 echo
 echo "Installed kcm_zenbook_platform to prefix: $PREFIX"
 echo "Plugin: $PREFIX/lib64/qt6/plugins/plasma/kcms/systemsettings/kcm_zenbook_platform.so"

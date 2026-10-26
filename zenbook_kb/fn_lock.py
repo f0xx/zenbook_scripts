@@ -58,7 +58,10 @@ def find_vendor_hidraw() -> Path | None:
         rdesc = hidraw / "device" / "report_descriptor"
         if not rdesc.is_file():
             continue
-        size = rdesc.stat().st_size
+        try:
+            size = len(rdesc.read_bytes())
+        except OSError:
+            continue
         if 90 <= size <= 120:
             return Path("/dev") / hidraw.name
     return None

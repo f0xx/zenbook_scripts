@@ -7,11 +7,10 @@ import QtQuick.Layouts
 import org.kde.kirigami as Kirigami
 import org.kde.kcmutils as KCMUtils
 
-KCMUtils.ScrollViewKCM {
+KCMUtils.SimpleKCM {
     id: root
 
     implicitWidth: Kirigami.Units.gridUnit * 44
-    implicitHeight: Kirigami.Units.gridUnit * 36
 
     readonly property var tabPages: {
         var pages = [
@@ -27,8 +26,20 @@ KCMUtils.ScrollViewKCM {
         return pages
     }
 
+    function activePageHeight() {
+        var loader = stack.children[stack.currentIndex]
+        if (!loader || !loader.item)
+            return Kirigami.Units.gridUnit * 28
+        var h = loader.item.implicitHeight
+        if (h > 0)
+            return h
+        if (loader.item.childrenRect)
+            return loader.item.childrenRect.height + Kirigami.Units.gridUnit * 2
+        return Kirigami.Units.gridUnit * 28
+    }
+
     ColumnLayout {
-        width: root.availableWidth
+        width: parent.width
         spacing: Kirigami.Units.largeSpacing
 
         QQC2.TabBar {
@@ -43,11 +54,31 @@ KCMUtils.ScrollViewKCM {
             }
         }
 
-        Loader {
-            id: pageLoader
+        StackLayout {
+            id: stack
             Layout.fillWidth: true
-            Layout.preferredHeight: item ? item.implicitHeight : Kirigami.Units.gridUnit * 12
-            source: root.tabPages[Math.min(tabBar.currentIndex, root.tabPages.length - 1)].source
+            currentIndex: tabBar.currentIndex
+            Layout.preferredHeight: root.activePageHeight()
+
+            Repeater {
+                model: root.tabPages
+
+                Loader {
+                    Layout.fillWidth: true
+                    active: true
+                    source: modelData.source
+                    onLoaded: {
+                        if (item && item.width !== undefined) {
+                            item.width = Qt.binding(function() { return stack.width })
+                        }
+                        stack.Layout.preferredHeight = Qt.binding(function() { return root.activePageHeight() })
+                    }
+                    onStatusChanged: {
+                        if (status === Loader.Error)
+                            console.warn("KCM page failed:", source, sourceComponent ? sourceComponent.errorString() : "")
+                    }
+                }
+            }
         }
 
         QQC2.Label {

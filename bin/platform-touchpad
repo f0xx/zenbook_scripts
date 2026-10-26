@@ -382,11 +382,17 @@ def cmd_stop(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_restore_kwin(_args: argparse.Namespace) -> int:
+def cmd_restore_kwin(args: argparse.Namespace) -> int:
     """Re-enable physical touchpads in KWin after a crashed/stale live filter."""
     from zenbook_kb.touch_map import restore_all_compositor_touchpads
 
-    n = restore_all_compositor_touchpads()
+    retries = args.retries
+    if retries is None:
+        retries = 8 if args.wait else 1
+    n = restore_all_compositor_touchpads(
+        retries=retries,
+        retry_delay_s=args.retry_delay,
+    )
     pads = []
     try:
         from zenbook_kb.touch_map import list_pointer_touchpads
@@ -596,9 +602,28 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="SIGKILL if the filter does not exit promptly",
     )
-    sub.add_parser(
+    p_restore = sub.add_parser(
         "restore-kwin",
         help="re-enable physical touchpads in KWin (after crashed live filter)",
+    )
+    p_restore.add_argument(
+        "--wait",
+        action="store_true",
+        help="retry while KWin registers USB/BT touchpad nodes (dock handoff)",
+    )
+    p_restore.add_argument(
+        "--retries",
+        type=int,
+        default=None,
+        metavar="N",
+        help="restore passes (default 8 with --wait, else 1)",
+    )
+    p_restore.add_argument(
+        "--retry-delay",
+        type=float,
+        default=0.5,
+        metavar="SEC",
+        help="seconds between restore passes (default 0.5)",
     )
 
     p_prof = sub.add_parser("profile", help="show or set filter_profile (default|adaptive)")

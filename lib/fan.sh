@@ -127,6 +127,11 @@ zenbook_fan_pwm_enable_set() {
 			if declare -F zenbook_fan_control_mode_set >/dev/null 2>&1; then
 				zenbook_fan_control_mode_set auto || true
 			fi
+			# Stale fan-pwm-enable=0 forces full RPM on every restore_user_sysfs().
+			local stale="${ZENBOOK_FAN_PWM_STATE:-/var/lib/zenbook-scripts/fan-pwm-enable}"
+			if [[ -r "${stale}" ]] && [[ "$(tr -d '[:space:]' <"${stale}")" == "0" ]]; then
+				zenbook_fan_pwm_state_write "2" || true
+			fi
 		fi
 	fi
 }

@@ -9,13 +9,13 @@ from typing import Any
 from zenbook_kb.touchpad import (
     DEFAULT_CONFIG,
     discover_touchpads,
+    device_profile_enabled,
     effective_config_path,
     filter_profile_for_device,
     filters_for_device,
     filters_from_knobs,
     knobs_from_filters,
     load_config,
-    normalize_config,
     pick_default_device,
     resolve_touchpad,
     save_config,
@@ -54,10 +54,9 @@ def export_knobs() -> dict[str, Any]:
     cfg = load_config(_user_config_path() if _user_config_path().is_file() else None)
     filters = filters_for_device(cfg, info, path=info.path)
     knobs = knobs_from_filters(filters)
-    dev = (normalize_config(cfg).get("devices") or {}).get(info.key) or {}
     knobs["device_key"] = info.key
     knobs["device_name"] = info.name
-    knobs["profile_enabled"] = bool(dev.get("enabled", False))
+    knobs["profile_enabled"] = device_profile_enabled(cfg, info, path=info.path)
     knobs["filter_profile"] = filter_profile_for_device(cfg, info, path=info.path)
     knobs["config_path"] = str(_user_config_path())
     return knobs

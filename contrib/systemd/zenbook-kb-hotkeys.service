@@ -1,9 +1,10 @@
 [Unit]
 Description=Zenbook Duo Fn+ / special-key handler
-After=local-fs.target
+After=local-fs.target zenbook-kb-hid-asus.service
 
 [Service]
 Type=simple
+ExecStartPre=+/usr/libexec/zenbook-hid-asus-switch ensure-if4
 ExecStart=/usr/local/bin/kb-brightness-hotkeys
 Restart=on-failure
 RestartSec=2

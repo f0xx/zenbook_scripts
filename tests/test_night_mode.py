@@ -61,12 +61,50 @@ class TestNightMode(unittest.TestCase):
             nm, "capture_snapshot", return_value={"version": 1, "fan_control_mode": "auto"}
         ), mock.patch.object(nm, "restore_user_sysfs"), mock.patch.object(
             nm, "set_control_mode"
-        ), mock.patch.object(nm, "run_event"), mock.patch.object(nm, "wake_displays"):
+        ), mock.patch.object(nm, "run_event"), mock.patch.object(
+            nm, "wake_displays"
+        ), mock.patch.object(nm, "_restore_session_input"):
             self.assertTrue(nm.enter_night(cfg))
             self.assertTrue(nm.is_active())
             self.snap.write_text(json.dumps({"fan_control_mode": "auto"}) + "\n")
             self.assertTrue(nm.exit_night())
         self.assertFalse(nm.is_active())
+
+    def test_lid_closed_forces_keyboard_off(self) -> None:
+        cfg = {"enabled": True, "require_ac": False, "blank_displays": False}
+        fan_cfg = {"profiles": {"night": {}, "powersave": {}}}
+        profiles = {
+            "modes": {
+                "night": {
+                    "keyboard_backlight": {"enabled": True, "level": 2, "level_pct": 66},
+                }
+            }
+        }
+        with mock.patch.object(nm, "read_on_ac", return_value=True), mock.patch.object(
+            nm, "load_fan_config", return_value=fan_cfg
+        ), mock.patch.object(nm, "apply_profile"), mock.patch.object(
+            nm, "capture_snapshot", return_value={"version": 1}
+        ), mock.patch.object(nm, "blank_displays"), mock.patch.object(
+            nm, "_set_network"
+        ), mock.patch.object(nm, "_set_keyboard_brightness") as kbd:
+            with mock.patch("zenbook_kb.user_profiles.load", return_value=profiles):
+                nm._apply_night_extras(cfg, user="foxx", entering=True, lid_closed=True)
+        kbd.assert_called_once_with(0, user="foxx")
+
+    def test_exit_restores_touchpad(self) -> None:
+        cfg = {"enabled": True, "require_ac": False, "blank_displays": False}
+        fan_cfg = {"profiles": {"night": {}, "powersave": {}}}
+        self.active.write_text("1\n")
+        self.snap.write_text(json.dumps({"fan_control_mode": "auto"}) + "\n")
+        with mock.patch.object(nm, "restore_user_sysfs"), mock.patch.object(
+            nm, "set_control_mode"
+        ), mock.patch.object(nm, "load_fan_config", return_value=fan_cfg), mock.patch.object(
+            nm, "run_event"
+        ), mock.patch.object(nm, "wake_displays"), mock.patch.object(
+            nm, "_restore_session_input"
+        ) as restore, mock.patch.object(nm, "_apply_night_extras"):
+            self.assertTrue(nm.exit_night())
+        restore.assert_called_once()
 
 
 if __name__ == "__main__":

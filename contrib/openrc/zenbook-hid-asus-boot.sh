@@ -10,6 +10,12 @@ if [[ ! -x "${SWITCH}" && -x /usr/local/libexec/zenbook-hid-asus-switch ]]; then
 	SWITCH="/usr/local/libexec/zenbook-hid-asus-switch"
 fi
 
+_mark_hid_asus_ready() {
+	mkdir -p /run/zenbook-hid-asus
+	touch /run/zenbook-hid-asus/ready
+}
+trap _mark_hid_asus_ready EXIT
+
 if [[ -f "${CONF}" ]]; then
 	# shellcheck disable=SC1090
 	source "${CONF}"
@@ -87,6 +93,12 @@ else
 	logger -t zenbook-hid-asus "boot: sideload failed — stock hid_asus remains"
 	exit 1
 fi
+
+if ! "${SWITCH}" ensure-if4; then
+	logger -t zenbook-hid-asus "boot: ensure-if4 failed — vendor if4 may be missing (Fn+Esc / some Fx keys)"
+	exit 1
+fi
+logger -t zenbook-hid-asus "boot: vendor if4 OK"
 
 # switch sideload calls zenbook_post_sideload_refresh (fn-lock, brightness, hotkeys).
 # Keep explicit log lines when post_sideload.sh is missing.

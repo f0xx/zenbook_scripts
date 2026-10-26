@@ -39,6 +39,13 @@ platform-fan-control mode auto     # resume rules + force one eval
 | In | JSON (`fan-control.json.example`); loadavg; power_supply; hwmon; ACPI lid; events `sleep_*` / `lid_*` / `ac_*` |
 | Out | Sysfs `platform_profile` + `pwm1_enable` (**direct — does not persist**); power knobs; log + pid `/run/zenbook-platform-fan-control.pid` |
 
+## ACPI `fan` events (UX8406)
+
+If `/etc/acpi/default.sh` calls `platform-fan full` on `fan` notifications,
+firmware will re-emit those events when `pwm1_enable` changes — fans stay at
+~8300 RPM and state files flip to `fan-pwm-enable=0` / `manual`. Log or ignore
+`fan` in ACPI; do not map them to full PWM.
+
 ## Key files
 
 `bin/platform-fan-control`, `zenbook_kb/fan_control.py`,

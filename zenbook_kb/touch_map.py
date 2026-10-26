@@ -593,14 +593,15 @@ def release_kwin_after_live_filter(
     return changed
 
 
-def restore_all_compositor_touchpads(*, include_stylus: bool = False) -> int:
-    """Re-enable physical touchpads and disable stale ``(filter)`` nodes in KWin."""
-    if not kwin_available():
-        return 0
+def _reset_busctl_env_cache() -> None:
+    global _BUSCTL_ENV_CACHE
+    _BUSCTL_ENV_CACHE = None
+
+
+def _restore_all_compositor_touchpads_once(*, include_stylus: bool = False) -> int:
+    """Single pass: re-enable pads, disable filters, quash companion Mouse nodes."""
     restored = 0
-    seen: set[str] = set()
     for dev in list_touch_devices(include_stylus=include_stylus):
-        seen.add(dev.sysname)
         name = dev.name or ""
         if "(filter)" in name:
             try:
@@ -616,9 +617,9 @@ def restore_all_compositor_touchpads(*, include_stylus: bool = False) -> int:
             except RuntimeError as exc:
                 log.warning("%s", exc)
     # Keyboard / i2c touchpads: KWin often reports touch=false (pointer class).
+    # Always finalize pointer pads — USB dock can register touch=true first with
+    # a companion Mouse node still enabled, or appear after an earlier restore pass.
     for dev in list_pointer_touchpads():
-        if dev.sysname in seen:
-            continue
         if "(filter)" in (dev.name or ""):
             try:
                 set_device_enabled(dev.sysname, False)
@@ -634,6 +635,24 @@ def restore_all_compositor_touchpads(*, include_stylus: bool = False) -> int:
                 log.warning("%s", exc)
         restored += _finalize_kwin_touchpad(dev)
     return restored
+
+
+def restore_all_compositor_touchpads(
+    *,
+    include_stylus: bool = False,
+    retries: int = 1,
+    retry_delay_s: float = 0.5,
+) -> int:
+    """Re-enable physical touchpads and disable stale ``(filter)`` nodes in KWin."""
+    total = 0
+    for attempt in range(max(1, retries)):
+        if attempt:
+            time.sleep(retry_delay_s)
+            _reset_busctl_env_cache()
+        if not kwin_available():
+            continue
+        total += _restore_all_compositor_touchpads_once(include_stylus=include_stylus)
+    return total
 
 
 def restore_kwin_touchpad_after_filter(

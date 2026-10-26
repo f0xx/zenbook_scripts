@@ -51,6 +51,11 @@ INPUT_EVENT_FMT = "@llHHi"
 EVIOCGRAB = 0x40044590
 
 from zenbook_kb.fn_lock import find_vendor_hidraw, note_fn_lock_toggle
+from zenbook_kb.hid_asus_health import (
+    DEFAULT_PERIODIC_CHECK_S,
+    maybe_ensure_vendor_if4,
+    vendor_if4_on_asus,
+)
 from zenbook_kb.keycodes import (
     KEY_KBDILLUMDOWN,
     KEY_KBDILLUMTOGGLE,
@@ -581,6 +586,7 @@ def listen(
             return
         if not watched_devices:
             print(f"Hotplug: {reason}; waiting for input devices...", flush=True)
+            _maybe_recover_if4(reason)
             return
         fds = _open_evdev_devices(watched_devices, grab=grab)
         if fds:
@@ -589,6 +595,8 @@ def listen(
                 + ", ".join(str(fds[fd]) for fd in fds),
                 flush=True,
             )
+        if not effective_usb and not vendor_if4_on_asus():
+            _maybe_recover_if4(reason)
 
     usb_mod = None
     if effective_usb:
@@ -613,15 +621,39 @@ def listen(
         print("USB vendor polling disabled (hid-asus or config)", flush=True)
 
     fn_hidraw_fd: int | None = None
-    if not effective_usb:
-        vendor_hidraw = find_vendor_hidraw()
-        if vendor_hidraw is not None:
+
+    def _refresh_fn_hidraw(*, verbose_open: bool = False) -> None:
+        nonlocal fn_hidraw_fd
+        if effective_usb:
+            return
+        if fn_hidraw_fd is not None:
             try:
-                fn_hidraw_fd = os.open(vendor_hidraw, os.O_RDONLY | os.O_NONBLOCK)
-                if verbose:
-                    print(f"fn-lock hidraw watch: {vendor_hidraw}", flush=True)
-            except OSError as exc:
-                print(f"fn-lock hidraw unavailable: {exc}", file=sys.stderr, flush=True)
+                os.close(fn_hidraw_fd)
+            except OSError:
+                pass
+            fn_hidraw_fd = None
+        vendor_hidraw = find_vendor_hidraw()
+        if vendor_hidraw is None:
+            return
+        try:
+            fn_hidraw_fd = os.open(vendor_hidraw, os.O_RDONLY | os.O_NONBLOCK)
+            if verbose_open or verbose:
+                print(f"fn-lock hidraw watch: {vendor_hidraw}", flush=True)
+        except OSError as exc:
+            print(f"fn-lock hidraw unavailable: {exc}", file=sys.stderr, flush=True)
+
+    def _maybe_recover_if4(reason: str) -> bool:
+        if effective_usb:
+            return False
+        if vendor_if4_on_asus() and find_vendor_hidraw() is not None:
+            return False
+        if maybe_ensure_vendor_if4(reason=reason):
+            _refresh_fn_hidraw(verbose_open=True)
+            return True
+        return False
+
+    if not effective_usb:
+        _refresh_fn_hidraw(verbose_open=verbose)
 
     parts = [str(d) for d in watched_devices]
     if usb_mon:
@@ -632,6 +664,7 @@ def listen(
 
     start = time.monotonic()
     last_device_scan = start
+    last_if4_check = start
 
     try:
         while True:
@@ -639,6 +672,15 @@ def listen(
                 print("Watchdog expired — exiting listener.", flush=True)
                 return 0
             now = time.monotonic()
+            if (
+                not effective_usb
+                and (now - last_if4_check) >= DEFAULT_PERIODIC_CHECK_S
+            ):
+                last_if4_check = now
+                if not vendor_if4_on_asus() or find_vendor_hidraw() is None:
+                    _maybe_recover_if4("periodic check")
+                elif fn_hidraw_fd is None:
+                    _refresh_fn_hidraw(verbose_open=False)
             if allow_rediscover and (now - last_device_scan) >= 2.0:
                 last_device_scan = now
                 try:

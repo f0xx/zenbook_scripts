@@ -30,9 +30,18 @@ start_pre() {
 			. "${_wait_lib}"
 			zenbook_rc_clear_stale_svc_pidfile
 			zenbook_rc_wait_not_starting zenbook-kb-hid-asus 20 || true
+			zenbook_rc_wait_hid_asus_ready 60 || true
 			break
 		fi
 	done
+	# Ensure vendor USB if4 (Fn+Esc / Fn-row specials) before claiming hidraw.
+	_ensure_switch=/usr/libexec/zenbook-hid-asus-switch
+	if [ ! -x "${_ensure_switch}" ] && [ -x /usr/local/libexec/zenbook-hid-asus-switch ]; then
+		_ensure_switch=/usr/local/libexec/zenbook-hid-asus-switch
+	fi
+	if [ -x "${_ensure_switch}" ] && lsusb -d 0b05:1b2c >/dev/null 2>&1; then
+		"${_ensure_switch}" ensure-if4 >/dev/null 2>&1 || true
+	fi
 	# command_user is set in /etc/conf.d/zenbook-kb-hotkeys by configure.py.
 	if [ -z "${command_user:-}" ]; then
 		eerror "command_user is not set — run: sudo python3 configure.py --defaults --all-yes"

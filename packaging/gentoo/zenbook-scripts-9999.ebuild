@@ -148,7 +148,7 @@ zenbook_kernel_preflight() {
 		einfo "Upstream kernel/patches present: linux-${KV_FULL}"
 	else
 		ewarn "No maintained patch dir for KV_FULL=${KV_FULL}"
-		ewarn "Supported: 7.0.12-gentoo-r1, 7.1.3-gentoo — or set ZENBOOK_KERNEL_FORCE=1"
+		ewarn "Supported: 7.0.12-gentoo-r1, 7.1.3-gentoo, 7.1.5-gentoo, 7.2.0-gentoo — or set ZENBOOK_KERNEL_FORCE=1"
 	fi
 
 	einfo "Running hid-asus kernel preflight…"
@@ -231,7 +231,7 @@ src_install() {
 	fi
 
 	# User-facing CLIs
-	dobin configure.py configure.sh bin/kb-brightness bin/kb-platform-profile bin/platform-fan bin/platform-probe bin/platform-power bin/platform-touchpad bin/platform-metrics
+	dobin configure.py configure.sh bin/kb-brightness bin/kb-platform-profile bin/platform-fan bin/platform-probe bin/platform-power bin/platform-touchpad bin/platform-metrics bin/platform-hid-asus-health bin/platform-ux581-lightbar
 	dobin bin/platform-profile-boot
 	dobin bin/kb-fan
 	if use fan_control; then
@@ -344,6 +344,9 @@ src_install() {
 		newinitd contrib/openrc/zenbook-kb-hid-asus zenbook-kb-hid-asus
 		newconfd contrib/openrc/conf.d/zenbook-kb-hid-asus zenbook-kb-hid-asus
 
+		insinto /etc/systemd/system
+		doins contrib/systemd/zenbook-kb-hid-asus.service
+
 		local ko kver
 		ko="$(find "${S}/kernel/build" -name 'hid-asus.ko' -print -quit)"
 		[[ -n ${ko} && -f ${ko} ]] || die "missing built module under ${S}/kernel/build/"
@@ -353,7 +356,8 @@ src_install() {
 	fi
 
 	local doc
-	for doc in LICENSE DEPLOY.md README.ux8406.md README.ux5400.md \
+	for doc in LICENSE DEPLOY.md README.ux8406.md README.ux5400.md README.ux581.md \
+		docs/ux581/lightbar.md docs/ux581/lightbar-windows-re.md \
 		kernel/README.md packaging/README.md packaging/gentoo/files/README.md \
 		PLANNED.md ROADMAP.md README.md; do
 		[[ -f "${S}/${doc}" ]] || continue

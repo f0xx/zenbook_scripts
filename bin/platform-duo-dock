@@ -162,8 +162,8 @@ touchpad_transport_handoff() {
 		return 0
 	fi
 	platform-touchpad stop >/dev/null 2>&1 || true
-	platform-touchpad restore-kwin >/dev/null 2>&1 || true
-	sleep 1
+	# USB pogo reconnect: KWin may register Touchpad + companion Mouse late.
+	platform-touchpad restore-kwin --wait >/dev/null 2>&1 || true
 	if command -v rc-service >/dev/null 2>&1; then
 		if rc-service zenbook-platform-touchpad status 2>/dev/null | grep -q started; then
 			rc-service zenbook-platform-touchpad restart >/dev/null 2>&1 || true
@@ -245,10 +245,14 @@ cmd_apply_undocked_touch() {
 	fi
 }
 
+cmd_touchpad_handoff() {
+	touchpad_transport_handoff
+}
+
 usage() {
 	echo "Usage: $0 status|docked|undocked|auto|" >&2
 	echo "         save-brightness|restore-brightness|kscreen-docked|kscreen-undocked|" >&2
-	echo "         apply-docked-touch|apply-undocked-touch" >&2
+	echo "         apply-docked-touch|apply-undocked-touch|touchpad-handoff" >&2
 	exit 2
 }
 
@@ -263,5 +267,6 @@ case "${1:-}" in
 	kscreen-undocked) cmd_kscreen_undocked ;;
 	apply-docked-touch) cmd_apply_docked_touch ;;
 	apply-undocked-touch) cmd_apply_undocked_touch ;;
+	touchpad-handoff) cmd_touchpad_handoff ;;
 	*) usage ;;
 esac

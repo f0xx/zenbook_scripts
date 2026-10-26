@@ -3,6 +3,7 @@
 # Usage:
 #   make KDIR=/usr/src/linux-7.0.12-gentoo-r1
 #   make KDIR=/usr/src/linux-7.1.3-gentoo
+#   make KDIR=/usr/src/linux-7.1.5-gentoo
 #   sudo make install              # zenbook sideload path + kbuild modules_install
 #   sudo make modules_install      # kbuild only (…/lib/modules/<kver>/extra/)
 

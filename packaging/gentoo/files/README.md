@@ -7,6 +7,8 @@ upstream tree). The ebuild does **not** ship precompiled `.ko` files.
 |-----------|----------------|
 | `patches/linux-7.0.12-gentoo-r1/` | `7.0.12-gentoo-r1` |
 | `patches/linux-7.1.3-gentoo/` | `7.1.3-gentoo` |
+| `patches/linux-7.1.5-gentoo/` | `7.1.5-gentoo` |
+| `patches/linux-7.2.0-gentoo/` | `7.2.0-gentoo` (same diff as 7.1.5) |
 
 ## How they are used
 

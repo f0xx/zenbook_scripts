@@ -14,11 +14,13 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from zenbook_kb.touch_map import (  # noqa: E402
+    KWinInputDevice,
     MapRule,
     UX8406_PRESET,
     activate_kwin_live_filter,
     auto_rules,
     preset_rules_for_machine,
+    restore_all_compositor_touchpads,
     restore_kwin_touchpad_after_filter,
 )
 from zenbook_kb.touchpad_calibrate import (  # noqa: E402
@@ -143,6 +145,30 @@ class TestKWinTouchpadRestore(unittest.TestCase):
         self.assertIn(("event14", False), calls)
         self.assertIn(("event6", False), calls)
         self.assertIn(("event6", True), calls)
+
+    def test_restore_finalizes_pointer_pad_seen_as_touch_device(self) -> None:
+        """USB Primax can appear in list_touch_devices (touch=true) before finalize."""
+        primax = KWinInputDevice(
+            sysname="event10",
+            name="Primax Electronics Ltd. ASUS Zenbook Duo Keyboard Touchpad",
+            enabled=True,
+            touch=True,
+            tablet_tool=False,
+            output_name="",
+        )
+        with mock.patch("zenbook_kb.touch_map.kwin_available", return_value=True), mock.patch(
+            "zenbook_kb.touch_map.list_touch_devices",
+            return_value=[primax],
+        ), mock.patch(
+            "zenbook_kb.touch_map.list_pointer_touchpads",
+            return_value=[primax],
+        ), mock.patch(
+            "zenbook_kb.touch_map._finalize_kwin_touchpad",
+            return_value=1,
+        ) as finalize:
+            n = restore_all_compositor_touchpads()
+        self.assertGreaterEqual(n, 1)
+        finalize.assert_called_once_with(primax)
 
 
 if __name__ == "__main__":

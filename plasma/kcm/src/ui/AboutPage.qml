@@ -7,6 +7,7 @@ import QtQuick.Layouts
 import org.kde.kirigami as Kirigami
 
 ColumnLayout {
+    width: parent ? parent.width : implicitWidth
     spacing: Kirigami.Units.largeSpacing
 
     Kirigami.Heading {

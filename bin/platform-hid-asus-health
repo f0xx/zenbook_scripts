@@ -1,0 +1,59 @@
+#!/usr/bin/env python3
+"""Check / recover UX8406 vendor USB if4 (hid-asus Fn-row path).
+
+Examples:
+  platform-hid-asus-health status
+  platform-hid-asus-health ensure          # rate-limited
+  platform-hid-asus-health ensure --force  # ignore cooldown
+"""
+
+from __future__ import annotations
+
+import argparse
+import sys
+from pathlib import Path
+
+_ROOT = Path(__file__).resolve().parent.parent
+for _share in (_ROOT, Path("/usr/share/zenbook-scripts"), Path("/usr/local/share/zenbook-scripts")):
+    if (_share / "zenbook_kb" / "hid_asus_health.py").is_file():
+        sys.path.insert(0, str(_share))
+        break
+
+from zenbook_kb.hid_asus_health import (  # noqa: E402
+    ensure_vendor_if4,
+    vendor_if4_status,
+)
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    sub = parser.add_subparsers(dest="cmd", required=True)
+    sub.add_parser("status", help="print if4 health (exit 0 if healthy or undocked)")
+    p_ensure = sub.add_parser("ensure", help="run ensure-if4 when unhealthy")
+    p_ensure.add_argument(
+        "--force",
+        action="store_true",
+        help="ignore cooldown between recovery attempts",
+    )
+    args = parser.parse_args(argv)
+
+    st = vendor_if4_status()
+    if args.cmd == "status":
+        print(st.summary())
+        if st.docked and st.sideload and not st.healthy:
+            return 1
+        return 0
+
+    if not st.docked:
+        print("keyboard not docked — skip")
+        return 0
+    if st.healthy:
+        print("vendor if4 OK")
+        return 0
+    ok = ensure_vendor_if4(force=args.force)
+    print(vendor_if4_status().summary())
+    return 0 if ok else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
